@@ -85,6 +85,12 @@ public final class DatabaseManager: @unchecked Sendable {
             throw NSError(domain: "DatabaseManager", code: 2, userInfo: [NSLocalizedDescriptionKey: error])
         }
     }
+    private func lastErrorMessage() -> String {
+        if let db = db {
+            return String(cString: sqlite3_errmsg(db))
+        }
+        return "Unknown database error"
+    }
 
     public func insertRecords(
         _ records: [UnifiedTokenRecord],
@@ -96,15 +102,36 @@ public final class DatabaseManager: @unchecked Sendable {
 
         try execute(sql: "BEGIN TRANSACTION;")
         do {
-            let recordSql = """
-            INSERT OR IGNORE INTO unified_token_records (
-                id, source_id, timestamp, day_key, session_key, project_folder,
-                model, provider, input_tokens, output_tokens, cache_read_tokens,
-                cache_write_tokens, total_tokens, cost_usd
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-            """
-            var recordStmt: OpaquePointer?
-            if sqlite3_prepare_v2(db, recordSql, -1, &recordStmt, nil) == SQLITE_OK {
+            if !records.isEmpty {
+                let recordSql = """
+                INSERT OR IGNORE INTO unified_token_records (
+                    id, source_id, timestamp, day_key, session_key, project_folder,
+                    model, provider, input_tokens, output_tokens, cache_read_tokens,
+                    cache_write_tokens, total_tokens, cost_usd
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """
+                var recordStmt: OpaquePointer?
+                guard sqlite3_prepare_v2(db, recordSql, -1, &recordStmt, nil) == SQLITE_OK else {
+                    throw NSError(domain: "DatabaseManager", code: 3, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare record statement: \(lastErrorMessage())"])
+                }
+                defer { sqlite3_finalize(recordStmt) }
+
+                let rollupSql = """
+                INSERT INTO daily_rollups (day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(day_key, source_id) DO UPDATE SET
+                    total_tokens = total_tokens + excluded.total_tokens,
+                    input_tokens = input_tokens + excluded.input_tokens,
+                    output_tokens = output_tokens + excluded.output_tokens,
+                    cache_tokens = cache_tokens + excluded.cache_tokens,
+                    cost_usd = cost_usd + excluded.cost_usd;
+                """
+                var rollupStmt: OpaquePointer?
+                guard sqlite3_prepare_v2(db, rollupSql, -1, &rollupStmt, nil) == SQLITE_OK else {
+                    throw NSError(domain: "DatabaseManager", code: 4, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare rollup statement: \(lastErrorMessage())"])
+                }
+                defer { sqlite3_finalize(rollupStmt) }
+
                 for r in records {
                     sqlite3_bind_text(recordStmt, 1, (r.id as NSString).utf8String, -1, nil)
                     sqlite3_bind_text(recordStmt, 2, (r.sourceId as NSString).utf8String, -1, nil)
@@ -129,37 +156,29 @@ public final class DatabaseManager: @unchecked Sendable {
                     sqlite3_bind_int(recordStmt, 13, Int32(r.totalTokens))
                     sqlite3_bind_double(recordStmt, 14, r.rawCostUSD ?? 0.0)
 
-                    _ = sqlite3_step(recordStmt)
+                    let recordStep = sqlite3_step(recordStmt)
+                    guard recordStep == SQLITE_DONE else {
+                        throw NSError(domain: "DatabaseManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "Failed to insert record '\(r.id)': \(lastErrorMessage())"])
+                    }
+                    let wasInserted = sqlite3_changes(db) > 0
                     sqlite3_reset(recordStmt)
-                }
-                sqlite3_finalize(recordStmt)
-            }
 
-            let rollupSql = """
-            INSERT INTO daily_rollups (day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(day_key, source_id) DO UPDATE SET
-                total_tokens = total_tokens + excluded.total_tokens,
-                input_tokens = input_tokens + excluded.input_tokens,
-                output_tokens = output_tokens + excluded.output_tokens,
-                cache_tokens = cache_tokens + excluded.cache_tokens,
-                cost_usd = cost_usd + excluded.cost_usd;
-            """
-            var rollupStmt: OpaquePointer?
-            if sqlite3_prepare_v2(db, rollupSql, -1, &rollupStmt, nil) == SQLITE_OK {
-                for r in records {
-                    sqlite3_bind_text(rollupStmt, 1, (r.dayKey as NSString).utf8String, -1, nil)
-                    sqlite3_bind_text(rollupStmt, 2, (r.sourceId as NSString).utf8String, -1, nil)
-                    sqlite3_bind_int(rollupStmt, 3, Int32(r.totalTokens))
-                    sqlite3_bind_int(rollupStmt, 4, Int32(r.inputTokens))
-                    sqlite3_bind_int(rollupStmt, 5, Int32(r.outputTokens))
-                    sqlite3_bind_int(rollupStmt, 6, Int32(r.cacheReadTokens + r.cacheWriteTokens))
-                    sqlite3_bind_double(rollupStmt, 7, r.rawCostUSD ?? 0.0)
+                    if wasInserted {
+                        sqlite3_bind_text(rollupStmt, 1, (r.dayKey as NSString).utf8String, -1, nil)
+                        sqlite3_bind_text(rollupStmt, 2, (r.sourceId as NSString).utf8String, -1, nil)
+                        sqlite3_bind_int(rollupStmt, 3, Int32(r.totalTokens))
+                        sqlite3_bind_int(rollupStmt, 4, Int32(r.inputTokens))
+                        sqlite3_bind_int(rollupStmt, 5, Int32(r.outputTokens))
+                        sqlite3_bind_int(rollupStmt, 6, Int32(r.cacheReadTokens + r.cacheWriteTokens))
+                        sqlite3_bind_double(rollupStmt, 7, r.rawCostUSD ?? 0.0)
 
-                    _ = sqlite3_step(rollupStmt)
-                    sqlite3_reset(rollupStmt)
+                        let rollupStep = sqlite3_step(rollupStmt)
+                        guard rollupStep == SQLITE_DONE else {
+                            throw NSError(domain: "DatabaseManager", code: 8, userInfo: [NSLocalizedDescriptionKey: "Failed to upsert rollup for record '\(r.id)': \(lastErrorMessage())"])
+                        }
+                        sqlite3_reset(rollupStmt)
+                    }
                 }
-                sqlite3_finalize(rollupStmt)
             }
 
             if let sourceId = sourceId, let cursor = cursor {
@@ -172,14 +191,20 @@ public final class DatabaseManager: @unchecked Sendable {
                     last_synced_at = excluded.last_synced_at;
                 """
                 var cursorStmt: OpaquePointer?
-                if sqlite3_prepare_v2(db, cursorSql, -1, &cursorStmt, nil) == SQLITE_OK {
-                    sqlite3_bind_text(cursorStmt, 1, (sourceId as NSString).utf8String, -1, nil)
-                    _ = cursorData.withUnsafeBytes { rawBuffer in
-                        sqlite3_bind_blob(cursorStmt, 2, rawBuffer.baseAddress, Int32(rawBuffer.count), nil)
-                    }
-                    sqlite3_bind_int64(cursorStmt, 3, Int64(Date().timeIntervalSince1970 * 1000))
-                    _ = sqlite3_step(cursorStmt)
-                    sqlite3_finalize(cursorStmt)
+                guard sqlite3_prepare_v2(db, cursorSql, -1, &cursorStmt, nil) == SQLITE_OK else {
+                    throw NSError(domain: "DatabaseManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare cursor statement: \(lastErrorMessage())"])
+                }
+                defer { sqlite3_finalize(cursorStmt) }
+
+                sqlite3_bind_text(cursorStmt, 1, (sourceId as NSString).utf8String, -1, nil)
+                _ = cursorData.withUnsafeBytes { rawBuffer in
+                    sqlite3_bind_blob(cursorStmt, 2, rawBuffer.baseAddress, Int32(rawBuffer.count), nil)
+                }
+                sqlite3_bind_int64(cursorStmt, 3, Int64(Date().timeIntervalSince1970 * 1000))
+
+                let cursorStep = sqlite3_step(cursorStmt)
+                guard cursorStep == SQLITE_DONE else {
+                    throw NSError(domain: "DatabaseManager", code: 6, userInfo: [NSLocalizedDescriptionKey: "Failed to step cursor statement: \(lastErrorMessage())"])
                 }
             }
 
@@ -195,28 +220,37 @@ public final class DatabaseManager: @unchecked Sendable {
         let pattern = "\(year)-%"
         let sql = "SELECT day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd FROM daily_rollups WHERE day_key LIKE ? ORDER BY day_key ASC;"
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 9, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare daily rollups fetch statement: \(lastErrorMessage())"])
+        }
         defer { sqlite3_finalize(stmt) }
 
         sqlite3_bind_text(stmt, 1, (pattern as NSString).utf8String, -1, nil)
         var result: [DailyRollup] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let dayKey = String(cString: sqlite3_column_text(stmt, 0))
-            let sourceId = String(cString: sqlite3_column_text(stmt, 1))
-            let totalTokens = Int(sqlite3_column_int(stmt, 2))
-            let inputTokens = Int(sqlite3_column_int(stmt, 3))
-            let outputTokens = Int(sqlite3_column_int(stmt, 4))
-            let cacheTokens = Int(sqlite3_column_int(stmt, 5))
-            let costUSD = sqlite3_column_double(stmt, 6)
-            result.append(DailyRollup(
-                dayKey: dayKey,
-                sourceId: sourceId,
-                totalTokens: totalTokens,
-                inputTokens: inputTokens,
-                outputTokens: outputTokens,
-                cacheTokens: cacheTokens,
-                costUSD: costUSD
-            ))
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_ROW {
+                let dayKey = String(cString: sqlite3_column_text(stmt, 0))
+                let sourceId = String(cString: sqlite3_column_text(stmt, 1))
+                let totalTokens = Int(sqlite3_column_int(stmt, 2))
+                let inputTokens = Int(sqlite3_column_int(stmt, 3))
+                let outputTokens = Int(sqlite3_column_int(stmt, 4))
+                let cacheTokens = Int(sqlite3_column_int(stmt, 5))
+                let costUSD = sqlite3_column_double(stmt, 6)
+                result.append(DailyRollup(
+                    dayKey: dayKey,
+                    sourceId: sourceId,
+                    totalTokens: totalTokens,
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens,
+                    cacheTokens: cacheTokens,
+                    costUSD: costUSD
+                ))
+            } else if step == SQLITE_DONE {
+                break
+            } else {
+                throw NSError(domain: "DatabaseManager", code: 10, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch daily rollups: \(lastErrorMessage())"])
+            }
         }
         return result
     }
@@ -225,16 +259,21 @@ public final class DatabaseManager: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         let sql = "SELECT cursor_payload FROM sync_cursors WHERE source_id = ?;"
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 11, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare cursor fetch statement: \(lastErrorMessage())"])
+        }
         defer { sqlite3_finalize(stmt) }
 
         sqlite3_bind_text(stmt, 1, (sourceId as NSString).utf8String, -1, nil)
-        if sqlite3_step(stmt) == SQLITE_ROW {
+        let step = sqlite3_step(stmt)
+        if step == SQLITE_ROW {
             if let blob = sqlite3_column_blob(stmt, 0) {
                 let bytes = sqlite3_column_bytes(stmt, 0)
                 let data = Data(bytes: blob, count: Int(bytes))
                 return try? JSONDecoder().decode(SyncCursor.self, from: data)
             }
+        } else if step != SQLITE_DONE {
+            throw NSError(domain: "DatabaseManager", code: 12, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch cursor: \(lastErrorMessage())"])
         }
         return nil
     }

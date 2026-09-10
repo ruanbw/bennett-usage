@@ -119,4 +119,45 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(rollups2026.count, 1)
         XCTAssertEqual(rollups2026[0].dayKey, "2026-01-01")
     }
+    func testDuplicateRecordInsertDoesNotDuplicateRollup() throws {
+        let now = Date()
+        let record = UnifiedTokenRecord(
+            id: "test_dup",
+            sourceId: "omp",
+            timestamp: now,
+            dayKey: "2026-09-11",
+            sessionKey: "sess_dup",
+            projectFolder: "/tmp/project",
+            model: "claude-3-5-sonnet",
+            provider: "anthropic",
+            inputTokens: 1000,
+            outputTokens: 500,
+            cacheReadTokens: 200,
+            cacheWriteTokens: 100,
+            rawCostUSD: 0.05
+        )
+
+        try db.insertRecords([record])
+
+        var rollups = try db.fetchDailyRollups(forYear: 2026)
+        XCTAssertEqual(rollups.count, 1)
+        XCTAssertEqual(rollups[0].totalTokens, 1800)
+        XCTAssertEqual(rollups[0].costUSD, 0.05, accuracy: 0.0001)
+
+        // Inserting duplicate record in separate call should be ignored and not increment rollup
+        try db.insertRecords([record])
+
+        rollups = try db.fetchDailyRollups(forYear: 2026)
+        XCTAssertEqual(rollups.count, 1)
+        XCTAssertEqual(rollups[0].totalTokens, 1800)
+        XCTAssertEqual(rollups[0].costUSD, 0.05, accuracy: 0.0001)
+
+        // Inserting same duplicate in a single batch should also not increment rollup
+        try db.insertRecords([record, record])
+
+        rollups = try db.fetchDailyRollups(forYear: 2026)
+        XCTAssertEqual(rollups.count, 1)
+        XCTAssertEqual(rollups[0].totalTokens, 1800)
+        XCTAssertEqual(rollups[0].costUSD, 0.05, accuracy: 0.0001)
+    }
 }
