@@ -1,5 +1,63 @@
 import Foundation
 
+public enum TimeRangeOption: Hashable, Sendable, CustomStringConvertible {
+    case last24Hours
+    case today
+    case last7Days
+    case last30Days
+    case pastYear
+    case year(Int)
+
+    public var description: String {
+        switch self {
+        case .last24Hours: return "24 Hours"
+        case .today: return "Today"
+        case .last7Days: return "Last 7 Days"
+        case .last30Days: return "Last 30 Days"
+        case .pastYear: return "Past Year"
+        case .year(let y): return String(y)
+        }
+    }
+}
+
+public struct TrendPoint: Identifiable, Sendable, Equatable {
+    public var id: String { label }
+    public let label: String
+    public let tokens: Int
+    public let costUSD: Double
+
+    public init(label: String, tokens: Int, costUSD: Double) {
+        self.label = label
+        self.tokens = tokens
+        self.costUSD = costUSD
+    }
+}
+
+public struct PeriodMetrics: Sendable {
+    public let totalTokens: Int
+    public let totalCostUSD: Double
+    public let mostActiveTool: String
+    public let trendPoints: [TrendPoint]
+    public let toolDistribution: [(tool: String, tokens: Int, costUSD: Double)]
+    public let projectRankings: [(project: String, totalTokens: Int, costUSD: Double)]
+
+    public init(
+        totalTokens: Int,
+        totalCostUSD: Double,
+        mostActiveTool: String,
+        trendPoints: [TrendPoint],
+        toolDistribution: [(tool: String, tokens: Int, costUSD: Double)],
+        projectRankings: [(project: String, totalTokens: Int, costUSD: Double)]
+    ) {
+        self.totalTokens = totalTokens
+        self.totalCostUSD = totalCostUSD
+        self.mostActiveTool = mostActiveTool
+        self.trendPoints = trendPoints
+        self.toolDistribution = toolDistribution
+        self.projectRankings = projectRankings
+    }
+}
+
 public struct TodaySummary: Sendable, Equatable {
     public let totalTokens: Int
     public let totalCostUSD: Double
@@ -140,5 +198,328 @@ public final class MetricsAggregator: Sendable {
         }
         return tools.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
             .sorted { $0.tokens > $1.tokens }
+    }
+
+    public func fetchAvailableYears() async throws -> [Int] {
+        let years = try database.fetchAvailableYears()
+        if years.isEmpty {
+            return [Calendar.current.component(.year, from: Date())]
+        }
+        return years
+    }
+
+    public func fetchHeatmap(range: TimeRangeOption) async throws -> [HeatmapDayCell] {
+        switch range {
+        case .year(let year):
+            return try await fetchAnnualHeatmap(year: year)
+        default:
+            return try await fetchRollingHeatmap()
+        }
+    }
+
+    public func fetchRollingHeatmap() async throws -> [HeatmapDayCell] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
+        let today = Date()
+
+        guard let startDate = calendar.date(byAdding: .day, value: -364, to: today) else {
+            return []
+        }
+
+        let dayFormatter = DateFormatter()
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        dayFormatter.timeZone = TimeZone.current
+
+        let startKey = dayFormatter.string(from: startDate)
+        let endKey = dayFormatter.string(from: today)
+        let rollups = try database.fetchDailyRollups(startDate: startKey, endDate: endKey)
+
+        var rollupsByDay: [String: [DailyRollup]] = [:]
+        for r in rollups {
+            rollupsByDay[r.dayKey, default: []].append(r)
+        }
+
+        var days: [(Date, String, Int, Double, [String: Int])] = []
+        var currentDate = startDate
+        var maxTokens = 0
+
+        while currentDate <= today {
+            let dayKey = dayFormatter.string(from: currentDate)
+            let items = rollupsByDay[dayKey] ?? []
+            let dayTokens = items.reduce(0) { $0 + $1.totalTokens }
+            let dayCost = items.reduce(0.0) { $0 + $1.costUSD }
+            var breakdown: [String: Int] = [:]
+            for item in items {
+                breakdown[item.sourceId, default: 0] += item.totalTokens
+            }
+
+            if dayTokens > maxTokens { maxTokens = dayTokens }
+            days.append((currentDate, dayKey, dayTokens, dayCost, breakdown))
+            guard let next = calendar.date(byAdding: .day, value: 1, to: currentDate) else { break }
+            currentDate = next
+        }
+
+        return days.map { date, dayKey, tokens, cost, breakdown in
+            let level = calculateIntensity(tokens: tokens, maxTokens: maxTokens)
+            return HeatmapDayCell(
+                date: date,
+                dayKey: dayKey,
+                totalTokens: tokens,
+                costUSD: cost,
+                intensityLevel: level,
+                toolBreakdown: breakdown
+            )
+        }
+    }
+
+    public func fetchPeriodMetrics(range: TimeRangeOption) async throws -> PeriodMetrics {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
+        let now = Date()
+
+        switch range {
+        case .last24Hours:
+            let sinceTime = now.addingTimeInterval(-24 * 3600)
+            let sinceTimestamp = Int64(sinceTime.timeIntervalSince1970 * 1000)
+            let records = try database.fetchRecords(sinceTimestamp: sinceTimestamp)
+
+            let totalTokens = records.reduce(0) { $0 + $1.totalTokens }
+            let totalCost = records.reduce(0.0) { $0 + ($1.rawCostUSD ?? 0.0) }
+
+            var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
+            for r in records {
+                let cur = toolTotals[r.sourceId] ?? (0, 0.0)
+                toolTotals[r.sourceId] = (cur.tokens + r.totalTokens, cur.costUSD + (r.rawCostUSD ?? 0.0))
+            }
+            let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
+                .sorted { $0.tokens > $1.tokens }
+            let mostActive = toolDist.first?.tool ?? "None"
+
+            var projTotals: [String: (tokens: Int, costUSD: Double)] = [:]
+            for r in records {
+                if let p = r.projectFolder, !p.isEmpty {
+                    let cur = projTotals[p] ?? (0, 0.0)
+                    projTotals[p] = (cur.tokens + r.totalTokens, cur.costUSD + (r.rawCostUSD ?? 0.0))
+                }
+            }
+            let projRankings = projTotals.map { (project: $0.key, totalTokens: $0.value.tokens, costUSD: $0.value.costUSD) }
+                .sorted { $0.totalTokens > $1.totalTokens }
+
+            let hourFormatter = DateFormatter()
+            hourFormatter.dateFormat = "HH:00"
+            hourFormatter.timeZone = TimeZone.current
+
+            var trendPoints: [TrendPoint] = []
+            for i in 0..<24 {
+                let bucketStart = now.addingTimeInterval(-Double(23 - i) * 3600)
+                let bucketEnd = bucketStart.addingTimeInterval(3600)
+                let label = hourFormatter.string(from: bucketStart)
+
+                let bucketRecords = records.filter {
+                    $0.timestamp >= bucketStart && $0.timestamp < bucketEnd
+                }
+                let bTokens = bucketRecords.reduce(0) { $0 + $1.totalTokens }
+                let bCost = bucketRecords.reduce(0.0) { $0 + ($1.rawCostUSD ?? 0.0) }
+                trendPoints.append(TrendPoint(label: label, tokens: bTokens, costUSD: bCost))
+            }
+
+            return PeriodMetrics(
+                totalTokens: totalTokens,
+                totalCostUSD: totalCost,
+                mostActiveTool: mostActive,
+                trendPoints: trendPoints,
+                toolDistribution: toolDist,
+                projectRankings: projRankings
+            )
+
+        case .today:
+            let startOfToday = calendar.startOfDay(for: now)
+            let sinceTimestamp = Int64(startOfToday.timeIntervalSince1970 * 1000)
+            let records = try database.fetchRecords(sinceTimestamp: sinceTimestamp)
+
+            let totalTokens = records.reduce(0) { $0 + $1.totalTokens }
+            let totalCost = records.reduce(0.0) { $0 + ($1.rawCostUSD ?? 0.0) }
+
+            var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
+            for r in records {
+                let cur = toolTotals[r.sourceId] ?? (0, 0.0)
+                toolTotals[r.sourceId] = (cur.tokens + r.totalTokens, cur.costUSD + (r.rawCostUSD ?? 0.0))
+            }
+            let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
+                .sorted { $0.tokens > $1.tokens }
+            let mostActive = toolDist.first?.tool ?? "None"
+
+            var projTotals: [String: (tokens: Int, costUSD: Double)] = [:]
+            for r in records {
+                if let p = r.projectFolder, !p.isEmpty {
+                    let cur = projTotals[p] ?? (0, 0.0)
+                    projTotals[p] = (cur.tokens + r.totalTokens, cur.costUSD + (r.rawCostUSD ?? 0.0))
+                }
+            }
+            let projRankings = projTotals.map { (project: $0.key, totalTokens: $0.value.tokens, costUSD: $0.value.costUSD) }
+                .sorted { $0.totalTokens > $1.totalTokens }
+
+            var trendPoints: [TrendPoint] = []
+            for hour in 0..<24 {
+                let bucketStart = calendar.date(byAdding: .hour, value: hour, to: startOfToday) ?? startOfToday
+                let bucketEnd = calendar.date(byAdding: .hour, value: hour + 1, to: startOfToday) ?? startOfToday
+                let label = String(format: "%02d:00", hour)
+
+                let bucketRecords = records.filter {
+                    $0.timestamp >= bucketStart && $0.timestamp < bucketEnd
+                }
+                let bTokens = bucketRecords.reduce(0) { $0 + $1.totalTokens }
+                let bCost = bucketRecords.reduce(0.0) { $0 + ($1.rawCostUSD ?? 0.0) }
+                trendPoints.append(TrendPoint(label: label, tokens: bTokens, costUSD: bCost))
+            }
+
+            return PeriodMetrics(
+                totalTokens: totalTokens,
+                totalCostUSD: totalCost,
+                mostActiveTool: mostActive,
+                trendPoints: trendPoints,
+                toolDistribution: toolDist,
+                projectRankings: projRankings
+            )
+
+        case .last7Days, .last30Days:
+            let daysCount = (range == .last7Days) ? 7 : 30
+            guard let startDate = calendar.date(byAdding: .day, value: -(daysCount - 1), to: now) else {
+                return PeriodMetrics(totalTokens: 0, totalCostUSD: 0, mostActiveTool: "None", trendPoints: [], toolDistribution: [], projectRankings: [])
+            }
+
+            let dayFormatter = DateFormatter()
+            dayFormatter.dateFormat = "yyyy-MM-dd"
+            dayFormatter.timeZone = TimeZone.current
+            let startKey = dayFormatter.string(from: startDate)
+            let endKey = dayFormatter.string(from: now)
+
+            let rollups = try database.fetchDailyRollups(startDate: startKey, endDate: endKey)
+            let totalTokens = rollups.reduce(0) { $0 + $1.totalTokens }
+            let totalCost = rollups.reduce(0.0) { $0 + $1.costUSD }
+
+            var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
+            var rollupsByDay: [String: [DailyRollup]] = [:]
+            for r in rollups {
+                let cur = toolTotals[r.sourceId] ?? (0, 0.0)
+                toolTotals[r.sourceId] = (cur.tokens + r.totalTokens, cur.costUSD + r.costUSD)
+                rollupsByDay[r.dayKey, default: []].append(r)
+            }
+            let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
+                .sorted { $0.tokens > $1.tokens }
+            let mostActive = toolDist.first?.tool ?? "None"
+            let projRankings = try database.fetchProjectRankings(limit: 10)
+
+            let labelFormatter = DateFormatter()
+            labelFormatter.dateFormat = (daysCount == 7) ? "E MM/dd" : "MM/dd"
+            labelFormatter.timeZone = TimeZone.current
+
+            var trendPoints: [TrendPoint] = []
+            var cur = startDate
+            while cur <= now {
+                let key = dayFormatter.string(from: cur)
+                let label = labelFormatter.string(from: cur)
+                let dayRollups = rollupsByDay[key] ?? []
+                let dTokens = dayRollups.reduce(0) { $0 + $1.totalTokens }
+                let dCost = dayRollups.reduce(0.0) { $0 + $1.costUSD }
+                trendPoints.append(TrendPoint(label: label, tokens: dTokens, costUSD: dCost))
+                guard let next = calendar.date(byAdding: .day, value: 1, to: cur) else { break }
+                cur = next
+            }
+
+            return PeriodMetrics(
+                totalTokens: totalTokens,
+                totalCostUSD: totalCost,
+                mostActiveTool: mostActive,
+                trendPoints: trendPoints,
+                toolDistribution: toolDist,
+                projectRankings: projRankings
+            )
+
+        case .pastYear:
+            guard let startDate = calendar.date(byAdding: .year, value: -1, to: now) else {
+                return PeriodMetrics(totalTokens: 0, totalCostUSD: 0, mostActiveTool: "None", trendPoints: [], toolDistribution: [], projectRankings: [])
+            }
+            let dayFormatter = DateFormatter()
+            dayFormatter.dateFormat = "yyyy-MM-dd"
+            dayFormatter.timeZone = TimeZone.current
+            let startKey = dayFormatter.string(from: startDate)
+            let endKey = dayFormatter.string(from: now)
+
+            let rollups = try database.fetchDailyRollups(startDate: startKey, endDate: endKey)
+            let totalTokens = rollups.reduce(0) { $0 + $1.totalTokens }
+            let totalCost = rollups.reduce(0.0) { $0 + $1.costUSD }
+
+            var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
+            for r in rollups {
+                let cur = toolTotals[r.sourceId] ?? (0, 0.0)
+                toolTotals[r.sourceId] = (cur.tokens + r.totalTokens, cur.costUSD + r.costUSD)
+            }
+            let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
+                .sorted { $0.tokens > $1.tokens }
+            let mostActive = toolDist.first?.tool ?? "None"
+            let projRankings = try database.fetchProjectRankings(limit: 10)
+
+            let monthFormatter = DateFormatter()
+            monthFormatter.dateFormat = "MMM yy"
+            monthFormatter.timeZone = TimeZone.current
+
+            var trendPoints: [TrendPoint] = []
+            for i in (0..<12).reversed() {
+                guard let monthDate = calendar.date(byAdding: .month, value: -i, to: now) else { continue }
+                let comp = calendar.dateComponents([.year, .month], from: monthDate)
+                guard let y = comp.year, let m = comp.month else { continue }
+                let prefix = String(format: "%04d-%02d", y, m)
+                let monthLabel = monthFormatter.string(from: monthDate)
+
+                let monthRollups = rollups.filter { $0.dayKey.hasPrefix(prefix) }
+                let mTokens = monthRollups.reduce(0) { $0 + $1.totalTokens }
+                let mCost = monthRollups.reduce(0.0) { $0 + $1.costUSD }
+                trendPoints.append(TrendPoint(label: monthLabel, tokens: mTokens, costUSD: mCost))
+            }
+
+            return PeriodMetrics(
+                totalTokens: totalTokens,
+                totalCostUSD: totalCost,
+                mostActiveTool: mostActive,
+                trendPoints: trendPoints,
+                toolDistribution: toolDist,
+                projectRankings: projRankings
+            )
+
+        case .year(let year):
+            let rollups = try database.fetchDailyRollups(forYear: year)
+            let totalTokens = rollups.reduce(0) { $0 + $1.totalTokens }
+            let totalCost = rollups.reduce(0.0) { $0 + $1.costUSD }
+
+            var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
+            for r in rollups {
+                let cur = toolTotals[r.sourceId] ?? (0, 0.0)
+                toolTotals[r.sourceId] = (cur.tokens + r.totalTokens, cur.costUSD + r.costUSD)
+            }
+            let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
+                .sorted { $0.tokens > $1.tokens }
+            let mostActive = toolDist.first?.tool ?? "None"
+            let projRankings = try database.fetchProjectRankings(limit: 10)
+
+            let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            var trendPoints: [TrendPoint] = []
+            for m in 1...12 {
+                let prefix = String(format: "%04d-%02d", year, m)
+                let monthRollups = rollups.filter { $0.dayKey.hasPrefix(prefix) }
+                let mTokens = monthRollups.reduce(0) { $0 + $1.totalTokens }
+                let mCost = monthRollups.reduce(0.0) { $0 + $1.costUSD }
+                trendPoints.append(TrendPoint(label: monthNames[m - 1], tokens: mTokens, costUSD: mCost))
+            }
+
+            return PeriodMetrics(
+                totalTokens: totalTokens,
+                totalCostUSD: totalCost,
+                mostActiveTool: mostActive,
+                trendPoints: trendPoints,
+                toolDistribution: toolDist,
+                projectRankings: projRankings
+            )
+        }
     }
 }

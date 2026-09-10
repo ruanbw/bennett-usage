@@ -86,4 +86,52 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertEqual(distribution[2].tool, "claude")
         XCTAssertEqual(distribution[2].tokens, 300)
     }
+
+    func testFetchPeriodMetricsLast24Hours() async throws {
+        let now = Date()
+        let halfHourAgo = now.addingTimeInterval(-1800)
+        let twentyFiveHoursAgo = now.addingTimeInterval(-25 * 3600)
+
+        let r1 = UnifiedTokenRecord(
+            id: "24h_1", sourceId: "omp", timestamp: halfHourAgo, dayKey: "2026-09-11",
+            sessionKey: "s1", projectFolder: "/tmp/proj1", model: "m", provider: nil,
+            inputTokens: 500, outputTokens: 500, rawCostUSD: 0.10
+        )
+        let r2 = UnifiedTokenRecord(
+            id: "24h_2", sourceId: "pi", timestamp: twentyFiveHoursAgo, dayKey: "2026-09-10",
+            sessionKey: "s2", projectFolder: "/tmp/proj2", model: "m", provider: nil,
+            inputTokens: 1000, outputTokens: 1000, rawCostUSD: 0.20
+        )
+        try db.insertRecords([r1, r2])
+
+        let metrics = try await aggregator.fetchPeriodMetrics(range: .last24Hours)
+        XCTAssertEqual(metrics.totalTokens, 1000)
+        XCTAssertEqual(metrics.totalCostUSD, 0.10, accuracy: 0.0001)
+        XCTAssertEqual(metrics.mostActiveTool, "omp")
+        XCTAssertEqual(metrics.trendPoints.count, 24)
+    }
+
+    func testFetchPeriodMetricsToday() async throws {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone.current
+        let todayKey = formatter.string(from: Date())
+
+        let r1 = UnifiedTokenRecord(
+            id: "td_1", sourceId: "omp", timestamp: Date(), dayKey: todayKey,
+            sessionKey: "s1", projectFolder: "/tmp/proj1", model: "m", provider: nil,
+            inputTokens: 300, outputTokens: 200, rawCostUSD: 0.05
+        )
+        try db.insertRecords([r1])
+
+        let metrics = try await aggregator.fetchPeriodMetrics(range: .today)
+        XCTAssertEqual(metrics.totalTokens, 500)
+        XCTAssertEqual(metrics.totalCostUSD, 0.05, accuracy: 0.0001)
+        XCTAssertEqual(metrics.trendPoints.count, 24)
+    }
+
+    func testFetchRollingHeatmap() async throws {
+        let cells = try await aggregator.fetchHeatmap(range: .pastYear)
+        XCTAssertGreaterThanOrEqual(cells.count, 365)
+    }
 }

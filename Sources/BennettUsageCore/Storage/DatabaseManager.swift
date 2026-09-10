@@ -255,6 +255,132 @@ public final class DatabaseManager: @unchecked Sendable {
         return result
     }
 
+    public func fetchDailyRollups(startDate: String, endDate: String) throws -> [DailyRollup] {
+        lock.lock(); defer { lock.unlock() }
+        let sql = "SELECT day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd FROM daily_rollups WHERE day_key >= ? AND day_key <= ? ORDER BY day_key ASC;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 9, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare daily rollups range fetch statement: \(lastErrorMessage())"])
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, (startDate as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 2, (endDate as NSString).utf8String, -1, nil)
+        var result: [DailyRollup] = []
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_ROW {
+                let dayKey = String(cString: sqlite3_column_text(stmt, 0))
+                let sourceId = String(cString: sqlite3_column_text(stmt, 1))
+                let totalTokens = Int(sqlite3_column_int(stmt, 2))
+                let inputTokens = Int(sqlite3_column_int(stmt, 3))
+                let outputTokens = Int(sqlite3_column_int(stmt, 4))
+                let cacheTokens = Int(sqlite3_column_int(stmt, 5))
+                let costUSD = sqlite3_column_double(stmt, 6)
+                result.append(DailyRollup(
+                    dayKey: dayKey,
+                    sourceId: sourceId,
+                    totalTokens: totalTokens,
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens,
+                    cacheTokens: cacheTokens,
+                    costUSD: costUSD
+                ))
+            } else if step == SQLITE_DONE {
+                break
+            } else {
+                throw NSError(domain: "DatabaseManager", code: 10, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch daily rollups range: \(lastErrorMessage())"])
+            }
+        }
+        return result
+    }
+
+    public func fetchRecords(sinceTimestamp: Int64) throws -> [UnifiedTokenRecord] {
+        lock.lock(); defer { lock.unlock() }
+        let sql = """
+        SELECT id, source_id, timestamp, day_key, session_key, project_folder, model, provider,
+               input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd
+        FROM unified_token_records
+        WHERE timestamp >= ?
+        ORDER BY timestamp ASC;
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 15, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare fetchRecords statement: \(lastErrorMessage())"])
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_int64(stmt, 1, sinceTimestamp)
+        var result: [UnifiedTokenRecord] = []
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_ROW {
+                let id = String(cString: sqlite3_column_text(stmt, 0))
+                let sourceId = String(cString: sqlite3_column_text(stmt, 1))
+                let timestamp = Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 2)) / 1000.0)
+                let dayKey = String(cString: sqlite3_column_text(stmt, 3))
+                let sessionKey = String(cString: sqlite3_column_text(stmt, 4))
+                let projectFolder: String? = sqlite3_column_type(stmt, 5) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 5)) : nil
+                let model = String(cString: sqlite3_column_text(stmt, 6))
+                let provider: String? = sqlite3_column_type(stmt, 7) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 7)) : nil
+                let inputTokens = Int(sqlite3_column_int(stmt, 8))
+                let outputTokens = Int(sqlite3_column_int(stmt, 9))
+                let cacheReadTokens = Int(sqlite3_column_int(stmt, 10))
+                let cacheWriteTokens = Int(sqlite3_column_int(stmt, 11))
+                let rawCostUSD: Double? = sqlite3_column_type(stmt, 13) != SQLITE_NULL ? sqlite3_column_double(stmt, 13) : nil
+
+                result.append(UnifiedTokenRecord(
+                    id: id,
+                    sourceId: sourceId,
+                    timestamp: timestamp,
+                    dayKey: dayKey,
+                    sessionKey: sessionKey,
+                    projectFolder: projectFolder,
+                    model: model,
+                    provider: provider,
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens,
+                    cacheReadTokens: cacheReadTokens,
+                    cacheWriteTokens: cacheWriteTokens,
+                    rawCostUSD: rawCostUSD
+                ))
+            } else if step == SQLITE_DONE {
+                break
+            } else {
+                throw NSError(domain: "DatabaseManager", code: 16, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch records: \(lastErrorMessage())"])
+            }
+        }
+        return result
+    }
+
+    public func fetchAvailableYears() throws -> [Int] {
+        lock.lock(); defer { lock.unlock() }
+        let sql = "SELECT DISTINCT substr(day_key, 1, 4) AS yr FROM daily_rollups ORDER BY yr DESC;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 17, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare available years query: \(lastErrorMessage())"])
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var years: [Int] = []
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_ROW {
+                if let text = sqlite3_column_text(stmt, 0) {
+                    let str = String(cString: text)
+                    if let y = Int(str) {
+                        years.append(y)
+                    }
+                }
+            } else if step == SQLITE_DONE {
+                break
+            } else {
+                throw NSError(domain: "DatabaseManager", code: 18, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch available years: \(lastErrorMessage())"])
+            }
+        }
+        return years
+    }
+
     public func fetchProjectRankings(limit: Int = 10) throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
         lock.lock(); defer { lock.unlock() }
         let sql = """

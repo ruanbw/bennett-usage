@@ -160,4 +160,66 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(rollups[0].totalTokens, 1800)
         XCTAssertEqual(rollups[0].costUSD, 0.05, accuracy: 0.0001)
     }
+
+    func testFetchDailyRollupsDateRange() throws {
+        let record1 = UnifiedTokenRecord(
+            id: "r1", sourceId: "omp", timestamp: Date(), dayKey: "2026-09-01",
+            sessionKey: "s1", projectFolder: "/proj", model: "m", provider: "p",
+            inputTokens: 100, outputTokens: 50, rawCostUSD: 0.01
+        )
+        let record2 = UnifiedTokenRecord(
+            id: "r2", sourceId: "omp", timestamp: Date(), dayKey: "2026-09-05",
+            sessionKey: "s2", projectFolder: "/proj", model: "m", provider: "p",
+            inputTokens: 200, outputTokens: 100, rawCostUSD: 0.02
+        )
+        let record3 = UnifiedTokenRecord(
+            id: "r3", sourceId: "omp", timestamp: Date(), dayKey: "2026-09-10",
+            sessionKey: "s3", projectFolder: "/proj", model: "m", provider: "p",
+            inputTokens: 300, outputTokens: 150, rawCostUSD: 0.03
+        )
+        try db.insertRecords([record1, record2, record3])
+
+        let rangeRollups = try db.fetchDailyRollups(startDate: "2026-09-03", endDate: "2026-09-08")
+        XCTAssertEqual(rangeRollups.count, 1)
+        XCTAssertEqual(rangeRollups[0].dayKey, "2026-09-05")
+        XCTAssertEqual(rangeRollups[0].totalTokens, 300)
+    }
+
+    func testFetchRecordsSinceTimestamp() throws {
+        let t0 = Date(timeIntervalSince1970: 1700000000)
+        let t1 = Date(timeIntervalSince1970: 1700003600) // +1h
+        let r1 = UnifiedTokenRecord(
+            id: "r1", sourceId: "omp", timestamp: t0, dayKey: "2026-09-01",
+            sessionKey: "s1", projectFolder: "/proj", model: "m", provider: "p",
+            inputTokens: 10, outputTokens: 10
+        )
+        let r2 = UnifiedTokenRecord(
+            id: "r2", sourceId: "pi", timestamp: t1, dayKey: "2026-09-01",
+            sessionKey: "s2", projectFolder: "/proj", model: "m", provider: "p",
+            inputTokens: 20, outputTokens: 20
+        )
+        try db.insertRecords([r1, r2])
+
+        let recent = try db.fetchRecords(sinceTimestamp: Int64(t1.timeIntervalSince1970 * 1000))
+        XCTAssertEqual(recent.count, 1)
+        XCTAssertEqual(recent[0].id, "r2")
+        XCTAssertEqual(recent[0].sourceId, "pi")
+    }
+
+    func testFetchAvailableYears() throws {
+        let r1 = UnifiedTokenRecord(
+            id: "r1", sourceId: "omp", timestamp: Date(), dayKey: "2025-12-31",
+            sessionKey: "s1", projectFolder: "/proj", model: "m", provider: "p",
+            inputTokens: 10, outputTokens: 10
+        )
+        let r2 = UnifiedTokenRecord(
+            id: "r2", sourceId: "omp", timestamp: Date(), dayKey: "2026-09-01",
+            sessionKey: "s2", projectFolder: "/proj", model: "m", provider: "p",
+            inputTokens: 10, outputTokens: 10
+        )
+        try db.insertRecords([r1, r2])
+
+        let years = try db.fetchAvailableYears()
+        XCTAssertEqual(years, [2026, 2025])
+    }
 }
