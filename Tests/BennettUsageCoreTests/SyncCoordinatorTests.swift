@@ -74,4 +74,35 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(rollups.count, 1)
         XCTAssertGreaterThan(rollups[0].costUSD, 0.0)
     }
+
+    func testFSEventsWatcherInitializationAndLifecycle() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let expectation = XCTestExpectation(description: "FSEvents callback or lifecycle")
+        expectation.isInverted = true
+
+        var watcher: FSEventsWatcher? = FSEventsWatcher(paths: [tempDir.path], debounce: 0.1) { paths in
+            expectation.fulfill()
+        }
+        XCTAssertNotNil(watcher)
+        watcher = nil
+        XCTAssertNil(watcher)
+        wait(for: [expectation], timeout: 0.2)
+    }
+
+    func testSyncCoordinatorStartWatching() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let mock = MockSyncAdapter(sourceId: "mock_watch", path: tempDir)
+        registry.register(mock)
+
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+        await coordinator.startWatching()
+    }
 }

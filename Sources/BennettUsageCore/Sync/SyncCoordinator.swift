@@ -62,4 +62,13 @@ public actor SyncCoordinator {
         }
         return totalIngested
     }
+
+    public func startWatching() {
+        let paths = registry.allAdapters().compactMap { $0.detectDefaultPath()?.path }
+        self.watcher = FSEventsWatcher(paths: paths) { [weak self] _ in
+            Task { [weak self] in
+                _ = try? await self?.syncAll()
+            }
+        }
+    }
 }

@@ -11,7 +11,7 @@ public final class FSEventsWatcher: @unchecked Sendable {
 
         var context = FSEventStreamContext(
             version: 0,
-            info: Unmanaged.passRetained(self).toOpaque(),
+            info: Unmanaged.passUnretained(self).toOpaque(),
             retain: nil,
             release: nil,
             copyDescription: nil
