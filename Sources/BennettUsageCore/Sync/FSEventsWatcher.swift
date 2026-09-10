@@ -47,9 +47,11 @@ public final class FSEventsWatcher: @unchecked Sendable {
 
     deinit {
         if let stream = stream {
-            FSEventStreamStop(stream)
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
+            queue.sync {
+                FSEventStreamStop(stream)
+                FSEventStreamInvalidate(stream)
+                FSEventStreamRelease(stream)
+            }
         }
     }
 }
