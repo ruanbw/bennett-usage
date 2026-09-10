@@ -91,7 +91,36 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case quit
     case openDashboardShortcut
     case statusItemAccessibility
+
+    // Navigation & Redesign
+    case navDashboard
+    case navSettings
+    case agentsConnected
+    case rescanNow
+    case syncedJustNow
+    case syncedMinutesAgo
+    case filterAllAgents
+    case clearFocus
+    case agentHealthSection
+    case pricingSection
+    case storageSection
+    case exchangeRateLabel
+    case preferredCurrencyLabel
+    case revealInFinder
+    case rebuildRollups
+    case clearAllRecords
+    case clearRecordsConfirmTitle
+    case clearRecordsConfirmMessage
+    case autoRefreshLabel
+    case autoRefreshOff
+    case autoRefreshSeconds
+    case storageStatus
+    case generalSettings
+    case usdOption
+    case cnyOption
 }
+
+public typealias LocalizationKey = LocalizedKey
 
 /// Global localization manager supporting instant reactive language switching,
 /// system fallback, persistence, and dynamic registration of new languages.
@@ -282,7 +311,34 @@ private let englishDictionary: [LocalizedKey: String] = [
     .syncNow: "Sync Now",
     .quit: "Quit",
     .openDashboardShortcut: "Open Dashboard (⌘D)",
-    .statusItemAccessibility: "Bennett Usage"
+    .statusItemAccessibility: "Bennett Usage",
+
+    // Navigation & Redesign
+    .navDashboard: "Dashboard",
+    .navSettings: "Settings",
+    .agentsConnected: "%d Agents Connected",
+    .rescanNow: "Sync Now",
+    .syncedJustNow: "Synced just now",
+    .syncedMinutesAgo: "Synced %d mins ago",
+    .filterAllAgents: "All Agents",
+    .clearFocus: "Clear Focus",
+    .agentHealthSection: "Agent Data Sources & Health Diagnostics",
+    .pricingSection: "Pricing & Currency",
+    .storageSection: "Storage & Maintenance",
+    .exchangeRateLabel: "USD ⇄ CNY Exchange Rate",
+    .preferredCurrencyLabel: "Preferred Currency",
+    .revealInFinder: "Reveal in Finder",
+    .rebuildRollups: "Rebuild Aggregates",
+    .clearAllRecords: "Clear All Records...",
+    .clearRecordsConfirmTitle: "Clear All Local Usage Records?",
+    .clearRecordsConfirmMessage: "This will reset the local database. If raw agent logs remain, they will be rescanned on next sync.",
+    .autoRefreshLabel: "Auto Refresh Interval",
+    .autoRefreshOff: "Manual",
+    .autoRefreshSeconds: "%d seconds",
+    .storageStatus: "%d records · %@ on disk",
+    .generalSettings: "General Settings",
+    .usdOption: "USD ($)",
+    .cnyOption: "CNY (¥)"
 ]
 
 private let chineseDictionary: [LocalizedKey: String] = [
@@ -353,5 +409,32 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .syncNow: "立即同步",
     .quit: "退出",
     .openDashboardShortcut: "打开数据看板 (⌘D)",
-    .statusItemAccessibility: "Bennett Usage"
+    .statusItemAccessibility: "Bennett Usage",
+
+    // Navigation & Redesign
+    .navDashboard: "用量看板",
+    .navSettings: "系统设置",
+    .agentsConnected: "%d 个 Agent 正常",
+    .rescanNow: "立即同步",
+    .syncedJustNow: "刚刚同步",
+    .syncedMinutesAgo: "%d 分钟前同步",
+    .filterAllAgents: "全部 Agent",
+    .clearFocus: "清除聚焦",
+    .agentHealthSection: "Agent 数据源接入与状态诊断",
+    .pricingSection: "计价与货币",
+    .storageSection: "数据存储与维护",
+    .exchangeRateLabel: "USD ⇄ CNY 参考汇率",
+    .preferredCurrencyLabel: "主显示币种",
+    .revealInFinder: "在访达中显示",
+    .rebuildRollups: "重新聚合数据",
+    .clearAllRecords: "清空所有记录...",
+    .clearRecordsConfirmTitle: "确定清空所有本地用量记录？",
+    .clearRecordsConfirmMessage: "此操作将重置本地记录数据库。若 Agent 原始日志仍然存在，下次同步将重新扫描收录。",
+    .autoRefreshLabel: "自动刷新频率",
+    .autoRefreshOff: "手动刷新",
+    .autoRefreshSeconds: "%d 秒",
+    .storageStatus: "%d 条用量记录 · 占用空间约 %@",
+    .generalSettings: "通用设置",
+    .usdOption: "美元 USD ($)",
+    .cnyOption: "人民币 CNY (¥)"
 ]

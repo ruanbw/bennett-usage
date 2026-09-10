@@ -1,13 +1,82 @@
 import Foundation
 
+public enum PreferredCurrency: String, Sendable, CaseIterable, Codable {
+    case usd
+    case cny
+}
+
 public final class PricingEngine: @unchecked Sendable {
     public static let shared = PricingEngine()
+    public static let rateUserDefaultsKey = "bennett_usd_to_cny_rate"
+    public static let currencyUserDefaultsKey = "bennett_preferred_currency"
+
     private var rules: [ModelPricing] = []
     private let lock = NSLock()
-    public var usdToCnyRate: Double = 7.20
+    private var _usdToCnyRate: Double = 7.30
+    private var _preferredCurrency: PreferredCurrency = .usd
+
+    public var usdToCnyRate: Double {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _usdToCnyRate
+        }
+        set {
+            setExchangeRate(newValue)
+        }
+    }
+
+    public var preferredCurrency: PreferredCurrency {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _preferredCurrency
+        }
+        set {
+            setPreferredCurrency(newValue)
+        }
+    }
 
     public init() {
         self.rules = Self.defaultRules()
+        let savedRate = UserDefaults.standard.double(forKey: Self.rateUserDefaultsKey)
+        if savedRate > 0 {
+            self._usdToCnyRate = savedRate
+        } else {
+            self._usdToCnyRate = 7.30
+        }
+
+        if let savedCurrencyRaw = UserDefaults.standard.string(forKey: Self.currencyUserDefaultsKey),
+           let savedCurrency = PreferredCurrency(rawValue: savedCurrencyRaw) {
+            self._preferredCurrency = savedCurrency
+        } else {
+            self._preferredCurrency = .usd
+        }
+    }
+
+    public func setExchangeRate(_ rate: Double) {
+        lock.lock()
+        _usdToCnyRate = rate
+        lock.unlock()
+        UserDefaults.standard.set(rate, forKey: Self.rateUserDefaultsKey)
+    }
+
+    public func setPreferredCurrency(_ currency: PreferredCurrency) {
+        lock.lock()
+        _preferredCurrency = currency
+        lock.unlock()
+        UserDefaults.standard.set(currency.rawValue, forKey: Self.currencyUserDefaultsKey)
+    }
+
+    public func spendString(_ costUSD: Double) -> String {
+        let rate = usdToCnyRate
+        let currency = preferredCurrency
+        switch currency {
+        case .usd:
+            return "$\(String(format: "%.2f", costUSD)) (¥\(String(format: "%.2f", costUSD * rate)))"
+        case .cny:
+            return "¥\(String(format: "%.2f", costUSD * rate)) ($\(String(format: "%.2f", costUSD)))"
+        }
     }
 
     public static func defaultRules() -> [ModelPricing] {

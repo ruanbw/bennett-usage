@@ -48,10 +48,59 @@ final class PricingEngineTests: XCTestCase {
     }
 
     func testUsdToCnyDefaultAndCustomRate() {
+        let originalRate = UserDefaults.standard.double(forKey: "bennett_usd_to_cny_rate")
+        defer {
+            if originalRate > 0 {
+                UserDefaults.standard.set(originalRate, forKey: "bennett_usd_to_cny_rate")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "bennett_usd_to_cny_rate")
+            }
+        }
+        UserDefaults.standard.removeObject(forKey: "bennett_usd_to_cny_rate")
         let engine = PricingEngine()
-        XCTAssertEqual(engine.usdToCnyRate, 7.20)
+        XCTAssertEqual(engine.usdToCnyRate, 7.30, accuracy: 0.001)
         engine.usdToCnyRate = 7.25
-        XCTAssertEqual(engine.usdToCnyRate, 7.25)
+        XCTAssertEqual(engine.usdToCnyRate, 7.25, accuracy: 0.001)
+    }
+
+    func testDynamicExchangeRateAndPreferredCurrency() {
+        let originalRate = UserDefaults.standard.double(forKey: "bennett_usd_to_cny_rate")
+        let originalCurrency = UserDefaults.standard.string(forKey: "bennett_preferred_currency")
+        defer {
+            if originalRate > 0 {
+                UserDefaults.standard.set(originalRate, forKey: "bennett_usd_to_cny_rate")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "bennett_usd_to_cny_rate")
+            }
+            if let originalCurrency = originalCurrency {
+                UserDefaults.standard.set(originalCurrency, forKey: "bennett_preferred_currency")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "bennett_preferred_currency")
+            }
+        }
+
+        UserDefaults.standard.removeObject(forKey: "bennett_usd_to_cny_rate")
+        UserDefaults.standard.removeObject(forKey: "bennett_preferred_currency")
+
+        let freshEngine = PricingEngine()
+        XCTAssertEqual(freshEngine.usdToCnyRate, 7.30, accuracy: 0.001)
+        XCTAssertEqual(freshEngine.preferredCurrency, .usd)
+
+        freshEngine.setExchangeRate(7.25)
+        XCTAssertEqual(freshEngine.usdToCnyRate, 7.25, accuracy: 0.001)
+        XCTAssertEqual(UserDefaults.standard.double(forKey: "bennett_usd_to_cny_rate"), 7.25, accuracy: 0.001)
+
+        freshEngine.setPreferredCurrency(.cny)
+        XCTAssertEqual(freshEngine.preferredCurrency, .cny)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "bennett_preferred_currency"), "cny")
+
+        // Test spendString
+        // With .cny: "¥\(costUSD * rate) ($\(costUSD))"
+        XCTAssertEqual(freshEngine.spendString(10.0), "¥72.50 ($10.00)")
+
+        // With .usd: "$\(costUSD) (¥\(costUSD * rate))"
+        freshEngine.setPreferredCurrency(.usd)
+        XCTAssertEqual(freshEngine.spendString(10.0), "$10.00 (¥72.50)")
     }
 
     func testDefaultRulesCoverage() {

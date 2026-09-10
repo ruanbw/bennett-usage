@@ -115,4 +115,44 @@ final class LocalizationTests: XCTestCase {
             XCTAssertNotEqual(en, key.rawValue, "English translation seems to be unlocalized key: \(key.rawValue)")
         }
     }
+
+    func testNewNavigationAndSettingsLocalizationKeysExist() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+        let requiredKeys: [LocalizedKey] = [
+            .navDashboard,
+            .navSettings,
+            .agentsConnected,
+            .rescanNow,
+            .syncedJustNow,
+            .syncedMinutesAgo,
+            .filterAllAgents,
+            .clearFocus,
+            .agentHealthSection,
+            .pricingSection,
+            .storageSection,
+            .exchangeRateLabel,
+            .preferredCurrencyLabel,
+            .revealInFinder,
+            .rebuildRollups,
+            .clearAllRecords,
+            .clearRecordsConfirmTitle,
+            .clearRecordsConfirmMessage,
+            .autoRefreshLabel,
+            .autoRefreshOff,
+            .autoRefreshSeconds,
+            .storageStatus,
+            .generalSettings,
+            .usdOption,
+            .cnyOption
+        ]
+
+        for key in requiredKeys {
+            let en = manager.localized(key, language: .en)
+            let zh = manager.localized(key, language: .zh)
+            XCTAssertFalse(en.isEmpty, "Missing English translation for \(key.rawValue)")
+            XCTAssertFalse(zh.isEmpty, "Missing Chinese translation for \(key.rawValue)")
+            XCTAssertNotEqual(en, key.rawValue, "English translation seems to be unlocalized key: \(key.rawValue)")
+            XCTAssertNotEqual(zh, key.rawValue, "Chinese translation seems to be unlocalized key: \(key.rawValue)")
+        }
+    }
 }
