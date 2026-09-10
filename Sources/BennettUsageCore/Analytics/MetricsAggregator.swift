@@ -114,4 +114,31 @@ public final class MetricsAggregator: Sendable {
             toolCosts: toolCosts
         )
     }
+
+    public func fetchProjectRankings(limit: Int = 10) async throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
+        try database.fetchProjectRankings(limit: limit)
+    }
+
+    public func fetchAnnualSummary(year: Int) async throws -> (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String) {
+        let rollups = try database.fetchDailyRollups(forYear: year)
+        let annualTokens = rollups.reduce(0) { $0 + $1.totalTokens }
+        let annualCostUSD = rollups.reduce(0.0) { $0 + $1.costUSD }
+        var toolTokens: [String: Int] = [:]
+        for r in rollups {
+            toolTokens[r.sourceId, default: 0] += r.totalTokens
+        }
+        let mostActiveTool = toolTokens.max(by: { $0.value < $1.value })?.key ?? "None"
+        return (annualTokens: annualTokens, annualCostUSD: annualCostUSD, mostActiveTool: mostActiveTool)
+    }
+
+    public func fetchToolDistribution(year: Int) async throws -> [(tool: String, tokens: Int, costUSD: Double)] {
+        let rollups = try database.fetchDailyRollups(forYear: year)
+        var tools: [String: (tokens: Int, costUSD: Double)] = [:]
+        for r in rollups {
+            let current = tools[r.sourceId] ?? (0, 0.0)
+            tools[r.sourceId] = (current.tokens + r.totalTokens, current.costUSD + r.costUSD)
+        }
+        return tools.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
+            .sorted { $0.tokens > $1.tokens }
+    }
 }

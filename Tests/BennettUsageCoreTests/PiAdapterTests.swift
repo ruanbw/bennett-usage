@@ -140,4 +140,30 @@ final class PiAdapterTests: XCTestCase {
         XCTAssertEqual(result.records[0].outputTokens, 20)
         XCTAssertEqual(result.records[0].model, "claude-3-5-haiku")
     }
+
+    func testPiAdapterNestedMessageUsageAndCwd() async throws {
+        let customFolder = tempDir.appendingPathComponent("--Users-ruanbw-projects-fallback--")
+        try FileManager.default.createDirectory(at: customFolder, withIntermediateDirectories: true)
+        let fileUrl = customFolder.appendingPathComponent("nested_session.jsonl")
+
+        let line = """
+        {"type":"message","timestamp":"2026-09-11T05:00:00.000Z","cwd":"/Users/ruanbw/custom-cwd","message":{"role":"assistant","model":"claude-3-7-sonnet","usage":{"input":1200,"output":350,"cacheRead":150,"cacheWrite":75,"cost":{"total":0.0125}}}}\n
+        """
+        try line.write(to: fileUrl, atomically: true, encoding: .utf8)
+
+        let adapter = PiAdapter()
+        let result = try await adapter.fetchIncrementalRecords(from: tempDir, since: nil)
+        XCTAssertEqual(result.records.count, 1)
+        let rec = result.records[0]
+        XCTAssertEqual(rec.sourceId, "pi")
+        XCTAssertEqual(rec.inputTokens, 1200)
+        XCTAssertEqual(rec.outputTokens, 350)
+        XCTAssertEqual(rec.cacheReadTokens, 150)
+        XCTAssertEqual(rec.cacheWriteTokens, 75)
+        XCTAssertEqual(rec.totalTokens, 1775)
+        XCTAssertEqual(rec.model, "claude-3-7-sonnet")
+        XCTAssertEqual(rec.rawCostUSD, 0.0125)
+        XCTAssertEqual(rec.projectFolder, "/Users/ruanbw/custom-cwd")
+        XCTAssertTrue(rec.id.hasPrefix("pi_--Users-ruanbw-projects-fallback--_nested_session_"))
+    }
 }

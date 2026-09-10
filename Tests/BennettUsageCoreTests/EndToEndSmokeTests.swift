@@ -7,6 +7,9 @@ final class EndToEndSmokeTests: XCTestCase {
         let registry = AdapterRegistry()
         let omp = OmpAdapter()
         let pi = PiAdapter()
+        if omp.detectDefaultPath() == nil && pi.detectDefaultPath() == nil {
+            throw XCTSkip("No local agent store found on this machine")
+        }
         registry.register(omp)
         registry.register(pi)
 

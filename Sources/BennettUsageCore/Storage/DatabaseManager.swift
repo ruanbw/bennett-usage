@@ -255,6 +255,40 @@ public final class DatabaseManager: @unchecked Sendable {
         return result
     }
 
+    public func fetchProjectRankings(limit: Int = 10) throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
+        lock.lock(); defer { lock.unlock() }
+        let sql = """
+        SELECT project_folder, SUM(total_tokens) AS sum_tokens, SUM(cost_usd) AS sum_cost
+        FROM unified_token_records
+        WHERE project_folder IS NOT NULL AND project_folder != ''
+        GROUP BY project_folder
+        ORDER BY sum_tokens DESC
+        LIMIT ?;
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 13, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare project rankings statement: \(lastErrorMessage())"])
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_int(stmt, 1, Int32(limit))
+        var result: [(project: String, totalTokens: Int, costUSD: Double)] = []
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_ROW {
+                let project = String(cString: sqlite3_column_text(stmt, 0))
+                let totalTokens = Int(sqlite3_column_int64(stmt, 1))
+                let costUSD = sqlite3_column_double(stmt, 2)
+                result.append((project: project, totalTokens: totalTokens, costUSD: costUSD))
+            } else if step == SQLITE_DONE {
+                break
+            } else {
+                throw NSError(domain: "DatabaseManager", code: 14, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch project rankings: \(lastErrorMessage())"])
+            }
+        }
+        return result
+    }
+
     public func fetchCursor(for sourceId: String) throws -> SyncCursor? {
         lock.lock(); defer { lock.unlock() }
         let sql = "SELECT cursor_payload FROM sync_cursors WHERE source_id = ?;"

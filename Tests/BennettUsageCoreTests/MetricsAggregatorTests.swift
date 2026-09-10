@@ -45,4 +45,45 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertEqual(summary.toolCosts["pi"] ?? 0.0, 0.05, accuracy: 0.0001)
         XCTAssertEqual(summary.toolCosts["omp"] ?? 0.0, 0.10, accuracy: 0.0001)
     }
+
+    func testProjectRankings() async throws {
+        let r1 = UnifiedTokenRecord(id: "p1", sourceId: "pi", timestamp: Date(), dayKey: "2026-03-01", sessionKey: "s1", projectFolder: "/Users/dev/projectA", model: "m", provider: nil, inputTokens: 1000, outputTokens: 2000, rawCostUSD: 0.10)
+        let r2 = UnifiedTokenRecord(id: "p2", sourceId: "pi", timestamp: Date(), dayKey: "2026-03-02", sessionKey: "s2", projectFolder: "/Users/dev/projectA", model: "m", provider: nil, inputTokens: 500, outputTokens: 500, rawCostUSD: 0.05)
+        let r3 = UnifiedTokenRecord(id: "p3", sourceId: "omp", timestamp: Date(), dayKey: "2026-03-03", sessionKey: "s3", projectFolder: "/Users/dev/projectB", model: "m", provider: nil, inputTokens: 100, outputTokens: 100, rawCostUSD: 0.02)
+        let r4 = UnifiedTokenRecord(id: "p4", sourceId: "omp", timestamp: Date(), dayKey: "2026-03-04", sessionKey: "s4", projectFolder: nil, model: "m", provider: nil, inputTokens: 10000, outputTokens: 10000, rawCostUSD: 1.00)
+        try db.insertRecords([r1, r2, r3, r4])
+
+        let rankings = try await aggregator.fetchProjectRankings(limit: 5)
+        XCTAssertEqual(rankings.count, 2)
+        XCTAssertEqual(rankings[0].project, "/Users/dev/projectA")
+        XCTAssertEqual(rankings[0].totalTokens, 4000)
+        XCTAssertEqual(rankings[0].costUSD, 0.15, accuracy: 0.0001)
+
+        XCTAssertEqual(rankings[1].project, "/Users/dev/projectB")
+        XCTAssertEqual(rankings[1].totalTokens, 200)
+        XCTAssertEqual(rankings[1].costUSD, 0.02, accuracy: 0.0001)
+    }
+
+    func testAnnualSummaryAndToolDistribution() async throws {
+        let r1 = UnifiedTokenRecord(id: "a1", sourceId: "pi", timestamp: Date(), dayKey: "2026-04-10", sessionKey: "s1", projectFolder: nil, model: "m", provider: nil, inputTokens: 3000, outputTokens: 2000, rawCostUSD: 0.25)
+        let r2 = UnifiedTokenRecord(id: "a2", sourceId: "omp", timestamp: Date(), dayKey: "2026-05-15", sessionKey: "s2", projectFolder: nil, model: "m", provider: nil, inputTokens: 1000, outputTokens: 500, rawCostUSD: 0.05)
+        let r3 = UnifiedTokenRecord(id: "a3", sourceId: "claude", timestamp: Date(), dayKey: "2026-06-20", sessionKey: "s3", projectFolder: nil, model: "m", provider: nil, inputTokens: 200, outputTokens: 100, rawCostUSD: 0.01)
+        try db.insertRecords([r1, r2, r3])
+
+        let summary = try await aggregator.fetchAnnualSummary(year: 2026)
+        XCTAssertEqual(summary.annualTokens, 6800)
+        XCTAssertEqual(summary.annualCostUSD, 0.31, accuracy: 0.0001)
+        XCTAssertEqual(summary.mostActiveTool, "pi")
+
+        let distribution = try await aggregator.fetchToolDistribution(year: 2026)
+        XCTAssertEqual(distribution.count, 3)
+        XCTAssertEqual(distribution[0].tool, "pi")
+        XCTAssertEqual(distribution[0].tokens, 5000)
+        XCTAssertEqual(distribution[0].costUSD, 0.25, accuracy: 0.0001)
+
+        XCTAssertEqual(distribution[1].tool, "omp")
+        XCTAssertEqual(distribution[1].tokens, 1500)
+        XCTAssertEqual(distribution[2].tool, "claude")
+        XCTAssertEqual(distribution[2].tokens, 300)
+    }
 }

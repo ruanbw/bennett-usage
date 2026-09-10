@@ -57,36 +57,90 @@ public struct PiAdapter: AgentSourceAdapter, @unchecked Sendable {
                 currentOffset += Int64(lineData.count + 1)
 
                 guard !lineData.isEmpty else { continue }
-                guard let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                      let usage = json["usage"] as? [String: Any] else {
+                guard let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
                     continue
                 }
 
-                let promptTokens = usage["prompt_tokens"] as? Int ?? usage["input_tokens"] as? Int ?? 0
-                let completionTokens = usage["completion_tokens"] as? Int ?? usage["output_tokens"] as? Int ?? 0
-                let cacheRead = usage["cache_read_tokens"] as? Int ?? 0
-                let cacheWrite = usage["cache_write_tokens"] as? Int ?? 0
+                let message = json["message"] as? [String: Any]
+                guard let usage = (message?["usage"] as? [String: Any]) ?? (json["usage"] as? [String: Any]) else {
+                    continue
+                }
 
-                let model = json["model"] as? String ?? "unknown"
+                let promptTokens = (usage["input"] as? Int)
+                    ?? (usage["prompt_tokens"] as? Int)
+                    ?? (usage["input_tokens"] as? Int)
+                    ?? ((usage["input"] as? NSNumber)?.intValue)
+                    ?? ((usage["prompt_tokens"] as? NSNumber)?.intValue)
+                    ?? ((usage["input_tokens"] as? NSNumber)?.intValue)
+                    ?? 0
+
+                let completionTokens = (usage["output"] as? Int)
+                    ?? (usage["completion_tokens"] as? Int)
+                    ?? (usage["output_tokens"] as? Int)
+                    ?? ((usage["output"] as? NSNumber)?.intValue)
+                    ?? ((usage["completion_tokens"] as? NSNumber)?.intValue)
+                    ?? ((usage["output_tokens"] as? NSNumber)?.intValue)
+                    ?? 0
+
+                let cacheRead = (usage["cacheRead"] as? Int)
+                    ?? (usage["cache_read_tokens"] as? Int)
+                    ?? ((usage["cacheRead"] as? NSNumber)?.intValue)
+                    ?? ((usage["cache_read_tokens"] as? NSNumber)?.intValue)
+                    ?? 0
+
+                let cacheWrite = (usage["cacheWrite"] as? Int)
+                    ?? (usage["cache_write_tokens"] as? Int)
+                    ?? ((usage["cacheWrite"] as? NSNumber)?.intValue)
+                    ?? ((usage["cache_write_tokens"] as? NSNumber)?.intValue)
+                    ?? 0
+
+                let rawCost: Double?
+                if let costDict = usage["cost"] as? [String: Any] {
+                    if let d = costDict["total"] as? Double {
+                        rawCost = d
+                    } else if let num = costDict["total"] as? NSNumber {
+                        rawCost = num.doubleValue
+                    } else {
+                        rawCost = nil
+                    }
+                } else if let costVal = usage["cost"] as? Double {
+                    rawCost = costVal
+                } else if let num = usage["cost"] as? NSNumber {
+                    rawCost = num.doubleValue
+                } else {
+                    rawCost = nil
+                }
+
+                let model = (message?["model"] as? String)
+                    ?? (json["model"] as? String)
+                    ?? "unknown"
+
                 var timestamp = Date()
-                if let tsStr = json["timestamp"] as? String {
+                if let tsStr = (json["timestamp"] as? String) ?? (message?["timestamp"] as? String) {
                     timestamp = isoFormatter.date(from: tsStr) ?? fallbackIso.date(from: tsStr) ?? Date()
                 }
 
-                let recordId = "pi_\(fileUrl.deletingPathExtension().lastPathComponent)_\(currentOffset)"
+                let projectFolder: String?
+                if let cwd = json["cwd"] as? String, !cwd.isEmpty {
+                    projectFolder = cwd
+                } else {
+                    projectFolder = decodedProject
+                }
+
+                let recordId = "pi_\(fileUrl.deletingLastPathComponent().lastPathComponent)_\(fileUrl.deletingPathExtension().lastPathComponent)_\(currentOffset)"
                 let record = UnifiedTokenRecord(
                     id: recordId,
                     sourceId: sourceId,
                     timestamp: timestamp,
                     sessionKey: fileUrl.lastPathComponent,
-                    projectFolder: decodedProject,
+                    projectFolder: projectFolder,
                     model: model,
                     provider: nil,
                     inputTokens: promptTokens,
                     outputTokens: completionTokens,
                     cacheReadTokens: cacheRead,
                     cacheWriteTokens: cacheWrite,
-                    rawCostUSD: nil
+                    rawCostUSD: rawCost
                 )
                 records.append(record)
             }
