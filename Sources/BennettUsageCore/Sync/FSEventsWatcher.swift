@@ -4,6 +4,7 @@ import CoreServices
 public final class FSEventsWatcher: @unchecked Sendable {
     private var stream: FSEventStreamRef?
     private let callback: @Sendable ([String]) -> Void
+    private let queue = DispatchQueue(label: "com.bennett.usage.fsevents")
 
     public init(paths: [String], debounce: TimeInterval = 1.5, callback: @escaping @Sendable ([String]) -> Void) {
         self.callback = callback
@@ -39,7 +40,7 @@ public final class FSEventsWatcher: @unchecked Sendable {
         )
 
         if let stream = stream {
-            FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+            FSEventStreamSetDispatchQueue(stream, queue)
             FSEventStreamStart(stream)
         }
     }
