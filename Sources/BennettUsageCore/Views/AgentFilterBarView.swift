@@ -24,6 +24,7 @@ public struct AgentFilterBarView: View {
         case "omp": return "Oh My Pi"
         case "claude": return "Claude Code"
         case "codex": return "OpenAI Codex"
+        case "gemini": return "Gemini CLI"
         default: return agent.capitalized
         }
     }
@@ -34,6 +35,7 @@ public struct AgentFilterBarView: View {
         case "omp": return Color(red: 0.96, green: 0.62, blue: 0.04)
         case "claude": return Color(red: 0.91, green: 0.44, blue: 0.32)
         case "codex": return Color(red: 0.05, green: 0.65, blue: 0.91)
+        case "gemini": return Color(red: 0.26, green: 0.52, blue: 0.96)
         default: return .purple
         }
     }

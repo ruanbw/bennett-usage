@@ -71,6 +71,7 @@ public struct MenuBarPopoverView: View {
                 toolRow(name: "Pi Agent", tokens: summary?.toolTokens["pi"] ?? 0, color: .green)
                 toolRow(name: "Claude Code", tokens: summary?.toolTokens["claude"] ?? 0, color: .orange)
                 toolRow(name: "OpenAI Codex", tokens: summary?.toolTokens["codex"] ?? 0, color: .teal)
+                toolRow(name: "Gemini CLI", tokens: summary?.toolTokens["gemini"] ?? 0, color: .indigo)
             }
 
             Divider()

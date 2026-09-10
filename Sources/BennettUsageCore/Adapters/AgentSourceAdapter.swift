@@ -21,6 +21,7 @@ extension AgentSourceAdapter {
         case "omp": return "~/.omp/stats.db"
         case "claude": return "~/.claude"
         case "codex": return "~/.codex"
+        case "gemini": return "~/.gemini"
         default: return ""
         }
     }
