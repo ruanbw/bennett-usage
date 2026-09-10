@@ -77,6 +77,31 @@ public struct TodaySummary: Sendable, Equatable {
     }
 }
 
+public struct AgentHealthInfo: Identifiable, Sendable {
+    public let id: String
+    public let displayName: String
+    public let defaultPath: String
+    public let isInstalled: Bool
+    public let recordCount: Int
+    public let lastRecordTimestamp: Date?
+
+    public init(
+        id: String,
+        displayName: String,
+        defaultPath: String,
+        isInstalled: Bool,
+        recordCount: Int,
+        lastRecordTimestamp: Date? = nil
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.defaultPath = defaultPath
+        self.isInstalled = isInstalled
+        self.recordCount = recordCount
+        self.lastRecordTimestamp = lastRecordTimestamp
+    }
+}
+
 public final class MetricsAggregator: Sendable {
     private let database: DatabaseManager
 
@@ -84,8 +109,12 @@ public final class MetricsAggregator: Sendable {
         self.database = database
     }
 
-    public func fetchAnnualHeatmap(year: Int) async throws -> [HeatmapDayCell] {
-        let rollups = try database.fetchDailyRollups(forYear: year)
+    public func fetchAnnualHeatmap(year: Int, toolFilter: String? = nil) async throws -> [HeatmapDayCell] {
+        var rollups = try database.fetchDailyRollups(forYear: year)
+        if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
+        }
         var rollupsByDay: [String: [DailyRollup]] = [:]
         for r in rollups {
             rollupsByDay[r.dayKey, default: []].append(r)
@@ -173,8 +202,39 @@ public final class MetricsAggregator: Sendable {
         )
     }
 
-    public func fetchProjectRankings(limit: Int = 10) async throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
-        try database.fetchProjectRankings(limit: limit)
+    public func fetchProjectRankings(limit: Int = 10, toolFilter: String? = nil) async throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
+        try database.fetchProjectRankings(limit: limit, sourceId: toolFilter)
+    }
+
+    public func fetchAgentHealthInfos() async throws -> [AgentHealthInfo] {
+        var adapters = AdapterRegistry.shared.allAdapters()
+        if adapters.isEmpty {
+            adapters = [PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter()]
+        } else {
+            let existingIds = Set(adapters.map { $0.sourceId.lowercased() })
+            let defaults: [AgentSourceAdapter] = [PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter()]
+            for def in defaults {
+                if !existingIds.contains(def.sourceId.lowercased()) {
+                    adapters.append(def)
+                }
+            }
+        }
+
+        var healthInfos: [AgentHealthInfo] = []
+        for adapter in adapters {
+            let expandedPath = (adapter.defaultPath as NSString).expandingTildeInPath
+            let isInstalled = FileManager.default.fileExists(atPath: expandedPath)
+            let stats = try database.fetchRecordStats(forSourceId: adapter.sourceId)
+            healthInfos.append(AgentHealthInfo(
+                id: adapter.sourceId,
+                displayName: adapter.displayName,
+                defaultPath: adapter.defaultPath,
+                isInstalled: isInstalled,
+                recordCount: stats.count,
+                lastRecordTimestamp: stats.lastTimestamp
+            ))
+        }
+        return healthInfos
     }
 
     public func fetchAnnualSummary(year: Int) async throws -> (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String) {
@@ -208,16 +268,16 @@ public final class MetricsAggregator: Sendable {
         return years
     }
 
-    public func fetchHeatmap(range: TimeRangeOption) async throws -> [HeatmapDayCell] {
+    public func fetchHeatmap(range: TimeRangeOption, toolFilter: String? = nil) async throws -> [HeatmapDayCell] {
         switch range {
         case .year(let year):
-            return try await fetchAnnualHeatmap(year: year)
+            return try await fetchAnnualHeatmap(year: year, toolFilter: toolFilter)
         default:
-            return try await fetchRollingHeatmap()
+            return try await fetchRollingHeatmap(toolFilter: toolFilter)
         }
     }
 
-    public func fetchRollingHeatmap() async throws -> [HeatmapDayCell] {
+    public func fetchRollingHeatmap(toolFilter: String? = nil) async throws -> [HeatmapDayCell] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone.current
         let today = Date()
@@ -232,7 +292,11 @@ public final class MetricsAggregator: Sendable {
 
         let startKey = dayFormatter.string(from: startDate)
         let endKey = dayFormatter.string(from: today)
-        let rollups = try database.fetchDailyRollups(startDate: startKey, endDate: endKey)
+        var rollups = try database.fetchDailyRollups(startDate: startKey, endDate: endKey)
+        if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
+        }
 
         var rollupsByDay: [String: [DailyRollup]] = [:]
         for r in rollups {
@@ -272,7 +336,7 @@ public final class MetricsAggregator: Sendable {
         }
     }
 
-    public func fetchPeriodMetrics(range: TimeRangeOption) async throws -> PeriodMetrics {
+    public func fetchPeriodMetrics(range: TimeRangeOption, toolFilter: String? = nil) async throws -> PeriodMetrics {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone.current
         let now = Date()
@@ -281,7 +345,11 @@ public final class MetricsAggregator: Sendable {
         case .last24Hours:
             let sinceTime = now.addingTimeInterval(-24 * 3600)
             let sinceTimestamp = Int64(sinceTime.timeIntervalSince1970 * 1000)
-            let records = try database.fetchRecords(sinceTimestamp: sinceTimestamp)
+            var records = try database.fetchRecords(sinceTimestamp: sinceTimestamp)
+            if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                records = records.filter { $0.sourceId.lowercased() == filterLower }
+            }
 
             let totalTokens = records.reduce(0) { $0 + $1.totalTokens }
             let totalCost = records.reduce(0.0) { $0 + ($1.rawCostUSD ?? 0.0) }
@@ -335,7 +403,11 @@ public final class MetricsAggregator: Sendable {
         case .today:
             let startOfToday = calendar.startOfDay(for: now)
             let sinceTimestamp = Int64(startOfToday.timeIntervalSince1970 * 1000)
-            let records = try database.fetchRecords(sinceTimestamp: sinceTimestamp)
+            var records = try database.fetchRecords(sinceTimestamp: sinceTimestamp)
+            if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                records = records.filter { $0.sourceId.lowercased() == filterLower }
+            }
 
             let totalTokens = records.reduce(0) { $0 + $1.totalTokens }
             let totalCost = records.reduce(0.0) { $0 + ($1.rawCostUSD ?? 0.0) }
@@ -394,7 +466,11 @@ public final class MetricsAggregator: Sendable {
             let startKey = dayFormatter.string(from: startDate)
             let endKey = dayFormatter.string(from: now)
 
-            let rollups = try database.fetchDailyRollups(startDate: startKey, endDate: endKey)
+            var rollups = try database.fetchDailyRollups(startDate: startKey, endDate: endKey)
+            if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
+            }
             let totalTokens = rollups.reduce(0) { $0 + $1.totalTokens }
             let totalCost = rollups.reduce(0.0) { $0 + $1.costUSD }
 
@@ -408,7 +484,7 @@ public final class MetricsAggregator: Sendable {
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: 10)
+            let projRankings = try database.fetchProjectRankings(limit: 10, sourceId: toolFilter)
 
             let labelFormatter = DateFormatter()
             labelFormatter.dateFormat = (daysCount == 7) ? "E MM/dd" : "MM/dd"
@@ -446,7 +522,11 @@ public final class MetricsAggregator: Sendable {
             let startKey = dayFormatter.string(from: startDate)
             let endKey = dayFormatter.string(from: now)
 
-            let rollups = try database.fetchDailyRollups(startDate: startKey, endDate: endKey)
+            var rollups = try database.fetchDailyRollups(startDate: startKey, endDate: endKey)
+            if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
+            }
             let totalTokens = rollups.reduce(0) { $0 + $1.totalTokens }
             let totalCost = rollups.reduce(0.0) { $0 + $1.costUSD }
 
@@ -458,7 +538,7 @@ public final class MetricsAggregator: Sendable {
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: 10)
+            let projRankings = try database.fetchProjectRankings(limit: 10, sourceId: toolFilter)
 
             let monthFormatter = DateFormatter()
             monthFormatter.dateFormat = "MMM yy"
@@ -488,7 +568,11 @@ public final class MetricsAggregator: Sendable {
             )
 
         case .year(let year):
-            let rollups = try database.fetchDailyRollups(forYear: year)
+            var rollups = try database.fetchDailyRollups(forYear: year)
+            if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
+            }
             let totalTokens = rollups.reduce(0) { $0 + $1.totalTokens }
             let totalCost = rollups.reduce(0.0) { $0 + $1.costUSD }
 
@@ -500,7 +584,7 @@ public final class MetricsAggregator: Sendable {
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: 10)
+            let projRankings = try database.fetchProjectRankings(limit: 10, sourceId: toolFilter)
 
             let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
             var trendPoints: [TrendPoint] = []

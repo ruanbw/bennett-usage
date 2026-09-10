@@ -381,23 +381,43 @@ public final class DatabaseManager: @unchecked Sendable {
         return years
     }
 
-    public func fetchProjectRankings(limit: Int = 10) throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
+    public func fetchProjectRankings(limit: Int = 10, sourceId: String? = nil) throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
         lock.lock(); defer { lock.unlock() }
-        let sql = """
-        SELECT project_folder, SUM(total_tokens) AS sum_tokens, SUM(cost_usd) AS sum_cost
-        FROM unified_token_records
-        WHERE project_folder IS NOT NULL AND project_folder != ''
-        GROUP BY project_folder
-        ORDER BY sum_tokens DESC
-        LIMIT ?;
-        """
+        let hasFilter = (sourceId != nil && !sourceId!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        let sql: String
+        if hasFilter {
+            sql = """
+            SELECT project_folder, SUM(total_tokens) AS sum_tokens, SUM(cost_usd) AS sum_cost
+            FROM unified_token_records
+            WHERE project_folder IS NOT NULL AND project_folder != '' AND LOWER(source_id) = LOWER(?)
+            GROUP BY project_folder
+            ORDER BY sum_tokens DESC
+            LIMIT ?;
+            """
+        } else {
+            sql = """
+            SELECT project_folder, SUM(total_tokens) AS sum_tokens, SUM(cost_usd) AS sum_cost
+            FROM unified_token_records
+            WHERE project_folder IS NOT NULL AND project_folder != ''
+            GROUP BY project_folder
+            ORDER BY sum_tokens DESC
+            LIMIT ?;
+            """
+        }
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw NSError(domain: "DatabaseManager", code: 13, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare project rankings statement: \(lastErrorMessage())"])
         }
         defer { sqlite3_finalize(stmt) }
 
-        sqlite3_bind_int(stmt, 1, Int32(limit))
+        if hasFilter {
+            let filter = sourceId!.trimmingCharacters(in: .whitespacesAndNewlines)
+            sqlite3_bind_text(stmt, 1, (filter as NSString).utf8String, -1, nil)
+            sqlite3_bind_int(stmt, 2, Int32(limit))
+        } else {
+            sqlite3_bind_int(stmt, 1, Int32(limit))
+        }
+
         var result: [(project: String, totalTokens: Int, costUSD: Double)] = []
         while true {
             let step = sqlite3_step(stmt)
@@ -413,6 +433,34 @@ public final class DatabaseManager: @unchecked Sendable {
             }
         }
         return result
+    }
+
+    public func fetchRecordStats(forSourceId sourceId: String) throws -> (count: Int, lastTimestamp: Date?) {
+        lock.lock(); defer { lock.unlock() }
+        let sql = "SELECT COUNT(*), MAX(timestamp) FROM unified_token_records WHERE LOWER(source_id) = LOWER(?);"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 15, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare record stats statement: \(lastErrorMessage())"])
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, (sourceId as NSString).utf8String, -1, nil)
+        let step = sqlite3_step(stmt)
+        if step == SQLITE_ROW {
+            let count = Int(sqlite3_column_int(stmt, 0))
+            let lastTimestamp: Date?
+            if sqlite3_column_type(stmt, 1) != SQLITE_NULL {
+                let ms = sqlite3_column_int64(stmt, 1)
+                lastTimestamp = Date(timeIntervalSince1970: Double(ms) / 1000.0)
+            } else {
+                lastTimestamp = nil
+            }
+            return (count: count, lastTimestamp: lastTimestamp)
+        } else if step == SQLITE_DONE {
+            return (count: 0, lastTimestamp: nil)
+        } else {
+            throw NSError(domain: "DatabaseManager", code: 16, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch record stats: \(lastErrorMessage())"])
+        }
     }
 
     public func fetchCursor(for sourceId: String) throws -> SyncCursor? {

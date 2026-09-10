@@ -6,11 +6,12 @@ public struct OmpAdapter: AgentSourceAdapter, @unchecked Sendable {
     public let displayName: String = "Oh My Pi"
     public let brandColorHex: String = "#3B82F6"
     public let sfSymbolIcon: String = "terminal.fill"
+    public let defaultPath: String = "~/.omp/stats.db"
 
     public init() {}
 
     public func detectDefaultPath() -> URL? {
-        let path = ("~/.omp/stats.db" as NSString).expandingTildeInPath
+        let path = (defaultPath as NSString).expandingTildeInPath
         let url = URL(fileURLWithPath: path)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }

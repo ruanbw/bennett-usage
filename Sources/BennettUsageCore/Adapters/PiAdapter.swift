@@ -5,11 +5,12 @@ public struct PiAdapter: AgentSourceAdapter, @unchecked Sendable {
     public let displayName: String = "Pi Agent"
     public let brandColorHex: String = "#10B981"
     public let sfSymbolIcon: String = "sparkle"
+    public let defaultPath: String = "~/.pi/agent/sessions"
 
     public init() {}
 
     public func detectDefaultPath() -> URL? {
-        let path = ("~/.pi/agent/sessions" as NSString).expandingTildeInPath
+        let path = (defaultPath as NSString).expandingTildeInPath
         let url = URL(fileURLWithPath: path)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }

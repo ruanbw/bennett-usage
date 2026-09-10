@@ -134,4 +134,91 @@ final class MetricsAggregatorTests: XCTestCase {
         let cells = try await aggregator.fetchHeatmap(range: .pastYear)
         XCTAssertGreaterThanOrEqual(cells.count, 365)
     }
+
+    func testFetchPeriodMetricsWithToolFilter() async throws {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone.current
+        let todayKey = formatter.string(from: Date())
+
+        let r1 = UnifiedTokenRecord(
+            id: "tf_1", sourceId: "claude", timestamp: Date(), dayKey: todayKey,
+            sessionKey: "s1", projectFolder: "/Users/dev/claudeProject", model: "m", provider: nil,
+            inputTokens: 100, outputTokens: 100, rawCostUSD: 0.10
+        )
+        let r2 = UnifiedTokenRecord(
+            id: "tf_2", sourceId: "pi", timestamp: Date(), dayKey: todayKey,
+            sessionKey: "s2", projectFolder: "/Users/dev/piProject", model: "m", provider: nil,
+            inputTokens: 500, outputTokens: 500, rawCostUSD: 0.50
+        )
+        try db.insertRecords([r1, r2])
+
+        let claudeMetrics = try await aggregator.fetchPeriodMetrics(range: .today, toolFilter: "claude")
+        XCTAssertEqual(claudeMetrics.totalTokens, 200)
+        XCTAssertEqual(claudeMetrics.totalCostUSD, 0.10, accuracy: 0.0001)
+        XCTAssertEqual(claudeMetrics.mostActiveTool, "claude")
+        XCTAssertEqual(claudeMetrics.toolDistribution.count, 1)
+        XCTAssertEqual(claudeMetrics.toolDistribution.first?.tool, "claude")
+        XCTAssertEqual(claudeMetrics.projectRankings.count, 1)
+        XCTAssertEqual(claudeMetrics.projectRankings.first?.project, "/Users/dev/claudeProject")
+
+        let piMetrics = try await aggregator.fetchPeriodMetrics(range: .last7Days, toolFilter: "pi")
+        XCTAssertEqual(piMetrics.totalTokens, 1000)
+        XCTAssertEqual(piMetrics.totalCostUSD, 0.50, accuracy: 0.0001)
+        XCTAssertEqual(piMetrics.mostActiveTool, "pi")
+        XCTAssertEqual(piMetrics.toolDistribution.count, 1)
+        XCTAssertEqual(piMetrics.toolDistribution.first?.tool, "pi")
+    }
+
+    func testFetchAgentHealthInfos() async throws {
+        let r1 = UnifiedTokenRecord(
+            id: "ah_1", sourceId: "claude", timestamp: Date(), dayKey: "2026-09-11",
+            sessionKey: "s1", projectFolder: nil, model: "m", provider: nil,
+            inputTokens: 100, outputTokens: 100, rawCostUSD: 0.05
+        )
+        try db.insertRecords([r1])
+
+        let healthInfos = try await aggregator.fetchAgentHealthInfos()
+        XCTAssertEqual(healthInfos.count, 4)
+        let ids = Set(healthInfos.map { $0.id })
+        XCTAssertTrue(ids.contains("pi"))
+        XCTAssertTrue(ids.contains("omp"))
+        XCTAssertTrue(ids.contains("claude"))
+        XCTAssertTrue(ids.contains("codex"))
+
+        let claudeInfo = healthInfos.first(where: { $0.id == "claude" })
+        XCTAssertNotNil(claudeInfo)
+        XCTAssertEqual(claudeInfo?.recordCount, 1)
+        XCTAssertNotNil(claudeInfo?.lastRecordTimestamp)
+    }
+
+    func testFetchHeatmapWithToolFilter() async throws {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone.current
+        let todayKey = formatter.string(from: Date())
+
+        let r1 = UnifiedTokenRecord(
+            id: "hm_1", sourceId: "claude", timestamp: Date(), dayKey: todayKey,
+            sessionKey: "s1", projectFolder: nil, model: "m", provider: nil,
+            inputTokens: 200, outputTokens: 300, rawCostUSD: 0.05
+        )
+        let r2 = UnifiedTokenRecord(
+            id: "hm_2", sourceId: "omp", timestamp: Date(), dayKey: todayKey,
+            sessionKey: "s2", projectFolder: nil, model: "m", provider: nil,
+            inputTokens: 1000, outputTokens: 1000, rawCostUSD: 0.20
+        )
+        try db.insertRecords([r1, r2])
+
+        let allCells = try await aggregator.fetchHeatmap(range: .pastYear)
+        let todayAll = allCells.first(where: { $0.dayKey == todayKey })
+        XCTAssertEqual(todayAll?.totalTokens, 2500)
+
+        let filteredCells = try await aggregator.fetchHeatmap(range: .pastYear, toolFilter: "claude")
+        let todayFiltered = filteredCells.first(where: { $0.dayKey == todayKey })
+        XCTAssertEqual(todayFiltered?.totalTokens, 500)
+        XCTAssertEqual(todayFiltered?.costUSD ?? 0.0, 0.05, accuracy: 0.0001)
+        XCTAssertEqual(todayFiltered?.toolBreakdown["claude"], 500)
+        XCTAssertNil(todayFiltered?.toolBreakdown["omp"])
+    }
 }

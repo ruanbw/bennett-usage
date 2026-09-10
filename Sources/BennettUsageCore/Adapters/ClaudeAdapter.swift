@@ -5,11 +5,12 @@ public struct ClaudeAdapter: AgentSourceAdapter, @unchecked Sendable {
     public let displayName: String = "Claude Code"
     public let brandColorHex: String = "#D97706"
     public let sfSymbolIcon: String = "brain.head.profile"
+    public let defaultPath: String = "~/.claude"
 
     public init() {}
 
     public func detectDefaultPath() -> URL? {
-        let path = ("~/.claude" as NSString).expandingTildeInPath
+        let path = (defaultPath as NSString).expandingTildeInPath
         let url = URL(fileURLWithPath: path)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }

@@ -5,11 +5,12 @@ public struct CodexAdapter: AgentSourceAdapter, @unchecked Sendable {
     public let displayName: String = "OpenAI Codex"
     public let brandColorHex: String = "#10A37F"
     public let sfSymbolIcon: String = "chevron.left.forwardslash.chevron.right"
+    public let defaultPath: String = "~/.codex"
 
     public init() {}
 
     public func detectDefaultPath() -> URL? {
-        let path = ("~/.codex" as NSString).expandingTildeInPath
+        let path = (defaultPath as NSString).expandingTildeInPath
         let url = URL(fileURLWithPath: path)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
