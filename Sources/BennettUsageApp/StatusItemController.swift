@@ -1,0 +1,88 @@
+import AppKit
+import SwiftUI
+import BennettUsageCore
+
+@MainActor
+public final class StatusItemController: NSObject {
+    private var statusItem: NSStatusItem!
+    private var popover: NSPopover!
+    private let aggregator: MetricsAggregator
+    private let syncCoordinator: SyncCoordinator
+    private var todaySummary: TodaySummary?
+    private let openDashboardAction: () -> Void
+
+    public init(
+        aggregator: MetricsAggregator,
+        syncCoordinator: SyncCoordinator,
+        openDashboardAction: @escaping () -> Void = {}
+    ) {
+        self.aggregator = aggregator
+        self.syncCoordinator = syncCoordinator
+        self.openDashboardAction = openDashboardAction
+        super.init()
+        setupStatusItem()
+        setupPopover()
+        refreshData()
+    }
+
+    private func setupStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Bennett Usage")
+            button.target = self
+            button.action = #selector(togglePopover)
+        }
+    }
+
+    private func setupPopover() {
+        popover = NSPopover()
+        popover.contentSize = NSSize(width: 320, height: 260)
+        popover.behavior = .transient
+        updatePopoverContent()
+    }
+
+    private func updatePopoverContent() {
+        let view = MenuBarPopoverView(
+            summary: todaySummary,
+            onOpenDashboard: { [weak self] in self?.openDashboardWindow() },
+            onSyncNow: { [weak self] in self?.forceSync() },
+            onQuit: { NSApp.terminate(nil) }
+        )
+        popover.contentViewController = NSHostingController(rootView: view)
+    }
+
+    @objc private func togglePopover() {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            refreshData()
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+    }
+
+    public func refreshData() {
+        Task {
+            if let summary = try? await aggregator.fetchTodaySummary() {
+                self.todaySummary = summary
+                if let button = self.statusItem.button {
+                    let kTokens = Double(summary.totalTokens) / 1000.0
+                    button.title = summary.totalTokens > 0 ? " \(String(format: "%.1fk", kTokens))" : ""
+                }
+                self.updatePopoverContent()
+            }
+        }
+    }
+
+    public func forceSync() {
+        Task {
+            _ = try? await syncCoordinator.syncAll()
+            refreshData()
+        }
+    }
+
+    private func openDashboardWindow() {
+        popover.performClose(nil)
+        openDashboardAction()
+    }
+}
