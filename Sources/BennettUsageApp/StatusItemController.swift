@@ -10,15 +10,21 @@ public final class StatusItemController: NSObject {
     private let syncCoordinator: SyncCoordinator
     private var todaySummary: TodaySummary?
     private let openDashboardAction: () -> Void
+    private let openSettingsAction: () -> Void
+    private let localization: LocalizationManager
 
     public init(
         aggregator: MetricsAggregator,
         syncCoordinator: SyncCoordinator,
-        openDashboardAction: @escaping () -> Void = {}
+        localization: LocalizationManager = .shared,
+        openDashboardAction: @escaping () -> Void = {},
+        openSettingsAction: @escaping () -> Void = {}
     ) {
         self.aggregator = aggregator
         self.syncCoordinator = syncCoordinator
+        self.localization = localization
         self.openDashboardAction = openDashboardAction
+        self.openSettingsAction = openSettingsAction
         super.init()
         setupStatusItem()
         setupPopover()
@@ -28,7 +34,7 @@ public final class StatusItemController: NSObject {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Bennett Usage")
+            button.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: localization.localized(.statusItemAccessibility))
             button.target = self
             button.action = #selector(togglePopover)
         }
@@ -44,9 +50,11 @@ public final class StatusItemController: NSObject {
     private func updatePopoverContent() {
         let view = MenuBarPopoverView(
             summary: todaySummary,
+            localization: localization,
             onOpenDashboard: { [weak self] in self?.openDashboardWindow() },
             onSyncNow: { [weak self] in self?.forceSync() },
-            onQuit: { NSApp.terminate(nil) }
+            onQuit: { NSApp.terminate(nil) },
+            onOpenSettings: { [weak self] in self?.openSettings() }
         )
         popover.contentViewController = NSHostingController(rootView: view)
     }
@@ -84,5 +92,10 @@ public final class StatusItemController: NSObject {
     private func openDashboardWindow() {
         popover.performClose(nil)
         openDashboardAction()
+    }
+
+    private func openSettings() {
+        popover.performClose(nil)
+        openSettingsAction()
     }
 }

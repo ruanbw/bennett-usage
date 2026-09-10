@@ -3,14 +3,19 @@ import SwiftUI
 public struct HeatmapGridView: View {
     public let cells: [HeatmapDayCell]
     public let onSelectDay: ((HeatmapDayCell) -> Void)?
+    public let localization: LocalizationManager
 
     @State private var hoveredCell: HeatmapDayCell?
 
-    public init(cells: [HeatmapDayCell], onSelectDay: ((HeatmapDayCell) -> Void)? = nil) {
+    public init(
+        cells: [HeatmapDayCell],
+        localization: LocalizationManager = .shared,
+        onSelectDay: ((HeatmapDayCell) -> Void)? = nil
+    ) {
         self.cells = cells
+        self.localization = localization
         self.onSelectDay = onSelectDay
     }
-
     public var weeks: [[HeatmapDayCell]] {
         var result: [[HeatmapDayCell]] = []
         var currentWeek: [HeatmapDayCell] = []
@@ -55,13 +60,13 @@ public struct HeatmapGridView: View {
             // Legend
             HStack(spacing: 4) {
                 Spacer()
-                Text("Less").font(.caption2).foregroundColor(.secondary)
+                Text(localization.localized(.less)).font(.caption2).foregroundColor(.secondary)
                 ForEach(0..<5) { level in
                     RoundedRectangle(cornerRadius: 2)
                         .fill(colorFor(intensity: level))
                         .frame(width: 10, height: 10)
                 }
-                Text("More").font(.caption2).foregroundColor(.secondary)
+                Text(localization.localized(.more)).font(.caption2).foregroundColor(.secondary)
             }
         }
         .padding(12)
@@ -81,8 +86,10 @@ public struct HeatmapGridView: View {
 
     private func tooltipText(for cell: HeatmapDayCell) -> String {
         guard cell.totalTokens > 0 else {
-            return "\(cell.dayKey): No token usage"
+            return localization.localized(.noTokenUsage, arguments: cell.dayKey)
         }
-        return "\(cell.dayKey)\nTotal Tokens: \(cell.totalTokens.formatted())\nCost: $\(String(format: "%.3f", cell.costUSD))"
+        let formattedTokens = "\(TokenFormatter.formatCompact(cell.totalTokens)) (\(TokenFormatter.formatFull(cell.totalTokens)))"
+        let detail = localization.localized(.activityDetail, arguments: formattedTokens, String(format: "%.3f", cell.costUSD))
+        return "\(cell.dayKey)\n\(detail)"
     }
 }

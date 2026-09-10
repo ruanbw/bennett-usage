@@ -3,43 +3,60 @@ import Charts
 
 public struct DashboardView: View {
     public let aggregator: MetricsAggregator
+    @ObservedObject public var localization: LocalizationManager
+    @State private var isShowingSettings: Bool
     @State private var heatmapCells: [HeatmapDayCell] = []
     @State private var todaySummary: TodaySummary?
-    @State private var annualSummary: (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String)?
-    @State private var toolDistribution: [(tool: String, tokens: Int, costUSD: Double)] = []
-    @State private var projectRankings: [(project: String, totalTokens: Int, costUSD: Double)] = []
-    @State private var selectedYear: Int = Calendar.current.component(.year, from: Date())
+    @State private var periodMetrics: PeriodMetrics?
+    @State private var selectedRange: TimeRangeOption = .last30Days
+    @State private var availableYears: [Int] = []
     @State private var selectedCell: HeatmapDayCell?
 
-    public init(aggregator: MetricsAggregator) {
+    public init(
+        aggregator: MetricsAggregator,
+        localization: LocalizationManager = .shared,
+        showSettingsInitially: Bool = false
+    ) {
         self.aggregator = aggregator
+        self.localization = localization
+        self._isShowingSettings = State(initialValue: showSettingsInitially)
     }
-
-    private struct MonthlyUsage: Identifiable {
-        var id: String { month }
-        let month: String
-        let tokens: Int
-        let costUSD: Double
-    }
-
-    private var monthlyTrend: [MonthlyUsage] {
-        let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        var tokensByMonth = Array(repeating: 0, count: 12)
-        var costByMonth = Array(repeating: 0.0, count: 12)
-
-        for cell in heatmapCells {
-            let parts = cell.dayKey.split(separator: "-")
-            if parts.count >= 2, let monthNum = Int(parts[1]), monthNum >= 1 && monthNum <= 12 {
-                tokensByMonth[monthNum - 1] += cell.totalTokens
-                costByMonth[monthNum - 1] += cell.costUSD
-            }
-        }
-
-        return (0..<12).map { i in
-            MonthlyUsage(month: monthNames[i], tokens: tokensByMonth[i], costUSD: costByMonth[i])
+    private var rangeSubtitle: String {
+        switch selectedRange {
+        case .last24Hours: return localization.localized(.range24h)
+        case .today: return localization.localized(.rangeToday)
+        case .last7Days: return localization.localized(.range7Days)
+        case .last30Days: return localization.localized(.range30Days)
+        case .pastYear: return localization.localized(.range1Year)
+        case .year(let y): return String(y)
         }
     }
 
+    private var trendTitle: String {
+        switch selectedRange {
+        case .last24Hours: return localization.localized(.hourlyTrendLast24h)
+        case .today: return localization.localized(.hourlyTrendToday)
+        case .last7Days: return localization.localized(.dailyTrendLast7Days)
+        case .last30Days: return localization.localized(.dailyTrendLast30Days)
+        case .pastYear: return localization.localized(.monthlyTrendPastYear)
+        case .year(let y): return localization.localized(.monthlyTrendYear, arguments: String(y))
+        }
+    }
+
+    private var heatmapTitle: String {
+        if case .year(let y) = selectedRange {
+            return localization.localized(.yearTitle, arguments: String(y))
+        }
+        return localization.localized(.rolling365Days)
+    }
+
+    private var toolDistribution: [(tool: String, tokens: Int, costUSD: Double)] {
+        periodMetrics?.toolDistribution ?? []
+    }
+
+    private var projectRankings: [(project: String, totalTokens: Int, costUSD: Double)] {
+        periodMetrics?.projectRankings ?? []
+    }
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -47,20 +64,56 @@ public struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Bennett Usage Analytics")
+                            Text(localization.localized(.dashboardTitle))
                                 .font(.title2).bold()
-                            Text("Unified local AI agent token usage, activity, and cost tracking")
+                            Text(localization.localized(.dashboardSubtitle))
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
                         Spacer()
-                        Picker("Year", selection: $selectedYear) {
-                            ForEach([selectedYear - 1, selectedYear, selectedYear + 1], id: \.self) { year in
-                                Text(String(year)).tag(year)
+                        HStack(spacing: 8) {
+                            Picker(localization.localized(.range), selection: $selectedRange) {
+                                Text(localization.localized(.range24h)).tag(TimeRangeOption.last24Hours)
+                                Text(localization.localized(.rangeToday)).tag(TimeRangeOption.today)
+                                Text(localization.localized(.range7Days)).tag(TimeRangeOption.last7Days)
+                                Text(localization.localized(.range30Days)).tag(TimeRangeOption.last30Days)
+                                Text(localization.localized(.range1Year)).tag(TimeRangeOption.pastYear)
                             }
+                            .pickerStyle(.segmented)
+                            .frame(width: 330)
+
+                            if !availableYears.isEmpty {
+                                Menu {
+                                    ForEach(availableYears, id: \.self) { year in
+                                        Button(String(year)) {
+                                            selectedRange = .year(year)
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        if case .year(let y) = selectedRange {
+                                            Text(String(y)).bold()
+                                        } else {
+                                            Text(localization.localized(.years))
+                                        }
+                                        Image(systemName: "chevron.down")
+                                            .font(.caption2)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                }
+                                .menuStyle(.borderlessButton)
+                            }
+
+                            Button {
+                                isShowingSettings = true
+                            } label: {
+                                Image(systemName: "gearshape")
+                                    .font(.system(size: 15))
+                            }
+                            .buttonStyle(.plain)
+                            .help(localization.localized(.settings))
                         }
-                        .pickerStyle(.segmented)
-                        .frame(width: 220)
                     }
 
                     LazyVGrid(columns: [
@@ -70,30 +123,32 @@ public struct DashboardView: View {
                         GridItem(.flexible(), spacing: 16)
                     ], spacing: 16) {
                         kpiCard(
-                            title: "Annual Tokens Total",
-                            value: (annualSummary?.annualTokens ?? 0).formatted(),
-                            subtitle: "\(String(selectedYear)) Total",
+                            title: localization.localized(.periodTokens),
+                            value: TokenFormatter.formatCompact(periodMetrics?.totalTokens ?? 0),
+                            subtitle: localization.localized(.totalTokensSuffix, arguments: rangeSubtitle),
                             icon: "flame.fill",
                             color: .purple
                         )
+                        .help(TokenFormatter.formatWithTooltip(periodMetrics?.totalTokens ?? 0).tooltip)
                         kpiCard(
-                            title: "Today's Tokens",
-                            value: (todaySummary?.totalTokens ?? 0).formatted(),
-                            subtitle: "Today",
+                            title: localization.localized(.todaysTokens),
+                            value: TokenFormatter.formatCompact(todaySummary?.totalTokens ?? 0),
+                            subtitle: localization.localized(.rangeToday),
                             icon: "bolt.fill",
                             color: .blue
                         )
+                        .help(TokenFormatter.formatWithTooltip(todaySummary?.totalTokens ?? 0).tooltip)
                         kpiCard(
-                            title: "Total Estimated Spend ($ / ¥)",
-                            value: spendString(annualSummary?.annualCostUSD ?? 0.0),
-                            subtitle: "\(String(selectedYear)) Spend",
+                            title: localization.localized(.periodSpend),
+                            value: spendString(periodMetrics?.totalCostUSD ?? 0.0),
+                            subtitle: localization.localized(.spendSuffix, arguments: rangeSubtitle),
                             icon: "dollarsign.circle.fill",
                             color: .green
                         )
                         kpiCard(
-                            title: "Most Active Agent Tool",
-                            value: toolDisplayName(annualSummary?.mostActiveTool ?? "None"),
-                            subtitle: "Leading Volume",
+                            title: localization.localized(.mostActiveAgent),
+                            value: toolDisplayName(periodMetrics?.mostActiveTool ?? localization.localized(.none)),
+                            subtitle: localization.localized(.leadingVolume),
                             icon: "sparkles",
                             color: .orange
                         )
@@ -103,32 +158,34 @@ public struct DashboardView: View {
                 // GitHub Heatmap Section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Label("Token Activity (\(String(selectedYear)))", systemImage: "calendar")
+                        Label(localization.localized(.tokenActivity, arguments: heatmapTitle), systemImage: "calendar")
                             .font(.headline)
                         Spacer()
-                        Text("\(heatmapCells.filter { $0.totalTokens > 0 }.count) active days")
+                        Text(localization.localized(.activeDaysCount, arguments: heatmapCells.filter { $0.totalTokens > 0 }.count))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
 
-                    HeatmapGridView(cells: heatmapCells) { cell in
+                    HeatmapGridView(cells: heatmapCells, localization: localization) { cell in
                         selectedCell = cell
                     }
 
                     // Selected Day Info
                     if let cell = selectedCell, cell.totalTokens > 0 {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Activity on \(cell.dayKey)")
+                            Text(localization.localized(.activityOnDay, arguments: cell.dayKey))
                                 .font(.headline)
-                            Text("Total Tokens: \(cell.totalTokens.formatted()) · Cost: $\(String(format: "%.3f", cell.costUSD))")
+                            let formattedTokens = "\(TokenFormatter.formatCompact(cell.totalTokens)) (\(TokenFormatter.formatFull(cell.totalTokens)))"
+                            Text(localization.localized(.activityDetail, arguments: formattedTokens, String(format: "%.3f", cell.costUSD)))
                                 .foregroundColor(.secondary)
                             if !cell.toolBreakdown.isEmpty {
                                 HStack(spacing: 8) {
                                     ForEach(cell.toolBreakdown.sorted(by: { $0.value > $1.value }), id: \.key) { tool, count in
                                         HStack(spacing: 4) {
                                             Circle().fill(toolColor(for: tool)).frame(width: 6, height: 6)
-                                            Text("\(toolDisplayName(tool)): \(count.formatted())")
+                                            Text("\(toolDisplayName(tool)): \(TokenFormatter.formatCompact(count))")
                                                 .font(.caption)
+                                                .help("\(toolDisplayName(tool)): \(TokenFormatter.formatFull(count)) tokens")
                                         }
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 3)
@@ -152,7 +209,7 @@ public struct DashboardView: View {
                 HStack(alignment: .top, spacing: 16) {
                     // Tool-Share Donut Chart
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Tool Share Breakdown")
+                        Text(localization.localized(.toolShareBreakdown, arguments: rangeSubtitle))
                             .font(.headline)
                         if toolDistribution.contains(where: { $0.tokens > 0 }) {
                             Chart(toolDistribution.filter { $0.tokens > 0 }, id: \.tool) { item in
@@ -172,7 +229,7 @@ public struct DashboardView: View {
                                 Image(systemName: "chart.pie")
                                     .font(.system(size: 32))
                                     .foregroundColor(.secondary.opacity(0.5))
-                                Text("No tool data for \(String(selectedYear))")
+                                Text(localization.localized(.noToolData, arguments: rangeSubtitle))
                                     .foregroundColor(.secondary)
                                     .font(.caption)
                                 Spacer()
@@ -188,12 +245,13 @@ public struct DashboardView: View {
 
                     // Monthly Activity Trend
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Monthly Token Trend")
+                        Text(trendTitle)
                             .font(.headline)
-                        if monthlyTrend.contains(where: { $0.tokens > 0 }) {
-                            Chart(monthlyTrend) { item in
+                        let trendPoints = periodMetrics?.trendPoints ?? []
+                        if trendPoints.contains(where: { $0.tokens > 0 }) {
+                            Chart(trendPoints) { item in
                                 BarMark(
-                                    x: .value("Month", item.month),
+                                    x: .value("Period", item.label),
                                     y: .value("Tokens", item.tokens)
                                 )
                                 .foregroundStyle(Color.blue.gradient)
@@ -209,7 +267,7 @@ public struct DashboardView: View {
                                 Image(systemName: "chart.bar")
                                     .font(.system(size: 32))
                                     .foregroundColor(.secondary.opacity(0.5))
-                                Text("No monthly activity recorded")
+                                Text(localization.localized(.noActivityRecorded, arguments: rangeSubtitle))
                                     .foregroundColor(.secondary)
                                     .font(.caption)
                                 Spacer()
@@ -227,10 +285,10 @@ public struct DashboardView: View {
                 // Project Drill-Down List
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Text("Top Projects Drill-Down")
+                        Text(localization.localized(.topProjectsDrillDown))
                             .font(.headline)
                         Spacer()
-                        Text("\(projectRankings.count) tracked")
+                        Text(localization.localized(.trackedProjectsCount, arguments: projectRankings.count))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -240,7 +298,7 @@ public struct DashboardView: View {
                             Image(systemName: "folder.badge.questionmark")
                                 .font(.system(size: 28))
                                 .foregroundColor(.secondary.opacity(0.5))
-                            Text("No project folders recorded yet")
+                            Text(localization.localized(.noProjectFoldersRecorded))
                                 .foregroundColor(.secondary)
                                 .font(.caption)
                         }
@@ -277,8 +335,9 @@ public struct DashboardView: View {
                                     Spacer(minLength: 20)
 
                                     VStack(alignment: .trailing, spacing: 2) {
-                                        Text("\(item.totalTokens.formatted()) tokens")
+                                        Text(localization.localized(.tokensCount, arguments: TokenFormatter.formatCompact(item.totalTokens)))
                                             .font(.subheadline).bold()
+                                            .help("\(TokenFormatter.formatFull(item.totalTokens)) tokens")
                                         Text("$\(String(format: "%.3f", item.costUSD))")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
@@ -299,17 +358,21 @@ public struct DashboardView: View {
             .padding(24)
         }
         .frame(minWidth: 960, minHeight: 700)
-        .task(id: selectedYear) {
-            await loadData(for: selectedYear)
+        .task(id: selectedRange) {
+            await loadData(for: selectedRange)
+        }
+        .sheet(isPresented: $isShowingSettings) {
+            SettingsSheetView(localization: localization) {
+                isShowingSettings = false
+            }
         }
     }
 
-    private func loadData(for year: Int) async {
+    private func loadData(for range: TimeRangeOption) async {
+        availableYears = (try? await aggregator.fetchAvailableYears()) ?? []
         todaySummary = try? await aggregator.fetchTodaySummary()
-        heatmapCells = (try? await aggregator.fetchAnnualHeatmap(year: year)) ?? []
-        annualSummary = try? await aggregator.fetchAnnualSummary(year: year)
-        toolDistribution = (try? await aggregator.fetchToolDistribution(year: year)) ?? []
-        projectRankings = (try? await aggregator.fetchProjectRankings(limit: 10)) ?? []
+        periodMetrics = try? await aggregator.fetchPeriodMetrics(range: range)
+        heatmapCells = (try? await aggregator.fetchHeatmap(range: range)) ?? []
     }
 
     private func kpiCard(title: String, value: String, subtitle: String, icon: String, color: Color) -> some View {

@@ -7,14 +7,14 @@ public final class DashboardWindowManager {
     public static let shared = DashboardWindowManager()
     private var window: NSWindow?
 
-    public func show(aggregator: MetricsAggregator, syncCoordinator: SyncCoordinator) {
+    public func show(aggregator: MetricsAggregator, syncCoordinator: SyncCoordinator, openSettings: Bool = false) {
         if let window = window {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        let view = DashboardView(aggregator: aggregator)
+        let view = DashboardView(aggregator: aggregator, showSettingsInitially: openSettings)
         let hostingController = NSHostingController(rootView: view)
 
         let newWindow = NSWindow(
@@ -23,7 +23,7 @@ public final class DashboardWindowManager {
             backing: .buffered,
             defer: false
         )
-        newWindow.title = "Bennett Usage Analytics"
+        newWindow.title = LocalizationManager.shared.localized(.dashboardTitle)
         newWindow.contentViewController = hostingController
         newWindow.center()
         newWindow.isReleasedWhenClosed = false

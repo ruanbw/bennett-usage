@@ -41,4 +41,29 @@ final class DashboardViewTests: XCTestCase {
         let view = DashboardView(aggregator: aggregator)
         XCTAssertNotNil(view.body)
     }
+
+    func testTimeRangeOptionDescriptions() {
+        XCTAssertEqual(TimeRangeOption.last24Hours.description, "24 Hours")
+        XCTAssertEqual(TimeRangeOption.today.description, "Today")
+        XCTAssertEqual(TimeRangeOption.last7Days.description, "Last 7 Days")
+        XCTAssertEqual(TimeRangeOption.last30Days.description, "Last 30 Days")
+        XCTAssertEqual(TimeRangeOption.pastYear.description, "Past Year")
+        XCTAssertEqual(TimeRangeOption.year(2026).description, "2026")
+    }
+
+    @MainActor
+    func testDashboardViewWithLocalization() throws {
+        let db = try DatabaseManager.inMemory()
+        let aggregator = MetricsAggregator(database: db)
+        let defaults = UserDefaults(suiteName: "DashboardViewTests_\(UUID().uuidString)")!
+        let localization = LocalizationManager(userDefaults: defaults)
+
+        localization.setLanguage(.zh)
+        let zhView = DashboardView(aggregator: aggregator, localization: localization, showSettingsInitially: true)
+        XCTAssertNotNil(zhView.body)
+
+        localization.setLanguage(.en)
+        let enView = DashboardView(aggregator: aggregator, localization: localization, showSettingsInitially: false)
+        XCTAssertNotNil(enView.body)
+    }
 }

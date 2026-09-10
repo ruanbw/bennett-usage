@@ -22,4 +22,14 @@ final class HeatmapGridViewTests: XCTestCase {
         XCTAssertEqual(view.weeks[0].count, 7)
         XCTAssertEqual(view.weeks[1].count, 7)
     }
+
+    @MainActor
+    func testHeatmapGridViewWithLocalization() {
+        let defaults = UserDefaults(suiteName: "HeatmapGridViewTests_\(UUID().uuidString)")!
+        let localization = LocalizationManager(userDefaults: defaults)
+        localization.setLanguage(.zh)
+
+        let view = HeatmapGridView(cells: [], localization: localization)
+        XCTAssertNotNil(view.body)
+    }
 }

@@ -59,4 +59,25 @@ final class MenuBarPopoverViewTests: XCTestCase {
 
         XCTAssertNil(view.summary)
     }
+
+    @MainActor
+    func testMenuBarPopoverViewWithSettingsAndLocalization() {
+        var settingsOpened = false
+        let defaults = UserDefaults(suiteName: "MenuBarPopoverViewTests_\(UUID().uuidString)")!
+        let localization = LocalizationManager(userDefaults: defaults)
+        localization.setLanguage(.zh)
+
+        let view = MenuBarPopoverView(
+            summary: nil,
+            localization: localization,
+            onOpenDashboard: {},
+            onSyncNow: {},
+            onQuit: {},
+            onOpenSettings: { settingsOpened = true }
+        )
+
+        XCTAssertNotNil(view.body)
+        view.onOpenSettings?()
+        XCTAssertTrue(settingsOpened)
+    }
 }

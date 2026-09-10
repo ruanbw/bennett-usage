@@ -27,8 +27,14 @@ let statusController = StatusItemController(
     syncCoordinator: coordinator,
     openDashboardAction: {
         DashboardWindowManager.shared.show(aggregator: aggregator, syncCoordinator: coordinator)
+    },
+    openSettingsAction: {
+        DashboardWindowManager.shared.show(aggregator: aggregator, syncCoordinator: coordinator, openSettings: true)
     }
 )
+if CommandLine.arguments.contains("--dashboard") || CommandLine.arguments.contains("-d") || CommandLine.arguments.contains("--open-dashboard") {
+    DashboardWindowManager.shared.show(aggregator: aggregator, syncCoordinator: coordinator)
+}
 
 // Start watching and initial background sync
 Task {
