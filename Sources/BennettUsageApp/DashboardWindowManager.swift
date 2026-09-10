@@ -18,7 +18,7 @@ public final class DashboardWindowManager {
         let hostingController = NSHostingController(rootView: view)
 
         let newWindow = NSWindow(
-            contentRect: NSRect(x: 100, y: 100, width: 960, height: 650),
+            contentRect: NSRect(x: 100, y: 100, width: 1060, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false

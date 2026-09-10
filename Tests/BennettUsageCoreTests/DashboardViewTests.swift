@@ -86,4 +86,43 @@ final class DashboardViewTests: XCTestCase {
         let view = DashboardContentView(aggregator: aggregator, localization: localization)
         XCTAssertNotNil(view.body)
     }
+
+    func testNavigationItemCases() {
+        let items = NavigationItem.allCases
+        XCTAssertEqual(items.count, 2)
+        XCTAssertTrue(items.contains(.dashboard))
+        XCTAssertTrue(items.contains(.settings))
+        XCTAssertEqual(NavigationItem.dashboard.id, "dashboard")
+        XCTAssertEqual(NavigationItem.settings.id, "settings")
+    }
+
+    @MainActor
+    func testSidebarViewInitialization() throws {
+        let defaults = UserDefaults(suiteName: "SidebarTests_\(UUID().uuidString)")!
+        let localization = LocalizationManager(userDefaults: defaults)
+        var syncCalled = false
+
+        let view = SidebarView(
+            selectedItem: .constant(.dashboard),
+            agentCount: 4,
+            isSyncing: false,
+            lastSyncDate: Date(),
+            onSyncNow: { syncCalled = true },
+            localization: localization
+        )
+        XCTAssertNotNil(view.body)
+        XCTAssertFalse(syncCalled)
+    }
+
+    @MainActor
+    func testDashboardViewNavigationItems() throws {
+        let db = try DatabaseManager.inMemory()
+        let aggregator = MetricsAggregator(database: db)
+
+        let defaultView = DashboardView(aggregator: aggregator, localization: .shared, showSettingsInitially: false)
+        XCTAssertNotNil(defaultView.body)
+
+        let settingsView = DashboardView(aggregator: aggregator, localization: .shared, showSettingsInitially: true)
+        XCTAssertNotNil(settingsView.body)
+    }
 }
