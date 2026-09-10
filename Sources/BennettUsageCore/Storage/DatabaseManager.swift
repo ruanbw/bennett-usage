@@ -4,6 +4,7 @@ import SQLite3
 public final class DatabaseManager: @unchecked Sendable {
     private var db: OpaquePointer?
     private let lock = NSRecursiveLock()
+    public let path: String
 
     public init(path: String) throws {
         var dbPointer: OpaquePointer?
@@ -13,6 +14,7 @@ public final class DatabaseManager: @unchecked Sendable {
             throw NSError(domain: "DatabaseManager", code: 1, userInfo: [NSLocalizedDescriptionKey: errMsg])
         }
         self.db = dbPointer
+        self.path = path
         try configureDatabase()
         try createTables()
     }
@@ -484,5 +486,37 @@ public final class DatabaseManager: @unchecked Sendable {
             throw NSError(domain: "DatabaseManager", code: 12, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch cursor: \(lastErrorMessage())"])
         }
         return nil
+    }
+    public func fetchTotalRecordCount() throws -> Int {
+        lock.lock(); defer { lock.unlock() }
+        let sql = "SELECT COUNT(*) FROM unified_token_records;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 19, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare total record count statement: \(lastErrorMessage())"])
+        }
+        defer { sqlite3_finalize(stmt) }
+        if sqlite3_step(stmt) == SQLITE_ROW {
+            return Int(sqlite3_column_int(stmt, 0))
+        }
+        return 0
+    }
+
+    public func rebuildDailyRollups() throws {
+        lock.lock(); defer { lock.unlock() }
+        try execute(sql: "DELETE FROM daily_rollups;")
+        let sql = """
+        INSERT INTO daily_rollups (day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd)
+        SELECT day_key, source_id, SUM(total_tokens), SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens + cache_write_tokens), SUM(cost_usd)
+        FROM unified_token_records
+        GROUP BY day_key, source_id;
+        """
+        try execute(sql: sql)
+    }
+
+    public func clearAllRecords() throws {
+        lock.lock(); defer { lock.unlock() }
+        try execute(sql: "DELETE FROM unified_token_records;")
+        try execute(sql: "DELETE FROM daily_rollups;")
+        try execute(sql: "DELETE FROM sync_cursors;")
     }
 }

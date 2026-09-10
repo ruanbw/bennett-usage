@@ -109,6 +109,22 @@ public final class MetricsAggregator: Sendable {
         self.database = database
     }
 
+    public var databasePath: String {
+        database.path
+    }
+
+    public func rebuildDailyRollups() async throws {
+        try database.rebuildDailyRollups()
+    }
+
+    public func clearAllRecords() async throws {
+        try database.clearAllRecords()
+    }
+
+    public func fetchTotalRecordCount() async throws -> Int {
+        try database.fetchTotalRecordCount()
+    }
+
     public func fetchAnnualHeatmap(year: Int, toolFilter: String? = nil) async throws -> [HeatmapDayCell] {
         var rollups = try database.fetchDailyRollups(forYear: year)
         if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
