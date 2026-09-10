@@ -16,7 +16,9 @@ final class EndToEndSmokeTests: XCTestCase {
         let aggregator = MetricsAggregator(database: db)
         let heatmap = try await aggregator.fetchAnnualHeatmap(year: 2026)
         
+        XCTAssertGreaterThan(ingested, 0, "Expected to ingest real records from local ~/.omp or ~/.pi")
         XCTAssertTrue(heatmap.count >= 365)
+        XCTAssertTrue(heatmap.contains { $0.totalTokens > 0 }, "Expected at least one day in heatmap with totalTokens > 0")
         print("Successfully synced \(ingested) real records from local environment.")
     }
 }
