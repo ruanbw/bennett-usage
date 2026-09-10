@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct HeatmapGridView: View {
     public let cells: [HeatmapDayCell]
+    public let selectedDayKey: String?
     public let onSelectDay: ((HeatmapDayCell) -> Void)?
     public let localization: LocalizationManager
 
@@ -9,10 +10,12 @@ public struct HeatmapGridView: View {
 
     public init(
         cells: [HeatmapDayCell],
+        selectedDayKey: String? = nil,
         localization: LocalizationManager = .shared,
         onSelectDay: ((HeatmapDayCell) -> Void)? = nil
     ) {
         self.cells = cells
+        self.selectedDayKey = selectedDayKey
         self.localization = localization
         self.onSelectDay = onSelectDay
     }
@@ -43,7 +46,11 @@ public struct HeatmapGridView: View {
                                 .frame(width: 11, height: 11)
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 2)
-                                        .stroke(hoveredCell?.id == cell.id ? Color.primary : Color.clear, lineWidth: 1)
+                                        .stroke(
+                                            cell.dayKey == selectedDayKey ? Color.accentColor :
+                                            hoveredCell?.id == cell.id ? Color.primary : Color.clear,
+                                            lineWidth: cell.dayKey == selectedDayKey ? 1.5 : 1
+                                        )
                                 )
                                 .onHover { isHovered in
                                     hoveredCell = isHovered ? cell : nil
