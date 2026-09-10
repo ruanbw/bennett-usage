@@ -362,7 +362,7 @@ public struct DashboardView: View {
             await loadData(for: selectedRange)
         }
         .sheet(isPresented: $isShowingSettings) {
-            SettingsSheetView(localization: localization) {
+            SettingsSheetView(aggregator: aggregator, localization: localization) {
                 isShowingSettings = false
             }
         }

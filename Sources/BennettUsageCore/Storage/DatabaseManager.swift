@@ -503,20 +503,34 @@ public final class DatabaseManager: @unchecked Sendable {
 
     public func rebuildDailyRollups() throws {
         lock.lock(); defer { lock.unlock() }
-        try execute(sql: "DELETE FROM daily_rollups;")
-        let sql = """
-        INSERT INTO daily_rollups (day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd)
-        SELECT day_key, source_id, SUM(total_tokens), SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens + cache_write_tokens), SUM(cost_usd)
-        FROM unified_token_records
-        GROUP BY day_key, source_id;
-        """
-        try execute(sql: sql)
+        try execute(sql: "BEGIN TRANSACTION;")
+        do {
+            try execute(sql: "DELETE FROM daily_rollups;")
+            let sql = """
+            INSERT INTO daily_rollups (day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd)
+            SELECT day_key, source_id, SUM(total_tokens), SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens + cache_write_tokens), SUM(cost_usd)
+            FROM unified_token_records
+            GROUP BY day_key, source_id;
+            """
+            try execute(sql: sql)
+            try execute(sql: "COMMIT;")
+        } catch {
+            try? execute(sql: "ROLLBACK;")
+            throw error
+        }
     }
 
     public func clearAllRecords() throws {
         lock.lock(); defer { lock.unlock() }
-        try execute(sql: "DELETE FROM unified_token_records;")
-        try execute(sql: "DELETE FROM daily_rollups;")
-        try execute(sql: "DELETE FROM sync_cursors;")
+        try execute(sql: "BEGIN TRANSACTION;")
+        do {
+            try execute(sql: "DELETE FROM unified_token_records;")
+            try execute(sql: "DELETE FROM daily_rollups;")
+            try execute(sql: "DELETE FROM sync_cursors;")
+            try execute(sql: "COMMIT;")
+        } catch {
+            try? execute(sql: "ROLLBACK;")
+            throw error
+        }
     }
 }
