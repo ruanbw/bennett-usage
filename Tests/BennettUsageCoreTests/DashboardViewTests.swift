@@ -66,4 +66,24 @@ final class DashboardViewTests: XCTestCase {
         let enView = DashboardView(aggregator: aggregator, localization: localization, showSettingsInitially: false)
         XCTAssertNotNil(enView.body)
     }
+
+    @MainActor
+    func testDashboardContentViewInitialization() throws {
+        let db = try DatabaseManager.inMemory()
+        let aggregator = MetricsAggregator(database: db)
+        let contentView = DashboardContentView(aggregator: aggregator)
+        XCTAssertNotNil(contentView.body)
+    }
+
+    @MainActor
+    func testDashboardContentViewWithLocalization() throws {
+        let db = try DatabaseManager.inMemory()
+        let aggregator = MetricsAggregator(database: db)
+        let defaults = UserDefaults(suiteName: "DashboardContentTests_\(UUID().uuidString)")!
+        let localization = LocalizationManager(userDefaults: defaults)
+        localization.setLanguage(.zh)
+
+        let view = DashboardContentView(aggregator: aggregator, localization: localization)
+        XCTAssertNotNil(view.body)
+    }
 }
