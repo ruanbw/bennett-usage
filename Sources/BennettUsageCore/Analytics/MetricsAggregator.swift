@@ -308,16 +308,38 @@ public final class MetricsAggregator: Sendable {
         return healthInfos
     }
 
-    public func fetchAnnualSummary(year: Int) async throws -> (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String) {
-        let rollups = try database.fetchDailyRollups(forYear: year)
+    public func fetchAnnualSummary(year: Int, toolFilter: String? = nil) async throws -> (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String, activeDays: Int, totalDays: Int) {
+        var rollups = try database.fetchDailyRollups(forYear: year)
+        if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
+        }
         let annualTokens = rollups.reduce(0) { $0 + $1.totalTokens }
         let annualCostUSD = rollups.reduce(0.0) { $0 + $1.costUSD }
         var toolTokens: [String: Int] = [:]
+        var dayTokens: [String: Int] = [:]
         for r in rollups {
             toolTokens[r.sourceId, default: 0] += r.totalTokens
+            dayTokens[r.dayKey, default: 0] += r.totalTokens
         }
-        let mostActiveTool = toolTokens.max(by: { $0.value < $1.value })?.key ?? "None"
-        return (annualTokens: annualTokens, annualCostUSD: annualCostUSD, mostActiveTool: mostActiveTool)
+        let mostActiveTool: String
+        if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            mostActiveTool = tool
+        } else {
+            mostActiveTool = toolTokens.max(by: { $0.value < $1.value })?.key ?? "None"
+        }
+        let activeDays = dayTokens.filter { $0.value > 0 }.count
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
+        let comps = DateComponents(year: year, month: 1, day: 1)
+        let totalDays: Int
+        if let startDate = calendar.date(from: comps) {
+            totalDays = calendar.range(of: .day, in: .year, for: startDate)?.count ?? 365
+        } else {
+            totalDays = 365
+        }
+        return (annualTokens: annualTokens, annualCostUSD: annualCostUSD, mostActiveTool: mostActiveTool, activeDays: activeDays, totalDays: totalDays)
     }
 
     public func fetchToolDistribution(year: Int) async throws -> [(tool: String, tokens: Int, costUSD: Double)] {
