@@ -9,15 +9,19 @@ public final class DashboardWindowManager {
     private let presentation = DashboardPresentationState()
 
     public func show(aggregator: MetricsAggregator, syncCoordinator: SyncCoordinator, openSettings: Bool = false) {
+        Task {
+            _ = try? await syncCoordinator.syncAll()
+        }
+
         if let window = window {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             if openSettings {
                 presentation.isShowingSettings = true
             }
+            NotificationCenter.default.post(name: .bennettUsageDataDidUpdate, object: nil)
             return
         }
-
         let view = DashboardView(aggregator: aggregator, presentation: presentation, showSettingsInitially: openSettings)
         let hostingController = NSHostingController(rootView: view)
         hostingController.sizingOptions = []

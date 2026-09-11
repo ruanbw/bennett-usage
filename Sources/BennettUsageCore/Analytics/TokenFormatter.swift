@@ -79,4 +79,11 @@ public enum TokenFormatter {
         let full = formatFull(tokens)
         return (compact: compact, tooltip: "\(full) tokens")
     }
+
+    /// Formats a compact title suitable for the menu bar status item.
+    /// Returns empty string if tokens <= 0, or `" \(formatCompact(tokens))"` for positive token counts.
+    public static func formatStatusTitle(_ tokens: Int) -> String {
+        guard tokens > 0 else { return "" }
+        return " \(formatCompact(tokens))"
+    }
 }

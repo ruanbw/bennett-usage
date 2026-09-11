@@ -28,18 +28,31 @@ public final class StatusItemController: NSObject {
         super.init()
         setupStatusItem()
         setupPopover()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDataDidUpdate),
+            name: .bennettUsageDataDidUpdate,
+            object: nil
+        )
         refreshData()
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func handleDataDidUpdate() {
+        refreshData()
+    }
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: localization.localized(.statusItemAccessibility))
+            button.toolTip = localization.localized(.statusItemAccessibility)
             button.target = self
             button.action = #selector(togglePopover)
         }
     }
-
     private func setupPopover() {
         popover = NSPopover()
         popover.contentSize = NSSize(width: 320, height: 260)
@@ -65,6 +78,7 @@ public final class StatusItemController: NSObject {
             popover.performClose(nil)
         } else {
             refreshData()
+            forceSync()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }
@@ -74,8 +88,10 @@ public final class StatusItemController: NSObject {
             if let summary = try? await aggregator.fetchTodaySummary() {
                 self.todaySummary = summary
                 if let button = self.statusItem.button {
-                    let kTokens = Double(summary.totalTokens) / 1000.0
-                    button.title = summary.totalTokens > 0 ? " \(String(format: "%.1fk", kTokens))" : ""
+                    button.title = TokenFormatter.formatStatusTitle(summary.totalTokens)
+                    button.toolTip = summary.totalTokens > 0
+                        ? "\(TokenFormatter.formatFull(summary.totalTokens)) tokens"
+                        : self.localization.localized(.statusItemAccessibility)
                 }
                 self.updatePopoverContent()
             }

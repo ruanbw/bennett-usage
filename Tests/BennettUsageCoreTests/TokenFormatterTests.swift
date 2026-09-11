@@ -56,4 +56,14 @@ final class TokenFormatterTests: XCTestCase {
         XCTAssertEqual(result.compact, "14.3M")
         XCTAssertEqual(result.tooltip, "14,250,000 tokens")
     }
+
+    func testFormatStatusTitle() {
+        XCTAssertEqual(TokenFormatter.formatStatusTitle(0), "")
+        XCTAssertEqual(TokenFormatter.formatStatusTitle(-100), "")
+        XCTAssertEqual(TokenFormatter.formatStatusTitle(950), " 950")
+        XCTAssertEqual(TokenFormatter.formatStatusTitle(15_400), " 15.4k")
+        XCTAssertEqual(TokenFormatter.formatStatusTitle(306_178_000), " 306.2M")
+        XCTAssertEqual(TokenFormatter.formatStatusTitle(306_434_461), " 306.4M")
+        XCTAssertEqual(TokenFormatter.formatStatusTitle(1_200_000_000), " 1.2B")
+    }
 }
