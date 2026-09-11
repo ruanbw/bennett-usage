@@ -69,8 +69,12 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
 
     // Breakdown & Charts
     case toolShareBreakdown
+    case modelUsageBreakdown
     case noToolData
+    case noModelData
     case noActivityRecorded
+    case chartTypeBar
+    case chartTypeLine
     case hourlyTrendLast24h
     case hourlyTrendToday
     case dailyTrendLast7Days
@@ -83,7 +87,8 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case trackedProjectsCount
     case noProjectFoldersRecorded
     case tokensCount
-
+    case showMoreProjects
+    case showLess
     // MenuBar Popover
     case estimatedCost
     case toolBreakdownToday
@@ -118,6 +123,13 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case generalSettings
     case usdOption
     case cnyOption
+
+    // Hero Card Metrics
+    case freshInput
+    case modelOutput
+    case cacheWrite
+    case cacheRead
+    case cacheHitRate
 }
 
 public typealias LocalizationKey = LocalizedKey
@@ -257,7 +269,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     .aboutDescription: "Unified local AI agent token usage, activity, and cost tracking for macOS.",
 
     // Dashboard Header & Range Picker
-    .dashboardTitle: "Bennett Usage Analytics",
+    .dashboardTitle: "Bennett Usage",
     .dashboardSubtitle: "Unified local AI agent token usage, activity, and cost tracking",
     .range: "Range",
     .range24h: "24h",
@@ -270,9 +282,9 @@ private let englishDictionary: [LocalizedKey: String] = [
     .yearTitle: "Year %@",
 
     // KPI Cards
-    .periodTokens: "Period Tokens",
+    .periodTokens: "Total Tokens",
     .todaysTokens: "Today's Tokens",
-    .periodSpend: "Period Spend ($ / ¥)",
+    .periodSpend: "Total Spend ($ / ¥)",
     .mostActiveAgent: "Most Active Agent",
     .totalTokensSuffix: "%@ Total",
     .spendSuffix: "%@ Spend",
@@ -290,8 +302,12 @@ private let englishDictionary: [LocalizedKey: String] = [
 
     // Breakdown & Charts
     .toolShareBreakdown: "Tool Share Breakdown (%@)",
+    .modelUsageBreakdown: "Model Usage Breakdown (%@)",
     .noToolData: "No tool data for %@",
+    .noModelData: "No model data for %@",
     .noActivityRecorded: "No activity recorded for %@",
+    .chartTypeBar: "Bar Chart",
+    .chartTypeLine: "Line Chart",
     .hourlyTrendLast24h: "Hourly Token Trend (Last 24h)",
     .hourlyTrendToday: "Hourly Token Trend (Today)",
     .dailyTrendLast7Days: "Daily Token Trend (Last 7 Days)",
@@ -304,7 +320,8 @@ private let englishDictionary: [LocalizedKey: String] = [
     .trackedProjectsCount: "%d tracked",
     .noProjectFoldersRecorded: "No project folders recorded yet",
     .tokensCount: "%@ tokens",
-
+    .showMoreProjects: "Show %d More Directories",
+    .showLess: "Show Less",
     // MenuBar Popover
     .estimatedCost: "Estimated Cost",
     .toolBreakdownToday: "Tool Breakdown (Today)",
@@ -338,7 +355,14 @@ private let englishDictionary: [LocalizedKey: String] = [
     .storageStatus: "%d records · %@ on disk",
     .generalSettings: "General Settings",
     .usdOption: "USD ($)",
-    .cnyOption: "CNY (¥)"
+    .cnyOption: "CNY (¥)",
+
+    // Hero Card Metrics
+    .freshInput: "Fresh Input",
+    .modelOutput: "Output",
+    .cacheWrite: "Cache Write",
+    .cacheRead: "Cache Read",
+    .cacheHitRate: "Cache Hit Rate"
 ]
 
 private let chineseDictionary: [LocalizedKey: String] = [
@@ -355,7 +379,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .aboutDescription: "专为 macOS 设计的本地 AI Agent Token 消耗、活跃度与费用统一追踪面板。",
 
     // Dashboard Header & Range Picker
-    .dashboardTitle: "Bennett Usage 数据看板",
+    .dashboardTitle: "Bennett Usage",
     .dashboardSubtitle: "统一监控本地 AI Agent 的 Token 消耗、活跃度与费用支出",
     .range: "时间范围",
     .range24h: "24小时",
@@ -368,9 +392,9 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .yearTitle: "%@ 年",
 
     // KPI Cards
-    .periodTokens: "选定时段 Token",
+    .periodTokens: "总 Token",
     .todaysTokens: "今日 Token",
-    .periodSpend: "时段支出 ($ / ¥)",
+    .periodSpend: "总支出 ($ / ¥)",
     .mostActiveAgent: "最活跃 Agent",
     .totalTokensSuffix: "%@ 总计",
     .spendSuffix: "%@ 支出",
@@ -388,8 +412,12 @@ private let chineseDictionary: [LocalizedKey: String] = [
 
     // Breakdown & Charts
     .toolShareBreakdown: "各工具消耗占比 (%@)",
+    .modelUsageBreakdown: "各模型消耗占比 (%@)",
     .noToolData: "%@ 暂无工具数据",
+    .noModelData: "%@ 暂无模型数据",
     .noActivityRecorded: "%@ 暂无活动记录",
+    .chartTypeBar: "柱状图",
+    .chartTypeLine: "折线图",
     .hourlyTrendLast24h: "小时级 Token 趋势 (最近 24 小时)",
     .hourlyTrendToday: "小时级 Token 趋势 (今日)",
     .dailyTrendLast7Days: "日级 Token 趋势 (最近 7 天)",
@@ -402,7 +430,8 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .trackedProjectsCount: "已记录 %d 个",
     .noProjectFoldersRecorded: "暂无已记录的项目目录",
     .tokensCount: "%@ tokens",
-
+    .showMoreProjects: "展开更多 (剩余 %d 个目录)",
+    .showLess: "收起目录",
     // MenuBar Popover
     .estimatedCost: "预估费用",
     .toolBreakdownToday: "工具分布 (今日)",
@@ -436,5 +465,12 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .storageStatus: "%d 条用量记录 · 占用空间约 %@",
     .generalSettings: "通用设置",
     .usdOption: "美元 USD ($)",
-    .cnyOption: "人民币 CNY (¥)"
+    .cnyOption: "人民币 CNY (¥)",
+
+    // Hero Card Metrics
+    .freshInput: "新增输入",
+    .modelOutput: "模型输出",
+    .cacheWrite: "缓存写入",
+    .cacheRead: "缓存命中",
+    .cacheHitRate: "缓存命中率"
 ]
