@@ -67,11 +67,12 @@ public struct MenuBarPopoverView: View {
                 .font(.caption).bold().foregroundColor(.secondary)
 
             VStack(spacing: 6) {
-                toolRow(name: "Oh My Pi", tokens: summary?.toolTokens["omp"] ?? 0, color: .blue)
-                toolRow(name: "Pi Agent", tokens: summary?.toolTokens["pi"] ?? 0, color: .green)
-                toolRow(name: "Claude Code", tokens: summary?.toolTokens["claude"] ?? 0, color: .orange)
-                toolRow(name: "OpenAI Codex", tokens: summary?.toolTokens["codex"] ?? 0, color: .teal)
-                toolRow(name: "Gemini CLI", tokens: summary?.toolTokens["gemini"] ?? 0, color: .indigo)
+                let toolColors = ChartPalette.shared.colors(for: ["omp", "pi", "claude", "codex", "gemini"])
+                toolRow(name: "Oh My Pi", tokens: summary?.toolTokens["omp"] ?? 0, color: toolColors["omp"] ?? .gray)
+                toolRow(name: "Pi Agent", tokens: summary?.toolTokens["pi"] ?? 0, color: toolColors["pi"] ?? .gray)
+                toolRow(name: "Claude Code", tokens: summary?.toolTokens["claude"] ?? 0, color: toolColors["claude"] ?? .gray)
+                toolRow(name: "OpenAI Codex", tokens: summary?.toolTokens["codex"] ?? 0, color: toolColors["codex"] ?? .gray)
+                toolRow(name: "Gemini CLI", tokens: summary?.toolTokens["gemini"] ?? 0, color: toolColors["gemini"] ?? .gray)
             }
 
             Divider()

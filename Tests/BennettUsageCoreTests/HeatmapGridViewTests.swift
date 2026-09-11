@@ -90,10 +90,12 @@ final class HeatmapGridViewTests: XCTestCase {
         XCTAssertEqual(AgentFilterBarView.displayName(for: "codex"), "OpenAI Codex")
         XCTAssertEqual(AgentFilterBarView.displayName(for: "unknown"), "Unknown")
 
-        // Verify brand colors are distinct
-        let piColor = AgentFilterBarView.brandColor(for: "pi")
-        let ompColor = AgentFilterBarView.brandColor(for: "omp")
-        XCTAssertNotEqual(piColor, ompColor)
+        // Verify generated palette colors are distinct and session-stable
+        let palette = ChartPalette(seed: 0.42)
+        let colors = palette.colors(for: ["pi", "omp", "claude", "codex", "gemini"])
+        XCTAssertNotEqual(colors["pi"], colors["omp"])
+        XCTAssertNotEqual(colors["claude"], colors["codex"])
+        XCTAssertEqual(palette.colors(for: ["pi", "omp", "claude", "codex", "gemini"]), colors)
 
         // Individual agent selected
         let piView = AgentFilterBarView(

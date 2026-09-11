@@ -29,19 +29,12 @@ public struct AgentFilterBarView: View {
         }
     }
 
-    public static func brandColor(for agent: String) -> Color {
-        switch agent.lowercased() {
-        case "pi": return Color(red: 0.06, green: 0.73, blue: 0.51)
-        case "omp": return Color(red: 0.96, green: 0.62, blue: 0.04)
-        case "claude": return Color(red: 0.91, green: 0.44, blue: 0.32)
-        case "codex": return Color(red: 0.05, green: 0.65, blue: 0.91)
-        case "gemini": return Color(red: 0.26, green: 0.52, blue: 0.96)
-        default: return .purple
-        }
-    }
 
     private var isAllSelected: Bool {
         selectedAgent == nil
+    }
+    private var agentColors: [String: Color] {
+        ChartPalette.shared.colors(for: availableAgents)
     }
 
     public var body: some View {
@@ -70,7 +63,7 @@ public struct AgentFilterBarView: View {
                 // Individual agent pills
                 ForEach(availableAgents, id: \.self) { agent in
                     let isSelected = selectedAgent?.lowercased() == agent.lowercased()
-                    let color = Self.brandColor(for: agent)
+                    let color = agentColors[agent] ?? .gray
 
                     Button {
                         onSelect(agent)
