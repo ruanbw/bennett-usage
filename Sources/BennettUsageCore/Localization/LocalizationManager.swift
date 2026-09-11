@@ -57,6 +57,7 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case spendSuffix
     case leadingVolume
     case none
+    case rangeTokens
 
     // Heatmap Section
     case tokenActivity
@@ -290,6 +291,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     .spendSuffix: "%@ Spend",
     .leadingVolume: "Leading Volume",
     .none: "None",
+    .rangeTokens: "%@ Tokens",
 
     // Heatmap Section
     .tokenActivity: "Token Activity (%@)",
@@ -400,6 +402,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .spendSuffix: "%@ 支出",
     .leadingVolume: "消耗占比最高",
     .none: "无",
+    .rangeTokens: "%@ Token",
 
     // Heatmap Section
     .tokenActivity: "Token 活跃度 (%@)",

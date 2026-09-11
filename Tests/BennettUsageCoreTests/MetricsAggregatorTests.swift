@@ -307,4 +307,151 @@ final class MetricsAggregatorTests: XCTestCase {
         // Cacheable: 2000 + 500 + 1000 = 3500; cache hit rate = 1000 / 3500
         XCTAssertEqual(ompTotals.cacheHitRate, 1000.0 / 3500.0, accuracy: 0.0001)
     }
+
+    func testPeriodMetricsTokenBreakdownTodayAnd24Hours() async throws {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone.current
+        let todayKey = formatter.string(from: Date())
+
+        let r1 = UnifiedTokenRecord(
+            id: "pm_today_1",
+            sourceId: "claude",
+            timestamp: Date(),
+            dayKey: todayKey,
+            sessionKey: "s1",
+            projectFolder: nil,
+            model: "claude-3-5-sonnet",
+            provider: "anthropic",
+            inputTokens: 1000,
+            outputTokens: 500,
+            cacheReadTokens: 3000,
+            cacheWriteTokens: 1000,
+            rawCostUSD: 0.12
+        )
+        try db.insertRecords([r1])
+
+        let todayMetrics = try await aggregator.fetchPeriodMetrics(range: .today)
+        XCTAssertEqual(todayMetrics.totalTokens, 5500)
+        XCTAssertEqual(todayMetrics.inputTokens, 1000)
+        XCTAssertEqual(todayMetrics.outputTokens, 500)
+        XCTAssertEqual(todayMetrics.cacheReadTokens, 3000)
+        XCTAssertEqual(todayMetrics.cacheWriteTokens, 1000)
+        XCTAssertEqual(todayMetrics.totalCostUSD, 0.12, accuracy: 0.0001)
+        // Cacheable: 1000 + 1000 + 3000 = 5000; cache hit rate = 3000 / 5000 = 0.6
+        XCTAssertEqual(todayMetrics.cacheHitRate, 0.6, accuracy: 0.0001)
+
+        let last24hMetrics = try await aggregator.fetchPeriodMetrics(range: .last24Hours)
+        XCTAssertEqual(last24hMetrics.totalTokens, 5500)
+        XCTAssertEqual(last24hMetrics.inputTokens, 1000)
+        XCTAssertEqual(last24hMetrics.outputTokens, 500)
+        XCTAssertEqual(last24hMetrics.cacheReadTokens, 3000)
+        XCTAssertEqual(last24hMetrics.cacheWriteTokens, 1000)
+        XCTAssertEqual(last24hMetrics.totalCostUSD, 0.12, accuracy: 0.0001)
+        XCTAssertEqual(last24hMetrics.cacheHitRate, 0.6, accuracy: 0.0001)
+    }
+
+    func testPeriodMetricsTokenBreakdownLast7DaysAndYear() async throws {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone.current
+        let todayKey = formatter.string(from: Date())
+
+        let r1 = UnifiedTokenRecord(
+            id: "pm_range_1",
+            sourceId: "omp",
+            timestamp: Date(),
+            dayKey: todayKey,
+            sessionKey: "s1",
+            projectFolder: nil,
+            model: "gemini-flash",
+            provider: "google",
+            inputTokens: 2000,
+            outputTokens: 800,
+            cacheReadTokens: 1200,
+            cacheWriteTokens: 400,
+            rawCostUSD: 0.08
+        )
+        try db.insertRecords([r1])
+
+        let metrics7d = try await aggregator.fetchPeriodMetrics(range: .last7Days)
+        XCTAssertEqual(metrics7d.totalTokens, 4400)
+        XCTAssertEqual(metrics7d.inputTokens, 2000)
+        XCTAssertEqual(metrics7d.outputTokens, 800)
+        XCTAssertEqual(metrics7d.cacheReadTokens, 1200)
+        XCTAssertEqual(metrics7d.cacheWriteTokens, 400)
+        XCTAssertEqual(metrics7d.totalCostUSD, 0.08, accuracy: 0.0001)
+        // Cacheable: 2000 + 400 + 1200 = 3600; hit rate = 1200 / 3600 = 1/3
+        XCTAssertEqual(metrics7d.cacheHitRate, 1200.0 / 3600.0, accuracy: 0.0001)
+
+        let year = Calendar.current.component(.year, from: Date())
+        let metricsYear = try await aggregator.fetchPeriodMetrics(range: .year(year))
+        XCTAssertEqual(metricsYear.totalTokens, 4400)
+        XCTAssertEqual(metricsYear.inputTokens, 2000)
+        XCTAssertEqual(metricsYear.outputTokens, 800)
+        XCTAssertEqual(metricsYear.cacheReadTokens, 1200)
+        XCTAssertEqual(metricsYear.cacheWriteTokens, 400)
+        XCTAssertEqual(metricsYear.totalCostUSD, 0.08, accuracy: 0.0001)
+        XCTAssertEqual(metricsYear.cacheHitRate, 1200.0 / 3600.0, accuracy: 0.0001)
+    }
+
+    func testDatabaseManagerFetchPeriodTotals() throws {
+        let r1 = UnifiedTokenRecord(
+            id: "pt_1",
+            sourceId: "claude",
+            timestamp: Date(),
+            dayKey: "2026-05-10",
+            sessionKey: "s1",
+            projectFolder: nil,
+            model: "m",
+            provider: nil,
+            inputTokens: 100,
+            outputTokens: 200,
+            cacheReadTokens: 300,
+            cacheWriteTokens: 400,
+            rawCostUSD: 0.05
+        )
+        let r2 = UnifiedTokenRecord(
+            id: "pt_2",
+            sourceId: "pi",
+            timestamp: Date(),
+            dayKey: "2026-05-15",
+            sessionKey: "s2",
+            projectFolder: nil,
+            model: "m",
+            provider: nil,
+            inputTokens: 50,
+            outputTokens: 50,
+            cacheReadTokens: 100,
+            cacheWriteTokens: 0,
+            rawCostUSD: 0.02
+        )
+        try db.insertRecords([r1, r2])
+
+        // Range covering both
+        let totalsAll = try db.fetchPeriodTotals(startDate: "2026-05-01", endDate: "2026-05-31")
+        XCTAssertEqual(totalsAll.totalTokens, 1200)
+        XCTAssertEqual(totalsAll.inputTokens, 150)
+        XCTAssertEqual(totalsAll.outputTokens, 250)
+        XCTAssertEqual(totalsAll.cacheReadTokens, 400)
+        XCTAssertEqual(totalsAll.cacheWriteTokens, 400)
+        XCTAssertEqual(totalsAll.totalCostUSD, 0.07, accuracy: 0.0001)
+
+        // Filter by sourceId
+        let totalsClaude = try db.fetchPeriodTotals(startDate: "2026-05-01", endDate: "2026-05-31", sourceId: "claude")
+        XCTAssertEqual(totalsClaude.totalTokens, 1000)
+        XCTAssertEqual(totalsClaude.inputTokens, 100)
+        XCTAssertEqual(totalsClaude.outputTokens, 200)
+        XCTAssertEqual(totalsClaude.cacheReadTokens, 300)
+        XCTAssertEqual(totalsClaude.cacheWriteTokens, 400)
+        XCTAssertEqual(totalsClaude.totalCostUSD, 0.05, accuracy: 0.0001)
+
+        // Filter by year
+        let totalsYear = try db.fetchPeriodTotals(year: 2026)
+        XCTAssertEqual(totalsYear.totalTokens, 1200)
+
+        // Year with no records
+        let totalsEmpty = try db.fetchPeriodTotals(year: 2024)
+        XCTAssertEqual(totalsEmpty.totalTokens, 0)
+    }
 }

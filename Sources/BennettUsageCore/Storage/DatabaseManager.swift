@@ -654,6 +654,111 @@ public final class DatabaseManager: @unchecked Sendable {
         )
     }
 
+    public struct PeriodTotals: Sendable, Equatable {
+        public let totalTokens: Int
+        public let inputTokens: Int
+        public let outputTokens: Int
+        public let cacheReadTokens: Int
+        public let cacheWriteTokens: Int
+        public let totalCostUSD: Double
+
+        public init(
+            totalTokens: Int = 0,
+            inputTokens: Int = 0,
+            outputTokens: Int = 0,
+            cacheReadTokens: Int = 0,
+            cacheWriteTokens: Int = 0,
+            totalCostUSD: Double = 0.0
+        ) {
+            self.totalTokens = totalTokens
+            self.inputTokens = inputTokens
+            self.outputTokens = outputTokens
+            self.cacheReadTokens = cacheReadTokens
+            self.cacheWriteTokens = cacheWriteTokens
+            self.totalCostUSD = totalCostUSD
+        }
+    }
+
+    public func fetchPeriodTotals(
+        startDate: String? = nil,
+        endDate: String? = nil,
+        year: Int? = nil,
+        sinceTimestamp: Int64? = nil,
+        sourceId: String? = nil
+    ) throws -> PeriodTotals {
+        lock.lock(); defer { lock.unlock() }
+        let filterApplied = sourceId != nil && !sourceId!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let trimmedSource = sourceId?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var whereClauses: [String] = []
+        var bindValues: [Any] = []
+
+        if let sinceTimestamp = sinceTimestamp {
+            whereClauses.append("timestamp >= ?")
+            bindValues.append(sinceTimestamp)
+        } else if let year = year {
+            whereClauses.append("day_key LIKE ?")
+            bindValues.append("\(year)-%")
+        } else if let startDate = startDate, let endDate = endDate {
+            whereClauses.append("day_key >= ? AND day_key <= ?")
+            bindValues.append(startDate)
+            bindValues.append(endDate)
+        }
+
+        if filterApplied, let source = trimmedSource {
+            whereClauses.append("LOWER(source_id) = LOWER(?)")
+            bindValues.append(source)
+        }
+
+        let whereString = whereClauses.isEmpty ? "" : "WHERE " + whereClauses.joined(separator: " AND ")
+        let sql = """
+        SELECT
+            COALESCE(SUM(total_tokens), 0),
+            COALESCE(SUM(input_tokens), 0),
+            COALESCE(SUM(output_tokens), 0),
+            COALESCE(SUM(cache_read_tokens), 0),
+            COALESCE(SUM(cache_write_tokens), 0),
+            COALESCE(SUM(cost_usd), 0.0)
+        FROM unified_token_records
+        \(whereString);
+        """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 21, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare period totals statement: \(lastErrorMessage())"])
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var bindIndex: Int32 = 1
+        for val in bindValues {
+            if let intVal = val as? Int64 {
+                sqlite3_bind_int64(stmt, bindIndex, intVal)
+            } else if let strVal = val as? String {
+                sqlite3_bind_text(stmt, bindIndex, (strVal as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            }
+            bindIndex += 1
+        }
+
+        if sqlite3_step(stmt) == SQLITE_ROW {
+            let totalTokens = Int(sqlite3_column_int64(stmt, 0))
+            let inputTokens = Int(sqlite3_column_int64(stmt, 1))
+            let outputTokens = Int(sqlite3_column_int64(stmt, 2))
+            let cacheReadTokens = Int(sqlite3_column_int64(stmt, 3))
+            let cacheWriteTokens = Int(sqlite3_column_int64(stmt, 4))
+            let totalCostUSD = sqlite3_column_double(stmt, 5)
+            return PeriodTotals(
+                totalTokens: totalTokens,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens,
+                cacheReadTokens: cacheReadTokens,
+                cacheWriteTokens: cacheWriteTokens,
+                totalCostUSD: totalCostUSD
+            )
+        }
+
+        return PeriodTotals()
+    }
+
     public func rebuildDailyRollups() throws {
         lock.lock(); defer { lock.unlock() }
         try execute(sql: "BEGIN TRANSACTION;")

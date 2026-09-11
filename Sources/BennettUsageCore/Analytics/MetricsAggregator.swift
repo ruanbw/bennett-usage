@@ -36,6 +36,15 @@ public struct TrendPoint: Identifiable, Sendable, Equatable {
 public struct PeriodMetrics: Sendable {
     public let totalTokens: Int
     public let totalCostUSD: Double
+    public let inputTokens: Int
+    public let outputTokens: Int
+    public let cacheReadTokens: Int
+    public let cacheWriteTokens: Int
+    public var cacheHitRate: Double {
+        let cacheable = inputTokens + cacheWriteTokens + cacheReadTokens
+        guard cacheable > 0 else { return 0.0 }
+        return Double(cacheReadTokens) / Double(cacheable)
+    }
     public let mostActiveTool: String
     public let trendPoints: [TrendPoint]
     public let toolDistribution: [(tool: String, tokens: Int, costUSD: Double)]
@@ -45,6 +54,10 @@ public struct PeriodMetrics: Sendable {
     public init(
         totalTokens: Int,
         totalCostUSD: Double,
+        inputTokens: Int = 0,
+        outputTokens: Int = 0,
+        cacheReadTokens: Int = 0,
+        cacheWriteTokens: Int = 0,
         mostActiveTool: String,
         trendPoints: [TrendPoint],
         toolDistribution: [(tool: String, tokens: Int, costUSD: Double)],
@@ -53,6 +66,10 @@ public struct PeriodMetrics: Sendable {
     ) {
         self.totalTokens = totalTokens
         self.totalCostUSD = totalCostUSD
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.cacheReadTokens = cacheReadTokens
+        self.cacheWriteTokens = cacheWriteTokens
         self.mostActiveTool = mostActiveTool
         self.trendPoints = trendPoints
         self.toolDistribution = toolDistribution
@@ -407,6 +424,10 @@ public final class MetricsAggregator: Sendable {
 
             let totalTokens = records.reduce(0) { $0 + $1.totalTokens }
             let totalCost = records.reduce(0.0) { $0 + ($1.rawCostUSD ?? 0.0) }
+            let inputTokens = records.reduce(0) { $0 + $1.inputTokens }
+            let outputTokens = records.reduce(0) { $0 + $1.outputTokens }
+            let cacheReadTokens = records.reduce(0) { $0 + $1.cacheReadTokens }
+            let cacheWriteTokens = records.reduce(0) { $0 + $1.cacheWriteTokens }
 
             var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
             for r in records {
@@ -451,6 +472,10 @@ public final class MetricsAggregator: Sendable {
             return PeriodMetrics(
                 totalTokens: totalTokens,
                 totalCostUSD: totalCost,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens,
+                cacheReadTokens: cacheReadTokens,
+                cacheWriteTokens: cacheWriteTokens,
                 mostActiveTool: mostActive,
                 trendPoints: trendPoints,
                 toolDistribution: toolDist,
@@ -469,6 +494,10 @@ public final class MetricsAggregator: Sendable {
 
             let totalTokens = records.reduce(0) { $0 + $1.totalTokens }
             let totalCost = records.reduce(0.0) { $0 + ($1.rawCostUSD ?? 0.0) }
+            let inputTokens = records.reduce(0) { $0 + $1.inputTokens }
+            let outputTokens = records.reduce(0) { $0 + $1.outputTokens }
+            let cacheReadTokens = records.reduce(0) { $0 + $1.cacheReadTokens }
+            let cacheWriteTokens = records.reduce(0) { $0 + $1.cacheWriteTokens }
 
             var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
             for r in records {
@@ -508,6 +537,10 @@ public final class MetricsAggregator: Sendable {
             return PeriodMetrics(
                 totalTokens: totalTokens,
                 totalCostUSD: totalCost,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens,
+                cacheReadTokens: cacheReadTokens,
+                cacheWriteTokens: cacheWriteTokens,
                 mostActiveTool: mostActive,
                 trendPoints: trendPoints,
                 toolDistribution: toolDist,
@@ -532,8 +565,13 @@ public final class MetricsAggregator: Sendable {
                 let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
             }
-            let totalTokens = rollups.reduce(0) { $0 + $1.totalTokens }
-            let totalCost = rollups.reduce(0.0) { $0 + $1.costUSD }
+            let totals = (try? database.fetchPeriodTotals(startDate: startKey, endDate: endKey, sourceId: toolFilter)) ?? DatabaseManager.PeriodTotals()
+            let totalTokens = totals.totalTokens > 0 ? totals.totalTokens : rollups.reduce(0) { $0 + $1.totalTokens }
+            let totalCost = totals.totalTokens > 0 ? totals.totalCostUSD : rollups.reduce(0.0) { $0 + $1.costUSD }
+            let inputTokens = totals.totalTokens > 0 ? totals.inputTokens : rollups.reduce(0) { $0 + $1.inputTokens }
+            let outputTokens = totals.totalTokens > 0 ? totals.outputTokens : rollups.reduce(0) { $0 + $1.outputTokens }
+            let cacheReadTokens = totals.cacheReadTokens
+            let cacheWriteTokens = totals.cacheWriteTokens
 
             var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
             var rollupsByDay: [String: [DailyRollup]] = [:]
@@ -569,6 +607,10 @@ public final class MetricsAggregator: Sendable {
             return PeriodMetrics(
                 totalTokens: totalTokens,
                 totalCostUSD: totalCost,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens,
+                cacheReadTokens: cacheReadTokens,
+                cacheWriteTokens: cacheWriteTokens,
                 mostActiveTool: mostActive,
                 trendPoints: trendPoints,
                 toolDistribution: toolDist,
@@ -591,8 +633,13 @@ public final class MetricsAggregator: Sendable {
                 let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
             }
-            let totalTokens = rollups.reduce(0) { $0 + $1.totalTokens }
-            let totalCost = rollups.reduce(0.0) { $0 + $1.costUSD }
+            let totals = (try? database.fetchPeriodTotals(startDate: startKey, endDate: endKey, sourceId: toolFilter)) ?? DatabaseManager.PeriodTotals()
+            let totalTokens = totals.totalTokens > 0 ? totals.totalTokens : rollups.reduce(0) { $0 + $1.totalTokens }
+            let totalCost = totals.totalTokens > 0 ? totals.totalCostUSD : rollups.reduce(0.0) { $0 + $1.costUSD }
+            let inputTokens = totals.totalTokens > 0 ? totals.inputTokens : rollups.reduce(0) { $0 + $1.inputTokens }
+            let outputTokens = totals.totalTokens > 0 ? totals.outputTokens : rollups.reduce(0) { $0 + $1.outputTokens }
+            let cacheReadTokens = totals.cacheReadTokens
+            let cacheWriteTokens = totals.cacheWriteTokens
 
             var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
             for r in rollups {
@@ -627,6 +674,10 @@ public final class MetricsAggregator: Sendable {
             return PeriodMetrics(
                 totalTokens: totalTokens,
                 totalCostUSD: totalCost,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens,
+                cacheReadTokens: cacheReadTokens,
+                cacheWriteTokens: cacheWriteTokens,
                 mostActiveTool: mostActive,
                 trendPoints: trendPoints,
                 toolDistribution: toolDist,
@@ -640,8 +691,13 @@ public final class MetricsAggregator: Sendable {
                 let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
             }
-            let totalTokens = rollups.reduce(0) { $0 + $1.totalTokens }
-            let totalCost = rollups.reduce(0.0) { $0 + $1.costUSD }
+            let totals = (try? database.fetchPeriodTotals(year: year, sourceId: toolFilter)) ?? DatabaseManager.PeriodTotals()
+            let totalTokens = totals.totalTokens > 0 ? totals.totalTokens : rollups.reduce(0) { $0 + $1.totalTokens }
+            let totalCost = totals.totalTokens > 0 ? totals.totalCostUSD : rollups.reduce(0.0) { $0 + $1.costUSD }
+            let inputTokens = totals.totalTokens > 0 ? totals.inputTokens : rollups.reduce(0) { $0 + $1.inputTokens }
+            let outputTokens = totals.totalTokens > 0 ? totals.outputTokens : rollups.reduce(0) { $0 + $1.outputTokens }
+            let cacheReadTokens = totals.cacheReadTokens
+            let cacheWriteTokens = totals.cacheWriteTokens
 
             var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
             for r in rollups {
@@ -667,6 +723,10 @@ public final class MetricsAggregator: Sendable {
             return PeriodMetrics(
                 totalTokens: totalTokens,
                 totalCostUSD: totalCost,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens,
+                cacheReadTokens: cacheReadTokens,
+                cacheWriteTokens: cacheWriteTokens,
                 mostActiveTool: mostActive,
                 trendPoints: trendPoints,
                 toolDistribution: toolDist,

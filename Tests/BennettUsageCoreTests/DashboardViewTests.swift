@@ -125,4 +125,15 @@ final class DashboardViewTests: XCTestCase {
         let settingsView = DashboardView(aggregator: aggregator, localization: .shared, showSettingsInitially: true)
         XCTAssertNotNil(settingsView.body)
     }
+
+    @MainActor
+    func testDashboardContentViewWithDifferentRanges() throws {
+        let db = try DatabaseManager.inMemory()
+        let aggregator = MetricsAggregator(database: db)
+
+        for range in [TimeRangeOption.last24Hours, .today, .last7Days, .last30Days, .pastYear, .year(2026)] {
+            let contentView = DashboardContentView(aggregator: aggregator, localization: .shared, initialRange: range)
+            XCTAssertNotNil(contentView.body)
+        }
+    }
 }

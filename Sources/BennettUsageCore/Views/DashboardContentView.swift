@@ -202,12 +202,6 @@ public struct DashboardContentView: View {
 
     // MARK: - KPI Cards
 
-    private var displayedTodayTokens: Int {
-        if let filter = selectedToolFilter?.lowercased() {
-            return todaySummary?.toolTokens.first(where: { $0.key.lowercased() == filter })?.value ?? 0
-        }
-        return todaySummary?.totalTokens ?? 0
-    }
 
     private var heroSection: some View {
         VStack(spacing: 16) {
@@ -260,27 +254,28 @@ public struct DashboardContentView: View {
                 // Right: Pill box container
                 HStack(spacing: 14) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(localization.localized(.todaysTokens))
+                        Text(localization.localized(.rangeTokens, arguments: rangeSubtitle))
                             .font(.caption2)
                             .foregroundColor(.secondary)
                         HStack(spacing: 4) {
                             Image(systemName: "bolt.fill")
                                 .foregroundColor(.blue)
                                 .font(.caption)
-                            Text(TokenFormatter.formatCompact(displayedTodayTokens))
+                            Text(TokenFormatter.formatCompact(periodMetrics?.totalTokens ?? 0))
                                 .font(.subheadline)
                                 .bold()
                         }
                     }
+                    .help("\(TokenFormatter.formatFull(periodMetrics?.totalTokens ?? 0)) tokens")
 
                     Divider()
                         .frame(height: 24)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(localization.localized(.periodSpend))
+                        Text(localization.localized(.spendSuffix, arguments: rangeSubtitle))
                             .font(.caption2)
                             .foregroundColor(.secondary)
-                        Text(PricingEngine.shared.spendString(allTimeTotals?.totalCostUSD ?? 0.0))
+                        Text(PricingEngine.shared.spendString(periodMetrics?.totalCostUSD ?? 0.0))
                             .font(.subheadline)
                             .bold()
                             .foregroundColor(.green)
@@ -308,30 +303,33 @@ public struct DashboardContentView: View {
                     title: localization.localized(.freshInput),
                     icon: "arrow.down.to.line",
                     iconColor: .blue,
-                    value: TokenFormatter.formatCompact(allTimeTotals?.inputTokens ?? 0)
+                    value: TokenFormatter.formatCompact(periodMetrics?.inputTokens ?? 0),
+                    fullTokens: periodMetrics?.inputTokens ?? 0
                 )
 
                 miniStatCard(
                     title: localization.localized(.modelOutput),
                     icon: "arrow.up.from.line",
                     iconColor: .purple,
-                    value: TokenFormatter.formatCompact(allTimeTotals?.outputTokens ?? 0)
+                    value: TokenFormatter.formatCompact(periodMetrics?.outputTokens ?? 0),
+                    fullTokens: periodMetrics?.outputTokens ?? 0
                 )
 
                 miniStatCard(
                     title: localization.localized(.cacheWrite),
                     icon: "cylinder.split.1x2",
                     iconColor: .orange,
-                    value: TokenFormatter.formatCompact(allTimeTotals?.cacheWriteTokens ?? 0)
+                    value: TokenFormatter.formatCompact(periodMetrics?.cacheWriteTokens ?? 0),
+                    fullTokens: periodMetrics?.cacheWriteTokens ?? 0
                 )
 
                 miniStatCard(
                     title: localization.localized(.cacheRead),
                     icon: "sparkles",
                     iconColor: .green,
-                    value: TokenFormatter.formatCompact(allTimeTotals?.cacheReadTokens ?? 0)
+                    value: TokenFormatter.formatCompact(periodMetrics?.cacheReadTokens ?? 0),
+                    fullTokens: periodMetrics?.cacheReadTokens ?? 0
                 )
-
                 cacheHitRateCard
             }
         }
@@ -340,7 +338,7 @@ public struct DashboardContentView: View {
         .cornerRadius(12)
     }
 
-    private func miniStatCard(title: String, icon: String, iconColor: Color, value: String) -> some View {
+    private func miniStatCard(title: String, icon: String, iconColor: Color, value: String, fullTokens: Int? = nil) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
@@ -361,10 +359,11 @@ public struct DashboardContentView: View {
         .padding(8)
         .background(Color(NSColor.windowBackgroundColor).opacity(0.4))
         .cornerRadius(8)
+        .help(fullTokens != nil ? "\(TokenFormatter.formatFull(fullTokens!)) tokens" : value)
     }
 
     private var cacheHitRateCard: some View {
-        let hitRate = allTimeTotals?.cacheHitRate ?? 0.0
+        let hitRate = periodMetrics?.cacheHitRate ?? 0.0
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Image(systemName: "chart.pie.fill")
@@ -396,6 +395,7 @@ public struct DashboardContentView: View {
         .padding(8)
         .background(Color(NSColor.windowBackgroundColor).opacity(0.4))
         .cornerRadius(8)
+        .help(localization.localized(.cacheHitRate) + ": " + String(format: "%.1f%%", hitRate * 100))
     }
 
     // MARK: - Heatmap
