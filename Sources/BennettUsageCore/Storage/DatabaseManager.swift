@@ -436,6 +436,79 @@ public final class DatabaseManager: @unchecked Sendable {
         }
         return result
     }
+    public func fetchModelDistribution(
+        limit: Int = 10,
+        sourceId: String? = nil,
+        sinceTimestamp: Int64? = nil,
+        startDate: String? = nil,
+        endDate: String? = nil
+    ) throws -> [(model: String, tokens: Int, costUSD: Double)] {
+        lock.lock(); defer { lock.unlock() }
+
+        var whereClauses: [String] = ["model IS NOT NULL", "model != ''"]
+        var binds: [Any] = []
+
+        if let sourceId = sourceId, !sourceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            whereClauses.append("LOWER(source_id) = LOWER(?)")
+            binds.append(sourceId.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if let since = sinceTimestamp {
+            whereClauses.append("timestamp >= ?")
+            binds.append(since)
+        }
+        if let start = startDate {
+            whereClauses.append("day_key >= ?")
+            binds.append(start)
+        }
+        if let end = endDate {
+            whereClauses.append("day_key <= ?")
+            binds.append(end)
+        }
+
+        let whereString = whereClauses.joined(separator: " AND ")
+        let sql = """
+        SELECT model, SUM(total_tokens) AS sum_tokens, SUM(cost_usd) AS sum_cost
+        FROM unified_token_records
+        WHERE \(whereString)
+        GROUP BY model
+        ORDER BY sum_tokens DESC
+        LIMIT ?;
+        """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 25, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare model distribution statement: \(lastErrorMessage())"])
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var bindIndex: Int32 = 1
+        for val in binds {
+            if let str = val as? String {
+                sqlite3_bind_text(stmt, bindIndex, (str as NSString).utf8String, -1, nil)
+            } else if let int64 = val as? Int64 {
+                sqlite3_bind_int64(stmt, bindIndex, int64)
+            }
+            bindIndex += 1
+        }
+        sqlite3_bind_int(stmt, bindIndex, Int32(limit))
+
+        var result: [(model: String, tokens: Int, costUSD: Double)] = []
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_ROW {
+                let model = String(cString: sqlite3_column_text(stmt, 0))
+                let totalTokens = Int(sqlite3_column_int64(stmt, 1))
+                let costUSD = sqlite3_column_double(stmt, 2)
+                result.append((model: model, tokens: totalTokens, costUSD: costUSD))
+            } else if step == SQLITE_DONE {
+                break
+            } else {
+                throw NSError(domain: "DatabaseManager", code: 26, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch model distribution: \(lastErrorMessage())"])
+            }
+        }
+        return result
+    }
+
 
     public func fetchRecordStats(forSourceId sourceId: String) throws -> (count: Int, lastTimestamp: Date?) {
         lock.lock(); defer { lock.unlock() }
@@ -499,6 +572,75 @@ public final class DatabaseManager: @unchecked Sendable {
             return Int(sqlite3_column_int(stmt, 0))
         }
         return 0
+    }
+
+    public func fetchAllTimeTotals(sourceId: String? = nil) throws -> AllTimeTotals {
+        lock.lock(); defer { lock.unlock() }
+
+        let trimmedSource = sourceId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filterApplied = trimmedSource != nil && !trimmedSource!.isEmpty
+
+        let sql: String
+        if filterApplied {
+            sql = """
+            SELECT
+                COALESCE(SUM(total_tokens), 0),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(output_tokens), 0),
+                COALESCE(SUM(cache_read_tokens), 0),
+                COALESCE(SUM(cache_write_tokens), 0),
+                COALESCE(SUM(cost_usd), 0.0)
+            FROM unified_token_records
+            WHERE LOWER(source_id) = LOWER(?);
+            """
+        } else {
+            sql = """
+            SELECT
+                COALESCE(SUM(total_tokens), 0),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(output_tokens), 0),
+                COALESCE(SUM(cache_read_tokens), 0),
+                COALESCE(SUM(cache_write_tokens), 0),
+                COALESCE(SUM(cost_usd), 0.0)
+            FROM unified_token_records;
+            """
+        }
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 20, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare all time totals statement: \(lastErrorMessage())"])
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        if filterApplied, let source = trimmedSource {
+            sqlite3_bind_text(stmt, 1, (source as NSString).utf8String, -1, nil)
+        }
+
+        if sqlite3_step(stmt) == SQLITE_ROW {
+            let totalTokens = Int(sqlite3_column_int64(stmt, 0))
+            let inputTokens = Int(sqlite3_column_int64(stmt, 1))
+            let outputTokens = Int(sqlite3_column_int64(stmt, 2))
+            let cacheReadTokens = Int(sqlite3_column_int64(stmt, 3))
+            let cacheWriteTokens = Int(sqlite3_column_int64(stmt, 4))
+            let totalCostUSD = sqlite3_column_double(stmt, 5)
+            return AllTimeTotals(
+                totalTokens: totalTokens,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens,
+                cacheReadTokens: cacheReadTokens,
+                cacheWriteTokens: cacheWriteTokens,
+                totalCostUSD: totalCostUSD
+            )
+        }
+
+        return AllTimeTotals(
+            totalTokens: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            totalCostUSD: 0.0
+        )
     }
 
     public func rebuildDailyRollups() throws {

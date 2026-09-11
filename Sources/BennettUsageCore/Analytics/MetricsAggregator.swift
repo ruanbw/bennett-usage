@@ -40,6 +40,7 @@ public struct PeriodMetrics: Sendable {
     public let trendPoints: [TrendPoint]
     public let toolDistribution: [(tool: String, tokens: Int, costUSD: Double)]
     public let projectRankings: [(project: String, totalTokens: Int, costUSD: Double)]
+    public let modelDistribution: [(model: String, tokens: Int, costUSD: Double)]
 
     public init(
         totalTokens: Int,
@@ -47,7 +48,8 @@ public struct PeriodMetrics: Sendable {
         mostActiveTool: String,
         trendPoints: [TrendPoint],
         toolDistribution: [(tool: String, tokens: Int, costUSD: Double)],
-        projectRankings: [(project: String, totalTokens: Int, costUSD: Double)]
+        projectRankings: [(project: String, totalTokens: Int, costUSD: Double)],
+        modelDistribution: [(model: String, tokens: Int, costUSD: Double)] = []
     ) {
         self.totalTokens = totalTokens
         self.totalCostUSD = totalCostUSD
@@ -55,6 +57,7 @@ public struct PeriodMetrics: Sendable {
         self.trendPoints = trendPoints
         self.toolDistribution = toolDistribution
         self.projectRankings = projectRankings
+        self.modelDistribution = modelDistribution
     }
 }
 
@@ -102,6 +105,36 @@ public struct AgentHealthInfo: Identifiable, Sendable {
     }
 }
 
+public struct AllTimeTotals: Sendable, Equatable {
+    public let totalTokens: Int
+    public let inputTokens: Int
+    public let outputTokens: Int
+    public let cacheReadTokens: Int
+    public let cacheWriteTokens: Int
+    public let totalCostUSD: Double
+    public var cacheHitRate: Double {
+        let cacheable = inputTokens + cacheWriteTokens + cacheReadTokens
+        guard cacheable > 0 else { return 0.0 }
+        return Double(cacheReadTokens) / Double(cacheable)
+    }
+
+    public init(
+        totalTokens: Int,
+        inputTokens: Int,
+        outputTokens: Int,
+        cacheReadTokens: Int,
+        cacheWriteTokens: Int,
+        totalCostUSD: Double
+    ) {
+        self.totalTokens = totalTokens
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.cacheReadTokens = cacheReadTokens
+        self.cacheWriteTokens = cacheWriteTokens
+        self.totalCostUSD = totalCostUSD
+    }
+}
+
 public final class MetricsAggregator: Sendable {
     private let database: DatabaseManager
 
@@ -111,6 +144,10 @@ public final class MetricsAggregator: Sendable {
 
     public var databasePath: String {
         database.path
+    }
+
+    public func fetchAllTimeTotals(toolFilter: String? = nil) async throws -> AllTimeTotals {
+        try database.fetchAllTimeTotals(sourceId: toolFilter)
     }
 
     public func rebuildDailyRollups() async throws {
@@ -218,7 +255,7 @@ public final class MetricsAggregator: Sendable {
         )
     }
 
-    public func fetchProjectRankings(limit: Int = 10, toolFilter: String? = nil) async throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
+    public func fetchProjectRankings(limit: Int = 100, toolFilter: String? = nil) async throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
         try database.fetchProjectRankings(limit: limit, sourceId: toolFilter)
     }
 
@@ -393,10 +430,11 @@ public final class MetricsAggregator: Sendable {
             hourFormatter.dateFormat = "HH:00"
             hourFormatter.timeZone = TimeZone.current
 
+            let currentHour = calendar.date(bySettingHour: calendar.component(.hour, from: now), minute: 0, second: 0, of: now) ?? now
             var trendPoints: [TrendPoint] = []
             for i in 0..<24 {
-                let bucketStart = now.addingTimeInterval(-Double(23 - i) * 3600)
-                let bucketEnd = bucketStart.addingTimeInterval(3600)
+                let bucketStart = calendar.date(byAdding: .hour, value: -(23 - i), to: currentHour) ?? currentHour
+                let bucketEnd = calendar.date(byAdding: .hour, value: 1, to: bucketStart) ?? bucketStart
                 let label = hourFormatter.string(from: bucketStart)
 
                 let bucketRecords = records.filter {
@@ -407,13 +445,16 @@ public final class MetricsAggregator: Sendable {
                 trendPoints.append(TrendPoint(label: label, tokens: bTokens, costUSD: bCost))
             }
 
+            let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, sinceTimestamp: sinceTimestamp)) ?? []
+
             return PeriodMetrics(
                 totalTokens: totalTokens,
                 totalCostUSD: totalCost,
                 mostActiveTool: mostActive,
                 trendPoints: trendPoints,
                 toolDistribution: toolDist,
-                projectRankings: projRankings
+                projectRankings: projRankings,
+                modelDistribution: modelDist
             )
 
         case .today:
@@ -461,13 +502,16 @@ public final class MetricsAggregator: Sendable {
                 trendPoints.append(TrendPoint(label: label, tokens: bTokens, costUSD: bCost))
             }
 
+            let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, sinceTimestamp: sinceTimestamp)) ?? []
+
             return PeriodMetrics(
                 totalTokens: totalTokens,
                 totalCostUSD: totalCost,
                 mostActiveTool: mostActive,
                 trendPoints: trendPoints,
                 toolDistribution: toolDist,
-                projectRankings: projRankings
+                projectRankings: projRankings,
+                modelDistribution: modelDist
             )
 
         case .last7Days, .last30Days:
@@ -500,7 +544,7 @@ public final class MetricsAggregator: Sendable {
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: 10, sourceId: toolFilter)
+            let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter)
 
             let labelFormatter = DateFormatter()
             labelFormatter.dateFormat = (daysCount == 7) ? "E MM/dd" : "MM/dd"
@@ -519,13 +563,16 @@ public final class MetricsAggregator: Sendable {
                 cur = next
             }
 
+            let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, startDate: startKey, endDate: endKey)) ?? []
+
             return PeriodMetrics(
                 totalTokens: totalTokens,
                 totalCostUSD: totalCost,
                 mostActiveTool: mostActive,
                 trendPoints: trendPoints,
                 toolDistribution: toolDist,
-                projectRankings: projRankings
+                projectRankings: projRankings,
+                modelDistribution: modelDist
             )
 
         case .pastYear:
@@ -554,7 +601,7 @@ public final class MetricsAggregator: Sendable {
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: 10, sourceId: toolFilter)
+            let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter)
 
             let monthFormatter = DateFormatter()
             monthFormatter.dateFormat = "MMM yy"
@@ -574,13 +621,16 @@ public final class MetricsAggregator: Sendable {
                 trendPoints.append(TrendPoint(label: monthLabel, tokens: mTokens, costUSD: mCost))
             }
 
+            let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, startDate: startKey, endDate: endKey)) ?? []
+
             return PeriodMetrics(
                 totalTokens: totalTokens,
                 totalCostUSD: totalCost,
                 mostActiveTool: mostActive,
                 trendPoints: trendPoints,
                 toolDistribution: toolDist,
-                projectRankings: projRankings
+                projectRankings: projRankings,
+                modelDistribution: modelDist
             )
 
         case .year(let year):
@@ -600,7 +650,7 @@ public final class MetricsAggregator: Sendable {
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: 10, sourceId: toolFilter)
+            let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter)
 
             let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
             var trendPoints: [TrendPoint] = []
@@ -611,6 +661,7 @@ public final class MetricsAggregator: Sendable {
                 let mCost = monthRollups.reduce(0.0) { $0 + $1.costUSD }
                 trendPoints.append(TrendPoint(label: monthNames[m - 1], tokens: mTokens, costUSD: mCost))
             }
+            let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, startDate: "\(year)-01-01", endDate: "\(year)-12-31")) ?? []
 
             return PeriodMetrics(
                 totalTokens: totalTokens,
@@ -618,7 +669,8 @@ public final class MetricsAggregator: Sendable {
                 mostActiveTool: mostActive,
                 trendPoints: trendPoints,
                 toolDistribution: toolDist,
-                projectRankings: projRankings
+                projectRankings: projRankings,
+                modelDistribution: modelDist
             )
         }
     }

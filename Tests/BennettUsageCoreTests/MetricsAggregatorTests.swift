@@ -222,4 +222,89 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertEqual(todayFiltered?.toolBreakdown["claude"], 500)
         XCTAssertNil(todayFiltered?.toolBreakdown["omp"])
     }
+
+    func testFetchAllTimeTotals() async throws {
+        // Initial empty state
+        let initialTotals = try await aggregator.fetchAllTimeTotals()
+        XCTAssertEqual(initialTotals.totalTokens, 0)
+        XCTAssertEqual(initialTotals.inputTokens, 0)
+        XCTAssertEqual(initialTotals.outputTokens, 0)
+        XCTAssertEqual(initialTotals.cacheReadTokens, 0)
+        XCTAssertEqual(initialTotals.cacheWriteTokens, 0)
+        XCTAssertEqual(initialTotals.totalCostUSD, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(initialTotals.cacheHitRate, 0.0, accuracy: 0.0001)
+
+        // Insert records for two tools: claude and omp
+        let r1 = UnifiedTokenRecord(
+            id: "att_1",
+            sourceId: "claude",
+            timestamp: Date(),
+            dayKey: "2026-03-01",
+            sessionKey: "s1",
+            projectFolder: nil,
+            model: "claude-3-opus",
+            provider: "anthropic",
+            inputTokens: 1000,
+            outputTokens: 500,
+            cacheReadTokens: 3000,
+            cacheWriteTokens: 1000,
+            rawCostUSD: 0.15
+        )
+        let r2 = UnifiedTokenRecord(
+            id: "att_2",
+            sourceId: "omp",
+            timestamp: Date(),
+            dayKey: "2026-03-02",
+            sessionKey: "s2",
+            projectFolder: nil,
+            model: "gemini-flash",
+            provider: "google",
+            inputTokens: 2000,
+            outputTokens: 1000,
+            cacheReadTokens: 1000,
+            cacheWriteTokens: 500,
+            rawCostUSD: 0.05
+        )
+        try db.insertRecords([r1, r2])
+
+        // All-time totals without filter
+        // Total tokens: r1 (1000+500+3000+1000 = 5500) + r2 (2000+1000+1000+500 = 4500) = 10000
+        // Input tokens: 1000 + 2000 = 3000
+        // Output tokens: 500 + 1000 = 1500
+        // Cache read: 3000 + 1000 = 4000
+        // Cache write: 1000 + 500 = 1500
+        // Cost: 0.15 + 0.05 = 0.20
+        // Cacheable: input(3000) + cacheWrite(1500) + cacheRead(4000) = 8500
+        // Cache hit rate: 4000 / 8500 = 0.470588...
+        let allTotals = try await aggregator.fetchAllTimeTotals()
+        XCTAssertEqual(allTotals.totalTokens, 10000)
+        XCTAssertEqual(allTotals.inputTokens, 3000)
+        XCTAssertEqual(allTotals.outputTokens, 1500)
+        XCTAssertEqual(allTotals.cacheReadTokens, 4000)
+        XCTAssertEqual(allTotals.cacheWriteTokens, 1500)
+        XCTAssertEqual(allTotals.totalCostUSD, 0.20, accuracy: 0.0001)
+        XCTAssertEqual(allTotals.cacheHitRate, 4000.0 / 8500.0, accuracy: 0.0001)
+
+        // Filter by tool "claude" (case-insensitive)
+        let claudeTotals = try await aggregator.fetchAllTimeTotals(toolFilter: "Claude")
+        XCTAssertEqual(claudeTotals.totalTokens, 5500)
+        XCTAssertEqual(claudeTotals.inputTokens, 1000)
+        XCTAssertEqual(claudeTotals.outputTokens, 500)
+        XCTAssertEqual(claudeTotals.cacheReadTokens, 3000)
+        XCTAssertEqual(claudeTotals.cacheWriteTokens, 1000)
+        XCTAssertEqual(claudeTotals.totalCostUSD, 0.15, accuracy: 0.0001)
+        // Cacheable: 1000 + 1000 + 3000 = 5000; cache hit rate = 3000 / 5000 = 0.6
+        XCTAssertEqual(claudeTotals.cacheHitRate, 0.6, accuracy: 0.0001)
+
+        // Filter by tool "omp"
+        let ompTotals = try await aggregator.fetchAllTimeTotals(toolFilter: "omp")
+        XCTAssertEqual(ompTotals.totalTokens, 4500)
+        XCTAssertEqual(ompTotals.inputTokens, 2000)
+        XCTAssertEqual(ompTotals.outputTokens, 1000)
+        XCTAssertEqual(ompTotals.cacheReadTokens, 1000)
+        XCTAssertEqual(ompTotals.cacheWriteTokens, 500)
+        XCTAssertEqual(ompTotals.totalCostUSD, 0.05, accuracy: 0.0001)
+        // Cacheable: 2000 + 500 + 1000 = 3500; cache hit rate = 1000 / 3500
+        XCTAssertEqual(ompTotals.cacheHitRate, 1000.0 / 3500.0, accuracy: 0.0001)
+    }
 }
