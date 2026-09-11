@@ -445,3 +445,8 @@ public struct SettingsContentView: View {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
+
+#Preview {
+    SettingsContentView(aggregator: nil)
+        .frame(width: 700, height: 600)
+}

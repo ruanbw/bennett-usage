@@ -103,3 +103,17 @@ public struct MenuBarPopoverView: View {
         }
     }
 }
+
+#Preview {
+    MenuBarPopoverView(
+        summary: TodaySummary(
+            totalTokens: 1_254_300,
+            totalCostUSD: 3.42,
+            toolTokens: ["claude": 800_000, "gemini": 454_300],
+            toolCosts: ["claude": 2.10, "gemini": 1.32]
+        ),
+        onOpenDashboard: {},
+        onSyncNow: {},
+        onQuit: {}
+    )
+}

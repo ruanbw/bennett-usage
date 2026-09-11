@@ -41,10 +41,12 @@ public struct SidebarView: View {
                         .foregroundColor(.accentColor)
                     Text("Bennett Usage")
                         .font(.headline)
+                        .lineLimit(1)
                 }
                 Text("Token Analytics")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
@@ -74,12 +76,14 @@ public struct SidebarView: View {
                     Text(localization.localized(.agentsConnected, arguments: agentCount))
                         .font(.caption)
                         .foregroundColor(.primary)
+                        .lineLimit(1)
                 }
 
                 if let date = lastSyncDate {
                     Text(syncStatusText(date: date))
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
 
                 Button {
@@ -96,6 +100,7 @@ public struct SidebarView: View {
                         }
                         Text(localization.localized(.rescanNow))
                             .font(.caption)
+                            .lineLimit(1)
                     }
                 }
                 .buttonStyle(.plain)
@@ -106,6 +111,7 @@ public struct SidebarView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
+        .frame(minWidth: 210)
     }
 
     private func syncStatusText(date: Date) -> String {
@@ -116,4 +122,16 @@ public struct SidebarView: View {
         let minutes = Int(interval / 60)
         return localization.localized(.syncedMinutesAgo, arguments: minutes)
     }
+}
+
+#Preview {
+    SidebarView(
+        selectedItem: .constant(.dashboard),
+        agentCount: 4,
+        isSyncing: false,
+        lastSyncDate: Date(),
+        onSyncNow: {},
+        localization: .shared
+    )
+    .frame(width: 220, height: 600)
 }
