@@ -25,8 +25,30 @@ public actor SyncCoordinator {
                 let cursor = try database.fetchCursor(for: adapter.sourceId)
                 let (records, newCursor) = try await adapter.fetchIncrementalRecords(from: path, since: cursor)
                 
+                let isCutover: Bool
+                switch (cursor, newCursor) {
+                case (.rowId, .fileOffsets):
+                    isCutover = true
+                case (.fileOffsets, .rowId):
+                    isCutover = true
+                default:
+                    isCutover = false
+                }
+
+                let finalRecords: [UnifiedTokenRecord]
+                let finalCursor: SyncCursor
+                if isCutover {
+                    try database.resetRecords(for: adapter.sourceId)
+                    let (freshRecords, freshCursor) = try await adapter.fetchIncrementalRecords(from: path, since: nil)
+                    finalRecords = freshRecords
+                    finalCursor = freshCursor
+                } else {
+                    finalRecords = records
+                    finalCursor = newCursor
+                }
+
                 // Attach pricing if missing
-                let pricedRecords = records.map { record -> UnifiedTokenRecord in
+                let pricedRecords = finalRecords.map { record -> UnifiedTokenRecord in
                     if record.rawCostUSD == nil || record.rawCostUSD == 0.0 {
                         let cost = pricingEngine.calculateCost(
                             model: record.model,
@@ -54,10 +76,20 @@ public actor SyncCoordinator {
                     return record
                 }
 
-                try database.insertRecords(pricedRecords, updateCursorFor: adapter.sourceId, cursor: newCursor)
+                try database.insertRecords(pricedRecords, updateCursorFor: adapter.sourceId, cursor: finalCursor)
                 totalIngested += pricedRecords.count
             } catch {
                 print("Error syncing adapter \(adapter.sourceId): \(error)")
+            }
+        }
+        if totalIngested > 0 {
+            let count = totalIngested
+            await MainActor.run {
+                NotificationCenter.default.post(
+                    name: .bennettUsageDataDidUpdate,
+                    object: nil,
+                    userInfo: ["ingested": count]
+                )
             }
         }
         return totalIngested

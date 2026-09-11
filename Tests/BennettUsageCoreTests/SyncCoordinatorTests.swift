@@ -105,4 +105,109 @@ final class SyncCoordinatorTests: XCTestCase {
         let coordinator = SyncCoordinator(database: db, registry: registry)
         await coordinator.startWatching()
     }
+
+    func testSyncAllPostsNotificationOnIngest() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        let mock = MockSyncAdapter(sourceId: "mock_notif", path: testDir)
+        mock.recordsToReturn = [
+            UnifiedTokenRecord(
+                id: "notif-rec-1",
+                sourceId: "mock_notif",
+                timestamp: Date(),
+                dayKey: "2026-09-11",
+                sessionKey: "s1",
+                projectFolder: nil,
+                model: "gpt-4o",
+                provider: nil,
+                inputTokens: 10,
+                outputTokens: 10,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                rawCostUSD: 0.001
+            )
+        ]
+        registry.register(mock)
+
+        let exp = expectation(description: "bennettUsageDataDidUpdate received")
+        let observer = NotificationCenter.default.addObserver(
+            forName: .bennettUsageDataDidUpdate,
+            object: nil,
+            queue: .main
+        ) { notif in
+            let count = notif.userInfo?["ingested"] as? Int
+            XCTAssertEqual(count, 1)
+            exp.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+        let count = try await coordinator.syncAll()
+        XCTAssertEqual(count, 1)
+
+        await fulfillment(of: [exp], timeout: 2.0)
+    }
+
+    func testSyncAllPerformsCursorCutoverWithoutDuplicates() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        // Seed old record with rowId cursor
+        let oldRecord = UnifiedTokenRecord(
+            id: "old_row_1",
+            sourceId: "cutover_source",
+            timestamp: Date(),
+            dayKey: "2026-09-11",
+            sessionKey: "old_sess",
+            projectFolder: nil,
+            model: "gpt-4o",
+            provider: nil,
+            inputTokens: 100,
+            outputTokens: 100,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            rawCostUSD: 0.01
+        )
+        try db.insertRecords([oldRecord], updateCursorFor: "cutover_source", cursor: .rowId(1))
+        XCTAssertEqual(try db.fetchTotalRecordCount(), 1)
+
+        // Adapter now uses fileOffsets cursor
+        let mock = MockSyncAdapter(sourceId: "cutover_source", path: testDir)
+        mock.recordsToReturn = [
+            UnifiedTokenRecord(
+                id: "new_offset_rec_1",
+                sourceId: "cutover_source",
+                timestamp: Date(),
+                dayKey: "2026-09-11",
+                sessionKey: "new_sess",
+                projectFolder: nil,
+                model: "gpt-4o",
+                provider: nil,
+                inputTokens: 50,
+                outputTokens: 50,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                rawCostUSD: 0.005
+            )
+        ]
+        mock.newCursorToReturn = .fileOffsets(["/test/session.jsonl": 128])
+        registry.register(mock)
+
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+        let count = try await coordinator.syncAll()
+        XCTAssertEqual(count, 1)
+
+        // Should contain only the new record, not old + new
+        XCTAssertEqual(try db.fetchTotalRecordCount(), 1)
+        let records = try db.fetchRecords(sinceTimestamp: 0)
+        XCTAssertEqual(records[0].id, "new_offset_rec_1")
+        XCTAssertEqual(try db.fetchCursor(for: "cutover_source"), .fileOffsets(["/test/session.jsonl": 128]))
+    }
 }

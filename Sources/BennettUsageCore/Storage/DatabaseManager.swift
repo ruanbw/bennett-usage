@@ -791,4 +791,43 @@ public final class DatabaseManager: @unchecked Sendable {
             throw error
         }
     }
+
+    public func resetRecords(for sourceId: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try execute(sql: "BEGIN TRANSACTION;")
+        do {
+            let deleteRecords = "DELETE FROM unified_token_records WHERE source_id = ?;"
+            var stmt1: OpaquePointer?
+            guard sqlite3_prepare_v2(db, deleteRecords, -1, &stmt1, nil) == SQLITE_OK else {
+                throw NSError(domain: "DatabaseManager", code: 10, userInfo: [NSLocalizedDescriptionKey: lastErrorMessage()])
+            }
+            sqlite3_bind_text(stmt1, 1, (sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_step(stmt1)
+            sqlite3_finalize(stmt1)
+
+            let deleteRollups = "DELETE FROM daily_rollups WHERE source_id = ?;"
+            var stmt2: OpaquePointer?
+            guard sqlite3_prepare_v2(db, deleteRollups, -1, &stmt2, nil) == SQLITE_OK else {
+                throw NSError(domain: "DatabaseManager", code: 11, userInfo: [NSLocalizedDescriptionKey: lastErrorMessage()])
+            }
+            sqlite3_bind_text(stmt2, 1, (sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_step(stmt2)
+            sqlite3_finalize(stmt2)
+
+            let deleteCursors = "DELETE FROM sync_cursors WHERE source_id = ?;"
+            var stmt3: OpaquePointer?
+            guard sqlite3_prepare_v2(db, deleteCursors, -1, &stmt3, nil) == SQLITE_OK else {
+                throw NSError(domain: "DatabaseManager", code: 12, userInfo: [NSLocalizedDescriptionKey: lastErrorMessage()])
+            }
+            sqlite3_bind_text(stmt3, 1, (sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_step(stmt3)
+            sqlite3_finalize(stmt3)
+
+            try execute(sql: "COMMIT;")
+        } catch {
+            try? execute(sql: "ROLLBACK;")
+            throw error
+        }
+    }
 }
