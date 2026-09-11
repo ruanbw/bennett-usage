@@ -3,10 +3,7 @@ import SwiftUI
 public struct DashboardView: View {
     public let aggregator: MetricsAggregator
     @ObservedObject public var localization: LocalizationManager
-    @State private var selectedItem: NavigationItem
-    @State private var agentCount: Int = 0
-    @State private var isSyncing: Bool = false
-    @State private var lastSyncDate: Date? = nil
+    @State private var isShowingSettings: Bool
 
     public init(
         aggregator: MetricsAggregator,
@@ -15,43 +12,29 @@ public struct DashboardView: View {
     ) {
         self.aggregator = aggregator
         self.localization = localization
-        self._selectedItem = State(initialValue: showSettingsInitially ? .settings : .dashboard)
+        self._isShowingSettings = State(initialValue: showSettingsInitially)
     }
 
     public var body: some View {
-        NavigationSplitView {
-            SidebarView(
-                selectedItem: $selectedItem,
-                agentCount: agentCount,
-                isSyncing: isSyncing,
-                lastSyncDate: lastSyncDate,
-                onSyncNow: { Task { await performSync() } },
-                localization: localization
+        DashboardContentView(
+            aggregator: aggregator,
+            localization: localization,
+            onOpenSettings: { isShowingSettings = true }
+        )
+        .frame(minWidth: 960, minHeight: 680)
+        .sheet(isPresented: $isShowingSettings) {
+            SettingsSheetView(
+                aggregator: aggregator,
+                localization: localization,
+                onDismiss: { isShowingSettings = false }
             )
-            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 250)
-        } detail: {
-            switch selectedItem {
-            case .dashboard:
-                DashboardContentView(aggregator: aggregator, localization: localization)
-            case .settings:
-                SettingsContentView(aggregator: aggregator, localization: localization)
-            }
-        }
-        .frame(minWidth: 980, minHeight: 680)
-        .task {
-            await loadAgentHealth()
         }
     }
+}
 
-    private func loadAgentHealth() async {
-        let infos = (try? await aggregator.fetchAgentHealthInfos()) ?? []
-        agentCount = infos.filter(\.isInstalled).count
-        lastSyncDate = Date()
-    }
-
-    private func performSync() async {
-        isSyncing = true
-        await loadAgentHealth()
-        isSyncing = false
-    }
+#Preview {
+    let db = try! DatabaseManager.inMemory()
+    let aggregator = MetricsAggregator(database: db)
+    return DashboardView(aggregator: aggregator)
+        .frame(width: 1060, height: 720)
 }

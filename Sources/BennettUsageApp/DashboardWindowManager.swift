@@ -16,15 +16,18 @@ public final class DashboardWindowManager {
 
         let view = DashboardView(aggregator: aggregator, showSettingsInitially: openSettings)
         let hostingController = NSHostingController(rootView: view)
+        hostingController.sizingOptions = []
 
         let newWindow = NSWindow(
-            contentRect: NSRect(x: 100, y: 100, width: 1060, height: 720),
+            contentRect: NSRect(x: 100, y: 100, width: 1080, height: 740),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         newWindow.title = LocalizationManager.shared.localized(.dashboardTitle)
         newWindow.contentViewController = hostingController
+        newWindow.minSize = NSSize(width: 960, height: 680)
+        newWindow.setContentSize(NSSize(width: 1080, height: 740))
         newWindow.center()
         newWindow.isReleasedWhenClosed = false
         self.window = newWindow
