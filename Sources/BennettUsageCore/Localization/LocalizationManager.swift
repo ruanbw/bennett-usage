@@ -60,6 +60,16 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case rangeTokens
 
     // Heatmap Section
+    case annualPanorama
+    case annualTotalTokens
+    case annualSpend
+    case annualActiveDays
+    case annualPrimaryAgent
+    case viewAnnualDashboard
+    case viewingAnnualDashboard
+    case exitAnnualDashboard
+    case calendarView
+    case monthlyTrend
     case tokenActivity
     case activeDaysCount
     case activityOnDay
@@ -294,6 +304,16 @@ private let englishDictionary: [LocalizedKey: String] = [
     .rangeTokens: "%@ Tokens",
 
     // Heatmap Section
+    .annualPanorama: "Annual Panorama",
+    .annualTotalTokens: "Annual Tokens",
+    .annualSpend: "Annual Spend",
+    .annualActiveDays: "Active Days",
+    .annualPrimaryAgent: "Top Agent",
+    .viewAnnualDashboard: "Full Year View",
+    .viewingAnnualDashboard: "Viewing Year %@",
+    .exitAnnualDashboard: "Exit Year View",
+    .calendarView: "Calendar",
+    .monthlyTrend: "Monthly Trend",
     .tokenActivity: "Token Activity (%@)",
     .activeDaysCount: "%d active days",
     .activityOnDay: "Activity on %@",
@@ -405,6 +425,16 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .rangeTokens: "%@ Token",
 
     // Heatmap Section
+    .annualPanorama: "年度全景与活跃度",
+    .annualTotalTokens: "年度总 Token",
+    .annualSpend: "年度支出",
+    .annualActiveDays: "活跃天数",
+    .annualPrimaryAgent: "主力 Agent",
+    .viewAnnualDashboard: "全盘年度分析",
+    .viewingAnnualDashboard: "当前为 %@ 年全盘分析",
+    .exitAnnualDashboard: "退出年度分析",
+    .calendarView: "日历视图",
+    .monthlyTrend: "月度趋势",
     .tokenActivity: "Token 活跃度 (%@)",
     .activeDaysCount: "%d 个活跃天数",
     .activityOnDay: "%@ 的活跃数据",

@@ -143,7 +143,17 @@ final class LocalizationTests: XCTestCase {
             .storageStatus,
             .generalSettings,
             .usdOption,
-            .cnyOption
+            .cnyOption,
+            .annualPanorama,
+            .annualTotalTokens,
+            .annualSpend,
+            .annualActiveDays,
+            .annualPrimaryAgent,
+            .viewAnnualDashboard,
+            .viewingAnnualDashboard,
+            .exitAnnualDashboard,
+            .calendarView,
+            .monthlyTrend
         ]
 
         for key in requiredKeys {
