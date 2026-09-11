@@ -40,29 +40,38 @@ public struct HeatmapGridView: View {
             HStack(spacing: 3) {
                 ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
                     VStack(spacing: 3) {
-                        ForEach(week) { cell in
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(colorFor(intensity: cell.intensityLevel))
-                                .frame(width: 11, height: 11)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 2)
-                                        .stroke(
-                                            cell.dayKey == selectedDayKey ? Color.accentColor :
-                                            hoveredCell?.id == cell.id ? Color.primary : Color.clear,
-                                            lineWidth: cell.dayKey == selectedDayKey ? 1.5 : 1
-                                        )
-                                )
-                                .onHover { isHovered in
-                                    hoveredCell = isHovered ? cell : nil
-                                }
-                                .onTapGesture {
-                                    onSelectDay?(cell)
-                                }
-                                .help(tooltipText(for: cell))
+                        ForEach(0..<7) { dayIndex in
+                            if dayIndex < week.count {
+                                let cell = week[dayIndex]
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(colorFor(intensity: cell.intensityLevel))
+                                    .frame(maxWidth: .infinity)
+                                    .aspectRatio(1, contentMode: .fit)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 2)
+                                            .stroke(
+                                                cell.dayKey == selectedDayKey ? Color.accentColor :
+                                                hoveredCell?.id == cell.id ? Color.primary : Color.clear,
+                                                lineWidth: cell.dayKey == selectedDayKey ? 1.5 : 1
+                                            )
+                                    )
+                                    .onHover { isHovered in
+                                        hoveredCell = isHovered ? cell : nil
+                                    }
+                                    .onTapGesture {
+                                        onSelectDay?(cell)
+                                    }
+                                    .help(tooltipText(for: cell))
+                            } else {
+                                Color.clear
+                                    .frame(maxWidth: .infinity)
+                                    .aspectRatio(1, contentMode: .fit)
+                            }
                         }
                     }
                 }
             }
+            .frame(maxWidth: .infinity)
 
             // Legend
             HStack(spacing: 4) {
@@ -99,4 +108,25 @@ public struct HeatmapGridView: View {
         let detail = localization.localized(.activityDetail, arguments: formattedTokens, String(format: "%.3f", cell.costUSD))
         return "\(cell.dayKey)\n\(detail)"
     }
+}
+
+#Preview {
+    HeatmapGridView(
+        cells: (0..<91).reversed().map { i in
+            let date = Calendar.current.date(byAdding: .day, value: -i, to: Date())!
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            let dayKey = formatter.string(from: date)
+            let tokens = (i % 3 == 0) ? 0 : Int.random(in: 10_000...500_000)
+            return HeatmapDayCell(
+                date: date,
+                dayKey: dayKey,
+                totalTokens: tokens,
+                costUSD: Double(tokens) * 0.000003,
+                intensityLevel: tokens == 0 ? 0 : Int.random(in: 1...4),
+                toolBreakdown: ["claude": tokens]
+            )
+        }
+    )
+    .padding()
 }
