@@ -136,4 +136,54 @@ final class DashboardViewTests: XCTestCase {
             XCTAssertNotNil(contentView.body)
         }
     }
+    func testHeatmapDisplayModeCases() {
+        let modes = HeatmapDisplayMode.allCases
+        XCTAssertEqual(modes.count, 2)
+        XCTAssertTrue(modes.contains(.calendar))
+        XCTAssertTrue(modes.contains(.monthlyTrend))
+        XCTAssertEqual(HeatmapDisplayMode.calendar.id, "calendar")
+        XCTAssertEqual(HeatmapDisplayMode.monthlyTrend.id, "monthlyTrend")
+    }
+
+    @MainActor
+    func testDashboardContentViewAnnualPanoramaStateAndDisplay() async throws {
+        let db = try DatabaseManager.inMemory()
+        let r1 = UnifiedTokenRecord(
+            id: "rec-yr1",
+            sourceId: "pi",
+            timestamp: Date(),
+            dayKey: "2026-02-14",
+            sessionKey: "s1",
+            projectFolder: "/test",
+            model: "claude-3-5-sonnet",
+            provider: "anthropic",
+            inputTokens: 10000,
+            outputTokens: 2000,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            rawCostUSD: 0.05
+        )
+        try db.insertRecords([r1])
+        let aggregator = MetricsAggregator(database: db)
+
+        let contentView = DashboardContentView(
+            aggregator: aggregator,
+            localization: .shared,
+            initialRange: .year(2026)
+        )
+        XCTAssertNotNil(contentView.body)
+
+        let summary = try await aggregator.fetchAnnualSummary(year: 2026)
+        XCTAssertEqual(summary.annualTokens, 12000)
+        XCTAssertEqual(summary.annualCostUSD, 0.05, accuracy: 0.0001)
+        XCTAssertEqual(summary.mostActiveTool, "pi")
+        XCTAssertEqual(summary.activeDays, 1)
+        XCTAssertEqual(summary.totalDays, 365)
+
+        let annualHeatmap = try await aggregator.fetchAnnualHeatmap(year: 2026)
+        XCTAssertEqual(annualHeatmap.count, 365)
+        let dayCell = annualHeatmap.first(where: { $0.dayKey == "2026-02-14" })
+        XCTAssertEqual(dayCell?.totalTokens, 12000)
+        XCTAssertEqual(dayCell?.intensityLevel, 4)
+    }
 }

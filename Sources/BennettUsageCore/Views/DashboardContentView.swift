@@ -1,8 +1,17 @@
 import SwiftUI
 import Charts
+import AppKit
+
 public enum TrendChartType: String, CaseIterable, Identifiable {
     case bar
     case line
+
+    public var id: String { rawValue }
+}
+
+public enum HeatmapDisplayMode: String, CaseIterable, Identifiable {
+    case calendar
+    case monthlyTrend
 
     public var id: String { rawValue }
 }
@@ -29,6 +38,12 @@ public struct DashboardContentView: View {
     @State private var isProjectsExpanded: Bool = false
     @State private var allTimeTotals: AllTimeTotals? = nil
     @State private var refreshTick = 0
+    @State private var selectedHeatmapYear: Int = Calendar.current.component(.year, from: Date())
+    @State private var annualSummary: (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String, activeDays: Int, totalDays: Int)? = nil
+    @State private var annualTrendPoints: [TrendPoint] = []
+    @State private var heatmapDisplayMode: HeatmapDisplayMode = .calendar
+    @State private var hoveredAnnualMonth: String? = nil
+    @State private var annualMonthHoverLocation: CGPoint? = nil
 
     public init(
         aggregator: MetricsAggregator,
@@ -40,6 +55,11 @@ public struct DashboardContentView: View {
         self.localization = localization
         self._selectedRange = State(initialValue: initialRange)
         self.onOpenSettings = onOpenSettings
+        if case .year(let y) = initialRange {
+            self._selectedHeatmapYear = State(initialValue: y)
+        } else {
+            self._selectedHeatmapYear = State(initialValue: Calendar.current.component(.year, from: Date()))
+        }
     }
 
     // MARK: - Computed Helpers
@@ -67,10 +87,7 @@ public struct DashboardContentView: View {
     }
 
     private var heatmapTitle: String {
-        if case .year(let y) = selectedRange {
-            return localization.localized(.yearTitle, arguments: String(y))
-        }
-        return localization.localized(.rolling365Days)
+        return localization.localized(.yearTitle, arguments: String(selectedHeatmapYear))
     }
 
     private var toolDistribution: [(tool: String, tokens: Int, costUSD: Double)] {
@@ -78,6 +95,12 @@ public struct DashboardContentView: View {
     }
     private var modelDistribution: [(model: String, tokens: Int, costUSD: Double)] {
         periodMetrics?.modelDistribution ?? []
+    }
+    private var agentColors: [String: Color] {
+        ChartPalette.shared.colors(for: availableAgents)
+    }
+    private var modelColors: [String: Color] {
+        ChartPalette.shared.colors(for: modelDistribution.map(\.model))
     }
 
     private var projectRankings: [(project: String, totalTokens: Int, costUSD: Double)] {
@@ -106,11 +129,21 @@ public struct DashboardContentView: View {
             }
             .padding(24)
         }
-        .task(id: "\(selectedRange)_\(selectedToolFilter ?? "all")_\(refreshTick)") {
+        .task(id: "\(selectedRange)_\(selectedHeatmapYear)_\(selectedToolFilter ?? "all")_\(refreshTick)") {
             await loadData()
         }
         .task {
             await autoRefreshLoop()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .bennettUsageDataDidUpdate)) { _ in
+            Task {
+                await loadData()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            Task {
+                await loadData()
+            }
         }
     }
 
@@ -124,65 +157,62 @@ public struct DashboardContentView: View {
     }
 
     private var headerSection: some View {
-        HStack {
+        HStack(spacing: 12) {
             Picker("", selection: $selectedRange) {
                 Text(localization.localized(.range24h)).tag(TimeRangeOption.last24Hours)
                 Text(localization.localized(.rangeToday)).tag(TimeRangeOption.today)
                 Text(localization.localized(.range7Days)).tag(TimeRangeOption.last7Days)
                 Text(localization.localized(.range30Days)).tag(TimeRangeOption.last30Days)
-                Text(localization.localized(.range1Year)).tag(TimeRangeOption.pastYear)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 330)
+            .frame(width: 270)
+
+            if case .year(let y) = selectedRange {
+                HStack(spacing: 5) {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: 11))
+                    Text(localization.localized(.viewingAnnualDashboard, arguments: String(y)))
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    Button {
+                        selectedRange = .last30Days
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(localization.localized(.exitAnnualDashboard))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.accentColor.opacity(0.12))
+                .foregroundColor(.accentColor)
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
+                )
+            }
 
             Spacer()
 
-            HStack(spacing: 8) {
-                Menu {
-                    ForEach(displayedYears, id: \.self) { year in
-                        Button(String(year)) {
-                            selectedRange = .year(year)
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        if case .year(let y) = selectedRange {
-                            Text(String(y)).bold()
-                        } else {
-                            Text(localization.localized(.years))
-                        }
-                        Image(systemName: "chevron.down")
-                            .font(.caption2)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .cornerRadius(6)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 1)
-                    )
+            if let onOpenSettings = onOpenSettings {
+                Button(action: onOpenSettings) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 13, weight: .medium))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 1)
+                        )
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-
-                if let onOpenSettings = onOpenSettings {
-                    Button(action: onOpenSettings) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 13, weight: .medium))
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
-                            .background(Color(NSColor.controlBackgroundColor))
-                            .cornerRadius(6)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(localization.localized(.settings))
-                }
+                .buttonStyle(.plain)
+                .help(localization.localized(.settings))
             }
         }
     }
@@ -209,7 +239,7 @@ public struct DashboardContentView: View {
             HStack(alignment: .center) {
                 // Left: Brand Icon + Titles
                 HStack(spacing: 12) {
-                    let brandColor = selectedToolFilter != nil ? AgentFilterBarView.brandColor(for: selectedToolFilter!) : Color.purple.opacity(0.15)
+                    let brandColor = selectedToolFilter.flatMap { agentColors[$0] } ?? Color.accentColor.opacity(0.15)
                     let agentName = selectedToolFilter != nil ? AgentFilterBarView.displayName(for: selectedToolFilter!) : localization.localized(.filterAllAgents)
 
                     ZStack {
@@ -218,7 +248,7 @@ public struct DashboardContentView: View {
                             .frame(width: 36, height: 36)
                         Image(systemName: "sparkles")
                             .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(selectedToolFilter != nil ? .white : .purple)
+                            .foregroundColor(selectedToolFilter != nil ? .white : .accentColor)
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
@@ -400,32 +430,352 @@ public struct DashboardContentView: View {
 
     // MARK: - Heatmap
 
+    // MARK: - Annual Panorama & Heatmap
+
     private var heatmapSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label(localization.localized(.tokenActivity, arguments: heatmapTitle), systemImage: "calendar")
-                    .font(.headline)
+        VStack(alignment: .leading, spacing: 14) {
+            // Header Row: Title & Subtitle on Left, Controls on Right
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "calendar")
+                            .foregroundColor(.accentColor)
+                            .font(.headline)
+                        Text(localization.localized(.annualPanorama))
+                            .font(.headline)
+                    }
+                    Text("\(String(selectedHeatmapYear))-01-01 ~ \(String(selectedHeatmapYear))-12-31")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
                 Spacer()
-                Text(localization.localized(.activeDaysCount, arguments: heatmapCells.filter { $0.totalTokens > 0 }.count))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+
+                HStack(spacing: 8) {
+                    // Year Switcher Pills (or Menu if > 4 years)
+                    if displayedYears.count <= 4 {
+                        HStack(spacing: 4) {
+                            ForEach(displayedYears, id: \.self) { year in
+                                Button {
+                                    selectedHeatmapYear = year
+                                    selectedCell = nil
+                                } label: {
+                                    Text(String(year))
+                                        .font(.caption)
+                                        .fontWeight(selectedHeatmapYear == year ? .semibold : .regular)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(selectedHeatmapYear == year ? Color.accentColor : Color(NSColor.windowBackgroundColor).opacity(0.6))
+                                        .foregroundColor(selectedHeatmapYear == year ? .white : .primary)
+                                        .cornerRadius(6)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    } else {
+                        Menu {
+                            ForEach(displayedYears, id: \.self) { year in
+                                Button(String(year)) {
+                                    selectedHeatmapYear = year
+                                    selectedCell = nil
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(String(selectedHeatmapYear)).bold()
+                                Image(systemName: "chevron.down").font(.caption2)
+                            }
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color(NSColor.windowBackgroundColor).opacity(0.6))
+                            .cornerRadius(6)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                    }
+
+                    // Display Mode Switcher (Calendar vs Monthly Trend)
+                    Picker("", selection: $heatmapDisplayMode) {
+                        Image(systemName: "square.grid.3x3.fill")
+                            .tag(HeatmapDisplayMode.calendar)
+                            .help(localization.localized(.calendarView))
+                        Image(systemName: "chart.bar.xaxis")
+                            .tag(HeatmapDisplayMode.monthlyTrend)
+                            .help(localization.localized(.monthlyTrend))
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 66)
+
+                    // Apply to Dashboard Button
+                    let isFullDashboardYear = (selectedRange == .year(selectedHeatmapYear))
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            if isFullDashboardYear {
+                                selectedRange = .last30Days
+                            } else {
+                                selectedRange = .year(selectedHeatmapYear)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: isFullDashboardYear ? "checkmark.circle.fill" : "arrow.up.left.and.arrow.down.right")
+                                .font(.caption2)
+                            Text(isFullDashboardYear
+                                ? localization.localized(.viewingAnnualDashboard, arguments: String(selectedHeatmapYear))
+                                : localization.localized(.viewAnnualDashboard)
+                            )
+                            .font(.caption)
+                            .fontWeight(isFullDashboardYear ? .semibold : .regular)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(isFullDashboardYear ? Color.accentColor.opacity(0.15) : Color(NSColor.windowBackgroundColor).opacity(0.6))
+                        .foregroundColor(isFullDashboardYear ? .accentColor : .secondary)
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(isFullDashboardYear ? Color.accentColor.opacity(0.4) : Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.8)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help(isFullDashboardYear ? localization.localized(.exitAnnualDashboard) : localization.localized(.viewAnnualDashboard))
+                }
             }
 
-            HeatmapGridView(
-                cells: heatmapCells,
-                selectedDayKey: selectedCell?.dayKey,
-                localization: localization
-            ) { cell in
-                selectedCell = (selectedCell?.dayKey == cell.dayKey) ? nil : cell
+            // Annual Key Metrics Strip
+            if let summary = annualSummary {
+                annualMetricsStrip(summary: summary)
             }
 
-            if let cell = selectedCell, cell.totalTokens > 0 {
-                dayInspectionBanner(cell: cell)
+            // Visualization Content
+            if heatmapDisplayMode == .calendar {
+                HeatmapGridView(
+                    cells: heatmapCells,
+                    selectedDayKey: selectedCell?.dayKey,
+                    localization: localization
+                ) { cell in
+                    selectedCell = (selectedCell?.dayKey == cell.dayKey) ? nil : cell
+                }
+
+                if let cell = selectedCell, cell.totalTokens > 0 {
+                    dayInspectionBanner(cell: cell)
+                }
+            } else {
+                annualMonthlyTrendChart
             }
         }
         .padding(16)
         .background(Color(NSColor.controlBackgroundColor))
         .cornerRadius(12)
+    }
+
+    private func annualMetricsStrip(summary: (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String, activeDays: Int, totalDays: Int)) -> some View {
+        HStack(spacing: 0) {
+            // 1. Annual Tokens
+            annualStatItem(
+                title: localization.localized(.annualTotalTokens),
+                value: TokenFormatter.formatCompact(summary.annualTokens),
+                subvalue: "\(TokenFormatter.formatFull(summary.annualTokens)) tokens",
+                icon: "flame.fill",
+                color: .orange
+            )
+            Divider().frame(height: 28).padding(.horizontal, 8)
+
+            // 2. Annual Cost
+            annualStatItem(
+                title: localization.localized(.annualSpend),
+                value: PricingEngine.shared.spendString(summary.annualCostUSD),
+                subvalue: summary.annualCostUSD > 0 ? "USD" : "-",
+                icon: "dollarsign.circle.fill",
+                color: .green
+            )
+            Divider().frame(height: 28).padding(.horizontal, 8)
+
+            // 3. Active Days
+            let pct = summary.totalDays > 0 ? (Double(summary.activeDays) / Double(summary.totalDays) * 100.0) : 0.0
+            annualStatItem(
+                title: localization.localized(.annualActiveDays),
+                value: "\(summary.activeDays) / \(summary.totalDays)",
+                subvalue: String(format: "%.1f%%", pct),
+                icon: "calendar.badge.checkmark",
+                color: .blue
+            )
+            Divider().frame(height: 28).padding(.horizontal, 8)
+
+            // 4. Primary Agent
+            let agentName = summary.mostActiveTool != "None" ? AgentFilterBarView.displayName(for: summary.mostActiveTool) : localization.localized(.none)
+            let agentColor = summary.mostActiveTool != "None" ? (agentColors[summary.mostActiveTool] ?? .purple) : .secondary
+            annualStatItem(
+                title: localization.localized(.annualPrimaryAgent),
+                value: agentName,
+                subvalue: summary.annualTokens > 0 ? localization.localized(.leadingVolume) : "-",
+                icon: "sparkles",
+                color: agentColor
+            )
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(NSColor.windowBackgroundColor).opacity(0.5))
+        .cornerRadius(8)
+    }
+
+    private func annualStatItem(title: String, value: String, subvalue: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 14))
+                .foregroundColor(color)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(value)
+                        .font(.subheadline)
+                        .bold()
+                    Text(subvalue)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var annualMonthlyTrendChart: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if annualTrendPoints.contains(where: { $0.tokens > 0 }) {
+                Chart {
+                    ForEach(annualTrendPoints) { item in
+                        BarMark(
+                            x: .value("Month", item.label),
+                            y: .value("Tokens", item.tokens)
+                        )
+                        .foregroundStyle(Color.accentColor.gradient)
+                        .cornerRadius(4)
+                        .opacity(hoveredAnnualMonth == nil || hoveredAnnualMonth == item.label ? 1.0 : 0.4)
+                    }
+
+                    if let hovered = hoveredAnnualMonth, annualTrendPoints.contains(where: { $0.label == hovered }) {
+                        RuleMark(x: .value("Month", hovered))
+                            .foregroundStyle(Color.secondary.opacity(0.5))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    }
+                }
+                .chartOverlay { proxy in
+                    GeometryReader { geo in
+                        ZStack(alignment: .topLeading) {
+                            Rectangle()
+                                .fill(Color.clear)
+                                .contentShape(Rectangle())
+                                .onContinuousHover { phase in
+                                    switch phase {
+                                    case .active(let loc):
+                                        guard let plotFrame = proxy.plotFrame else {
+                                            annualMonthHoverLocation = nil
+                                            hoveredAnnualMonth = nil
+                                            return
+                                        }
+                                        let frame = geo[plotFrame]
+                                        let isInside = loc.x >= frame.minX && loc.x <= frame.maxX &&
+                                                       loc.y >= frame.minY && loc.y <= frame.maxY + 24
+                                        let next: String? = {
+                                            guard isInside else { return nil }
+                                            guard let label = proxy.value(atX: loc.x - frame.origin.x, as: String.self) else { return nil }
+                                            return annualTrendPoints.contains(where: { $0.label == label }) ? label : nil
+                                        }()
+                                        if hoveredAnnualMonth != next {
+                                            hoveredAnnualMonth = next
+                                        }
+                                        if next != nil {
+                                            annualMonthHoverLocation = loc
+                                        } else {
+                                            annualMonthHoverLocation = nil
+                                        }
+                                    case .ended:
+                                        annualMonthHoverLocation = nil
+                                        hoveredAnnualMonth = nil
+                                    }
+                                }
+
+                            if let loc = annualMonthHoverLocation,
+                               let hovered = hoveredAnnualMonth,
+                               let point = annualTrendPoints.first(where: { $0.label == hovered }) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(point.label)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    Text("\(TokenFormatter.formatFull(point.tokens)) tokens")
+                                        .font(.caption).bold()
+                                    Text(PricingEngine.shared.spendString(point.costUSD))
+                                        .font(.caption2)
+                                        .foregroundColor(.green)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(Color(NSColor.windowBackgroundColor))
+                                .cornerRadius(6)
+                                .shadow(color: Color.black.opacity(0.2), radius: 3, x: 0, y: 1)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color(NSColor.separatorColor), lineWidth: 0.8)
+                                )
+                                .position(tooltipPosition(for: loc, in: geo.size, tooltipSize: CGSize(width: 140, height: 60)))
+                                .allowsHitTesting(false)
+                            }
+                        }
+                    }
+                }
+                .frame(height: 160)
+                .chartXAxis {
+                    AxisMarks { value in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+                            .foregroundStyle(Color.secondary.opacity(0.3))
+                        AxisTick()
+                            .foregroundStyle(Color.secondary.opacity(0.5))
+                        AxisValueLabel {
+                            if let str = value.as(String.self) {
+                                Text(str)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading) { value in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+                            .foregroundStyle(Color.secondary.opacity(0.3))
+                        AxisTick()
+                            .foregroundStyle(Color.secondary.opacity(0.5))
+                        AxisValueLabel {
+                            if let tokens = value.as(Int.self) {
+                                Text(TokenFormatter.formatCompact(tokens))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            } else if let tokens = value.as(Double.self) {
+                                Text(TokenFormatter.formatCompact(Int(tokens)))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+            } else {
+                VStack(spacing: 6) {
+                    Image(systemName: "chart.bar")
+                        .font(.system(size: 24))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Text(localization.localized(.noActivityRecorded, arguments: String(selectedHeatmapYear)))
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                }
+                .frame(height: 160)
+                .frame(maxWidth: .infinity)
+            }
+        }
     }
 
     private func dayInspectionBanner(cell: HeatmapDayCell) -> some View {
@@ -454,14 +804,14 @@ public struct DashboardContentView: View {
                 HStack(spacing: 8) {
                     ForEach(cell.toolBreakdown.sorted(by: { $0.value > $1.value }), id: \.key) { tool, count in
                         HStack(spacing: 4) {
-                            Circle().fill(AgentFilterBarView.brandColor(for: tool)).frame(width: 6, height: 6)
+                            Circle().fill(agentColors[tool] ?? .gray).frame(width: 6, height: 6)
                             Text("\(AgentFilterBarView.displayName(for: tool)): \(TokenFormatter.formatCompact(count))")
                                 .font(.caption)
                                 .help("\(AgentFilterBarView.displayName(for: tool)): \(TokenFormatter.formatFull(count)) tokens")
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(AgentFilterBarView.brandColor(for: tool).opacity(0.12))
+                        .background((agentColors[tool] ?? .gray).opacity(0.12))
                         .cornerRadius(4)
                     }
                 }
@@ -481,28 +831,6 @@ public struct DashboardContentView: View {
             modelChart
         }
     }
-    private func modelColor(for model: String, index: Int) -> Color {
-        let lower = model.lowercased()
-        if lower.contains("claude") {
-            return Color(red: 0.91, green: 0.44, blue: 0.32)
-        } else if lower.contains("gpt") || lower.contains("o1") || lower.contains("o3") {
-            return Color(red: 0.06, green: 0.73, blue: 0.51)
-        } else if lower.contains("gemini") {
-            return Color(red: 0.26, green: 0.52, blue: 0.96)
-        } else if lower.contains("deepseek") {
-            return Color(red: 0.31, green: 0.47, blue: 0.98)
-        } else {
-            let palette: [Color] = [
-                Color.purple,
-                Color.orange,
-                Color.pink,
-                Color.teal,
-                Color.indigo
-            ]
-            return palette[index % palette.count]
-        }
-    }
-
     private func tooltipPosition(for loc: CGPoint, in size: CGSize, tooltipSize: CGSize) -> CGPoint {
         var posX = loc.x
         var posY = loc.y - tooltipSize.height / 2 - 14
@@ -582,7 +910,7 @@ public struct DashboardContentView: View {
                             angularInset: 1.5
                         )
                         .cornerRadius(4)
-                        .foregroundStyle(AgentFilterBarView.brandColor(for: item.tool))
+                        .foregroundStyle(agentColors[item.tool] ?? .gray)
                         .opacity(hoveredTool == nil || hoveredTool == item.tool ? 1.0 : 0.45)
                     }
                     .chartLegend(.hidden)
@@ -600,7 +928,7 @@ public struct DashboardContentView: View {
                                     let pct = totalTokens > 0 ? (Double(item.tokens) / Double(totalTokens) * 100) : 0
                                     Text(String(format: "%.0f%%", pct))
                                         .font(.caption2)
-                                        .foregroundColor(AgentFilterBarView.brandColor(for: item.tool))
+                                        .foregroundColor(agentColors[item.tool] ?? .gray)
                                 } else {
                                     Text("Total")
                                         .font(.caption2)
@@ -659,7 +987,7 @@ public struct DashboardContentView: View {
                                             .foregroundColor(.secondary)
                                         Text(String(format: "%.1f%% · %@", pct, PricingEngine.shared.spendString(item.costUSD)))
                                             .font(.caption2)
-                                            .foregroundColor(AgentFilterBarView.brandColor(for: item.tool))
+                                        .foregroundColor(agentColors[item.tool] ?? .gray)
                                     }
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 5)
@@ -681,7 +1009,7 @@ public struct DashboardContentView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(activeTools, id: \.tool) { item in
                             let isSelected = hoveredTool == item.tool
-                            let color = AgentFilterBarView.brandColor(for: item.tool)
+                            let color = agentColors[item.tool] ?? .gray
                             let pct = totalTokens > 0 ? (Double(item.tokens) / Double(totalTokens) * 100) : 0
 
                             HStack(spacing: 6) {
@@ -969,7 +1297,7 @@ public struct DashboardContentView: View {
                 let totalTokens = activeModels.reduce(0) { $0 + $1.tokens }
                 HStack(spacing: 16) {
                     Chart(Array(activeModels.enumerated()), id: \.element.model) { idx, item in
-                        let color = modelColor(for: item.model, index: idx)
+                        let color = modelColors[item.model] ?? .gray
                         SectorMark(
                             angle: .value("Tokens", item.tokens),
                             innerRadius: .ratio(0.58),
@@ -994,10 +1322,9 @@ public struct DashboardContentView: View {
                                     Text(TokenFormatter.formatCompact(item.tokens))
                                         .font(.caption).bold()
                                     let pct = totalTokens > 0 ? (Double(item.tokens) / Double(totalTokens) * 100) : 0
-                                    let idx = activeModels.firstIndex(where: { $0.model == hovered }) ?? 0
                                     Text(String(format: "%.0f%%", pct))
                                         .font(.caption2)
-                                        .foregroundColor(modelColor(for: item.model, index: idx))
+                                        .foregroundColor(modelColors[item.model] ?? .gray)
                                 } else {
                                     Text("Total")
                                         .font(.caption2)
@@ -1048,7 +1375,6 @@ public struct DashboardContentView: View {
                                    let hovered = hoveredModel,
                                    let item = activeModels.first(where: { $0.model == hovered }) {
                                     let pct = totalTokens > 0 ? (Double(item.tokens) / Double(totalTokens) * 100) : 0
-                                    let idx = activeModels.firstIndex(where: { $0.model == hovered }) ?? 0
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(item.model)
                                             .font(.caption2).bold()
@@ -1059,7 +1385,7 @@ public struct DashboardContentView: View {
                                             .foregroundColor(.secondary)
                                         Text(String(format: "%.1f%% · %@", pct, PricingEngine.shared.spendString(item.costUSD)))
                                             .font(.caption2)
-                                            .foregroundColor(modelColor(for: item.model, index: idx))
+                                        .foregroundColor(modelColors[item.model] ?? .gray)
                                     }
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 5)
@@ -1081,7 +1407,7 @@ public struct DashboardContentView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(Array(activeModels.enumerated()), id: \.element.model) { idx, item in
                             let isSelected = hoveredModel == item.model
-                            let color = modelColor(for: item.model, index: idx)
+                            let color = modelColors[item.model] ?? .gray
                             let pct = totalTokens > 0 ? (Double(item.tokens) / Double(totalTokens) * 100) : 0
 
                             HStack(spacing: 6) {
@@ -1297,13 +1623,22 @@ public struct DashboardContentView: View {
     }
 
     private func loadData() async {
-        availableYears = (try? await aggregator.fetchAvailableYears()) ?? []
+        let years = (try? await aggregator.fetchAvailableYears()) ?? []
+        availableYears = years
+        if !years.isEmpty && !years.contains(selectedHeatmapYear) {
+            selectedHeatmapYear = years.first!
+        }
         if Task.isCancelled { return }
         todaySummary = try? await aggregator.fetchTodaySummary()
         if Task.isCancelled { return }
         periodMetrics = try? await aggregator.fetchPeriodMetrics(range: selectedRange, toolFilter: selectedToolFilter)
         if Task.isCancelled { return }
-        heatmapCells = (try? await aggregator.fetchHeatmap(range: selectedRange, toolFilter: selectedToolFilter)) ?? []
+        heatmapCells = (try? await aggregator.fetchAnnualHeatmap(year: selectedHeatmapYear, toolFilter: selectedToolFilter)) ?? []
+        if Task.isCancelled { return }
+        annualSummary = try? await aggregator.fetchAnnualSummary(year: selectedHeatmapYear, toolFilter: selectedToolFilter)
+        if Task.isCancelled { return }
+        let annualMetrics = try? await aggregator.fetchPeriodMetrics(range: .year(selectedHeatmapYear), toolFilter: selectedToolFilter)
+        annualTrendPoints = annualMetrics?.trendPoints ?? []
         if Task.isCancelled { return }
         allTimeTotals = try? await aggregator.fetchAllTimeTotals(toolFilter: selectedToolFilter)
     }
