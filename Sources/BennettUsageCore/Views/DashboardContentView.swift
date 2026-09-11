@@ -1,24 +1,44 @@
 import SwiftUI
 import Charts
+public enum TrendChartType: String, CaseIterable, Identifiable {
+    case bar
+    case line
+
+    public var id: String { rawValue }
+}
 
 public struct DashboardContentView: View {
     public let aggregator: MetricsAggregator
     @ObservedObject public var localization: LocalizationManager
+    public let onOpenSettings: (() -> Void)?
 
     @State private var heatmapCells: [HeatmapDayCell] = []
     @State private var todaySummary: TodaySummary?
     @State private var periodMetrics: PeriodMetrics?
-    @State private var selectedRange: TimeRangeOption = .last30Days
+    @State private var selectedRange: TimeRangeOption
     @State private var availableYears: [Int] = []
     @State private var selectedCell: HeatmapDayCell?
     @State private var selectedToolFilter: String?
+    @State private var trendChartType: TrendChartType = .bar
+    @State private var hoveredTrendPeriod: String? = nil
+    @State private var hoveredTool: String? = nil
+    @State private var hoveredModel: String? = nil
+    @State private var trendHoverLocation: CGPoint? = nil
+    @State private var toolHoverLocation: CGPoint? = nil
+    @State private var modelHoverLocation: CGPoint? = nil
+    @State private var isProjectsExpanded: Bool = false
+    @State private var allTimeTotals: AllTimeTotals? = nil
 
     public init(
         aggregator: MetricsAggregator,
-        localization: LocalizationManager = .shared
+        localization: LocalizationManager = .shared,
+        initialRange: TimeRangeOption = .last24Hours,
+        onOpenSettings: (() -> Void)? = nil
     ) {
         self.aggregator = aggregator
         self.localization = localization
+        self._selectedRange = State(initialValue: initialRange)
+        self.onOpenSettings = onOpenSettings
     }
 
     // MARK: - Computed Helpers
@@ -55,6 +75,9 @@ public struct DashboardContentView: View {
     private var toolDistribution: [(tool: String, tokens: Int, costUSD: Double)] {
         periodMetrics?.toolDistribution ?? []
     }
+    private var modelDistribution: [(model: String, tokens: Int, costUSD: Double)] {
+        periodMetrics?.modelDistribution ?? []
+    }
 
     private var projectRankings: [(project: String, totalTokens: Int, costUSD: Double)] {
         periodMetrics?.projectRankings ?? []
@@ -71,12 +94,13 @@ public struct DashboardContentView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 20) {
                 headerSection
                 agentFilterSection
-                kpiSection
+                heroSection
+                trendChart
+                distributionChartsSection
                 heatmapSection
-                chartsSection
                 projectsSection
             }
             .padding(24)
@@ -86,50 +110,74 @@ public struct DashboardContentView: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Header (Time Tabs on Left, Year Dropdown on Right)
+
+    private var displayedYears: [Int] {
+        if availableYears.isEmpty {
+            return [Calendar.current.component(.year, from: Date())]
+        }
+        return availableYears
+    }
 
     private var headerSection: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(localization.localized(.dashboardTitle))
-                    .font(.title2).bold()
-                Text(localization.localized(.dashboardSubtitle))
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+            Picker("", selection: $selectedRange) {
+                Text(localization.localized(.range24h)).tag(TimeRangeOption.last24Hours)
+                Text(localization.localized(.rangeToday)).tag(TimeRangeOption.today)
+                Text(localization.localized(.range7Days)).tag(TimeRangeOption.last7Days)
+                Text(localization.localized(.range30Days)).tag(TimeRangeOption.last30Days)
+                Text(localization.localized(.range1Year)).tag(TimeRangeOption.pastYear)
             }
-            Spacer()
-            HStack(spacing: 8) {
-                Picker(localization.localized(.range), selection: $selectedRange) {
-                    Text(localization.localized(.range24h)).tag(TimeRangeOption.last24Hours)
-                    Text(localization.localized(.rangeToday)).tag(TimeRangeOption.today)
-                    Text(localization.localized(.range7Days)).tag(TimeRangeOption.last7Days)
-                    Text(localization.localized(.range30Days)).tag(TimeRangeOption.last30Days)
-                    Text(localization.localized(.range1Year)).tag(TimeRangeOption.pastYear)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 330)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 330)
 
-                if !availableYears.isEmpty {
-                    Menu {
-                        ForEach(availableYears, id: \.self) { year in
-                            Button(String(year)) {
-                                selectedRange = .year(year)
-                            }
+            Spacer()
+
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(displayedYears, id: \.self) { year in
+                        Button(String(year)) {
+                            selectedRange = .year(year)
                         }
-                    } label: {
-                        HStack(spacing: 4) {
-                            if case .year(let y) = selectedRange {
-                                Text(String(y)).bold()
-                            } else {
-                                Text(localization.localized(.years))
-                            }
-                            Image(systemName: "chevron.down")
-                                .font(.caption2)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
                     }
-                    .menuStyle(.borderlessButton)
+                } label: {
+                    HStack(spacing: 4) {
+                        if case .year(let y) = selectedRange {
+                            Text(String(y)).bold()
+                        } else {
+                            Text(localization.localized(.years))
+                        }
+                        Image(systemName: "chevron.down")
+                            .font(.caption2)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 1)
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+
+                if let onOpenSettings = onOpenSettings {
+                    Button(action: onOpenSettings) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 13, weight: .medium))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(localization.localized(.settings))
                 }
             }
         }
@@ -150,44 +198,200 @@ public struct DashboardContentView: View {
 
     // MARK: - KPI Cards
 
-    private var kpiSection: some View {
-        LazyVGrid(columns: [
-            GridItem(.flexible(), spacing: 16),
-            GridItem(.flexible(), spacing: 16),
-            GridItem(.flexible(), spacing: 16),
-            GridItem(.flexible(), spacing: 16)
-        ], spacing: 16) {
-            kpiCard(
-                title: localization.localized(.periodTokens),
-                value: TokenFormatter.formatCompact(periodMetrics?.totalTokens ?? 0),
-                subtitle: localization.localized(.totalTokensSuffix, arguments: rangeSubtitle),
-                icon: "flame.fill",
-                color: .purple
-            )
-            .help(TokenFormatter.formatWithTooltip(periodMetrics?.totalTokens ?? 0).tooltip)
-            kpiCard(
-                title: localization.localized(.todaysTokens),
-                value: TokenFormatter.formatCompact(todaySummary?.totalTokens ?? 0),
-                subtitle: localization.localized(.rangeToday),
-                icon: "bolt.fill",
-                color: .blue
-            )
-            .help(TokenFormatter.formatWithTooltip(todaySummary?.totalTokens ?? 0).tooltip)
-            kpiCard(
-                title: localization.localized(.periodSpend),
-                value: PricingEngine.shared.spendString(periodMetrics?.totalCostUSD ?? 0.0),
-                subtitle: localization.localized(.spendSuffix, arguments: rangeSubtitle),
-                icon: "dollarsign.circle.fill",
-                color: .green
-            )
-            kpiCard(
-                title: localization.localized(.mostActiveAgent),
-                value: AgentFilterBarView.displayName(for: periodMetrics?.mostActiveTool ?? localization.localized(.none)),
-                subtitle: localization.localized(.leadingVolume),
-                icon: "sparkles",
-                color: .orange
-            )
+    private var displayedTodayTokens: Int {
+        if let filter = selectedToolFilter?.lowercased() {
+            return todaySummary?.toolTokens.first(where: { $0.key.lowercased() == filter })?.value ?? 0
         }
+        return todaySummary?.totalTokens ?? 0
+    }
+
+    private var heroSection: some View {
+        VStack(spacing: 16) {
+            // Top Row
+            HStack(alignment: .center) {
+                // Left: Brand Icon + Titles
+                HStack(spacing: 12) {
+                    let brandColor = selectedToolFilter != nil ? AgentFilterBarView.brandColor(for: selectedToolFilter!) : Color.purple.opacity(0.15)
+                    let agentName = selectedToolFilter != nil ? AgentFilterBarView.displayName(for: selectedToolFilter!) : localization.localized(.filterAllAgents)
+
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(brandColor)
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(selectedToolFilter != nil ? .white : .purple)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Text(agentName)
+                                .bold()
+                            Text("•")
+                                .foregroundColor(.secondary)
+                            Text(localization.localized(.periodTokens))
+                                .foregroundColor(.secondary)
+                        }
+                        .font(.caption)
+
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            let total = allTimeTotals?.totalTokens ?? 0
+                            Text(TokenFormatter.formatFull(total))
+                                .font(.system(size: 26, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+
+                            Text("≈ \(TokenFormatter.formatCompact(total))")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.12))
+                                .cornerRadius(6)
+                        }
+                    }
+                }
+
+                Spacer()
+
+                // Right: Pill box container
+                HStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(localization.localized(.todaysTokens))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        HStack(spacing: 4) {
+                            Image(systemName: "bolt.fill")
+                                .foregroundColor(.blue)
+                                .font(.caption)
+                            Text(TokenFormatter.formatCompact(displayedTodayTokens))
+                                .font(.subheadline)
+                                .bold()
+                        }
+                    }
+
+                    Divider()
+                        .frame(height: 24)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(localization.localized(.periodSpend))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text(PricingEngine.shared.spendString(allTimeTotals?.totalCostUSD ?? 0.0))
+                            .font(.subheadline)
+                            .bold()
+                            .foregroundColor(.green)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(NSColor.windowBackgroundColor).opacity(0.6))
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 1)
+                )
+            }
+
+            // Bottom Row: 5 mini stat cards
+            LazyVGrid(columns: [
+                GridItem(.flexible(), spacing: 10),
+                GridItem(.flexible(), spacing: 10),
+                GridItem(.flexible(), spacing: 10),
+                GridItem(.flexible(), spacing: 10),
+                GridItem(.flexible(), spacing: 10)
+            ], spacing: 10) {
+                miniStatCard(
+                    title: localization.localized(.freshInput),
+                    icon: "arrow.down.to.line",
+                    iconColor: .blue,
+                    value: TokenFormatter.formatCompact(allTimeTotals?.inputTokens ?? 0)
+                )
+
+                miniStatCard(
+                    title: localization.localized(.modelOutput),
+                    icon: "arrow.up.from.line",
+                    iconColor: .purple,
+                    value: TokenFormatter.formatCompact(allTimeTotals?.outputTokens ?? 0)
+                )
+
+                miniStatCard(
+                    title: localization.localized(.cacheWrite),
+                    icon: "cylinder.split.1x2",
+                    iconColor: .orange,
+                    value: TokenFormatter.formatCompact(allTimeTotals?.cacheWriteTokens ?? 0)
+                )
+
+                miniStatCard(
+                    title: localization.localized(.cacheRead),
+                    icon: "sparkles",
+                    iconColor: .green,
+                    value: TokenFormatter.formatCompact(allTimeTotals?.cacheReadTokens ?? 0)
+                )
+
+                cacheHitRateCard
+            }
+        }
+        .padding(16)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(12)
+    }
+
+    private func miniStatCard(title: String, icon: String, iconColor: Color, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption2)
+                    .foregroundColor(iconColor)
+                Text(title)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Text(value)
+                .font(.subheadline)
+                .bold()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(Color(NSColor.windowBackgroundColor).opacity(0.4))
+        .cornerRadius(8)
+    }
+
+    private var cacheHitRateCard: some View {
+        let hitRate = allTimeTotals?.cacheHitRate ?? 0.0
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "chart.pie.fill")
+                    .font(.caption2)
+                    .foregroundColor(.green)
+                Text(localization.localized(.cacheHitRate))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Text(String(format: "%.1f%%", hitRate * 100))
+                .font(.subheadline)
+                .bold()
+                .lineLimit(1)
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.2))
+                        .frame(height: 4)
+                    Capsule()
+                        .fill(Color.green)
+                        .frame(width: max(0, min(geo.size.width * CGFloat(hitRate), geo.size.width)), height: 4)
+                }
+            }
+            .frame(height: 4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(Color(NSColor.windowBackgroundColor).opacity(0.4))
+        .cornerRadius(8)
     }
 
     // MARK: - Heatmap
@@ -267,29 +471,248 @@ public struct DashboardContentView: View {
 
     // MARK: - Charts
 
-    private var chartsSection: some View {
+    private var distributionChartsSection: some View {
         HStack(alignment: .top, spacing: 16) {
             donutChart
-            trendChart
+            modelChart
         }
+    }
+    private func modelColor(for model: String, index: Int) -> Color {
+        let lower = model.lowercased()
+        if lower.contains("claude") {
+            return Color(red: 0.91, green: 0.44, blue: 0.32)
+        } else if lower.contains("gpt") || lower.contains("o1") || lower.contains("o3") {
+            return Color(red: 0.06, green: 0.73, blue: 0.51)
+        } else if lower.contains("gemini") {
+            return Color(red: 0.26, green: 0.52, blue: 0.96)
+        } else if lower.contains("deepseek") {
+            return Color(red: 0.31, green: 0.47, blue: 0.98)
+        } else {
+            let palette: [Color] = [
+                Color.purple,
+                Color.orange,
+                Color.pink,
+                Color.teal,
+                Color.indigo
+            ]
+            return palette[index % palette.count]
+        }
+    }
+
+    private func tooltipPosition(for loc: CGPoint, in size: CGSize, tooltipSize: CGSize) -> CGPoint {
+        var posX = loc.x
+        var posY = loc.y - tooltipSize.height / 2 - 14
+
+        if posY - tooltipSize.height / 2 < 4 {
+            posY = loc.y + tooltipSize.height / 2 + 14
+        }
+
+        let minX = tooltipSize.width / 2 + 8
+        let maxX = size.width - tooltipSize.width / 2 - 8
+        posX = min(max(posX, minX), maxX)
+
+        return CGPoint(x: posX, y: posY)
+    }
+
+    private func updateHoveredDonut(
+        location: CGPoint,
+        proxy: ChartProxy,
+        geo: GeometryProxy,
+        items: [(name: String, tokens: Int)],
+        setHovered: (String?) -> Void
+    ) {
+        guard let plotFrame = proxy.plotFrame else {
+            setHovered(nil)
+            return
+        }
+        let frame = geo[plotFrame]
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        let dx = Double(location.x - center.x)
+        let dy = Double(location.y - center.y)
+        let distance = sqrt(dx * dx + dy * dy)
+        let maxRadius = min(Double(frame.width), Double(frame.height)) / 2.0
+        let minRadius = maxRadius * 0.55
+        let maxRadiusLimit = maxRadius * 1.02
+
+        guard distance >= minRadius && distance <= maxRadiusLimit else {
+            setHovered(nil)
+            return
+        }
+
+        let rad = atan2(dy, dx)
+        var angle = rad + Double.pi / 2
+        if angle < 0 { angle += 2 * Double.pi }
+        let fraction = angle / (2 * Double.pi)
+
+        let total = items.reduce(0) { $0 + $1.tokens }
+        guard total > 0 else {
+            setHovered(nil)
+            return
+        }
+
+        let targetVal = fraction * Double(total)
+        var accum = 0.0
+        for item in items {
+            accum += Double(item.tokens)
+            if targetVal <= accum {
+                setHovered(item.name)
+                return
+            }
+        }
+        setHovered(items.last?.name)
     }
 
     private var donutChart: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(localization.localized(.toolShareBreakdown, arguments: rangeSubtitle))
                 .font(.headline)
-            if toolDistribution.contains(where: { $0.tokens > 0 }) {
-                Chart(toolDistribution.filter { $0.tokens > 0 }, id: \.tool) { item in
-                    SectorMark(
-                        angle: .value("Tokens", item.tokens),
-                        innerRadius: .ratio(0.58),
-                        angularInset: 1.5
-                    )
-                    .cornerRadius(4)
-                    .foregroundStyle(by: .value("Tool", AgentFilterBarView.displayName(for: item.tool)))
+            let activeTools = toolDistribution.filter { $0.tokens > 0 }
+            if !activeTools.isEmpty {
+                let totalTokens = activeTools.reduce(0) { $0 + $1.tokens }
+                HStack(spacing: 16) {
+                    Chart(activeTools, id: \.tool) { item in
+                        SectorMark(
+                            angle: .value("Tokens", item.tokens),
+                            innerRadius: .ratio(0.58),
+                            outerRadius: .ratio(1.0),
+                            angularInset: 1.5
+                        )
+                        .cornerRadius(4)
+                        .foregroundStyle(AgentFilterBarView.brandColor(for: item.tool))
+                        .opacity(hoveredTool == nil || hoveredTool == item.tool ? 1.0 : 0.45)
+                    }
+                    .chartLegend(.hidden)
+                    .chartBackground { proxy in
+                        GeometryReader { geo in
+                            let frame = proxy.plotFrame.map { geo[$0] } ?? geo.frame(in: .local)
+                            VStack(spacing: 2) {
+                                if let hovered = hoveredTool, let item = activeTools.first(where: { $0.tool == hovered }) {
+                                    Text(item.tool)
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                        .lineLimit(1)
+                                    Text(TokenFormatter.formatCompact(item.tokens))
+                                        .font(.caption).bold()
+                                    let pct = totalTokens > 0 ? (Double(item.tokens) / Double(totalTokens) * 100) : 0
+                                    Text(String(format: "%.0f%%", pct))
+                                        .font(.caption2)
+                                        .foregroundColor(AgentFilterBarView.brandColor(for: item.tool))
+                                } else {
+                                    Text("Total")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    Text(TokenFormatter.formatCompact(totalTokens))
+                                        .font(.caption).bold()
+                                }
+                            }
+                            .frame(width: 86)
+                            .position(x: frame.midX, y: frame.midY)
+                        }
+                    }
+                    .frame(width: 170, height: 170)
+                    .chartOverlay { proxy in
+                        GeometryReader { geo in
+                            ZStack(alignment: .topLeading) {
+                                Rectangle()
+                                    .fill(Color.clear)
+                                    .contentShape(Rectangle())
+                                    .onContinuousHover { phase in
+                                        switch phase {
+                                        case .active(let loc):
+                                            updateHoveredDonut(
+                                                location: loc,
+                                                proxy: proxy,
+                                                geo: geo,
+                                                items: activeTools.map { (name: $0.tool, tokens: $0.tokens) },
+                                                setHovered: { next in
+                                                    if hoveredTool != next {
+                                                        hoveredTool = next
+                                                    }
+                                                    if next != nil {
+                                                        toolHoverLocation = loc
+                                                    } else {
+                                                        toolHoverLocation = nil
+                                                    }
+                                                }
+                                            )
+                                        case .ended:
+                                            toolHoverLocation = nil
+                                            if hoveredTool != nil {
+                                                hoveredTool = nil
+                                            }
+                                        }
+                                    }
+
+                                if let loc = toolHoverLocation,
+                                   let hovered = hoveredTool,
+                                   let item = activeTools.first(where: { $0.tool == hovered }) {
+                                    let pct = totalTokens > 0 ? (Double(item.tokens) / Double(totalTokens) * 100) : 0
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(AgentFilterBarView.displayName(for: item.tool))
+                                            .font(.caption2).bold()
+                                        Text("\(TokenFormatter.formatFull(item.tokens)) tokens")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                        Text(String(format: "%.1f%% · %@", pct, PricingEngine.shared.spendString(item.costUSD)))
+                                            .font(.caption2)
+                                            .foregroundColor(AgentFilterBarView.brandColor(for: item.tool))
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(Color(NSColor.windowBackgroundColor))
+                                    .cornerRadius(6)
+                                    .shadow(color: Color.black.opacity(0.2), radius: 3, x: 0, y: 1)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(Color(NSColor.separatorColor), lineWidth: 0.8)
+                                    )
+                                    .position(tooltipPosition(for: loc, in: geo.size, tooltipSize: CGSize(width: 140, height: 55)))
+                                    .allowsHitTesting(false)
+                                }
+                            }
+                        }
+                    }
+
+                    // Vertical Legend on Right (highlighted when hovered)
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(activeTools, id: \.tool) { item in
+                            let isSelected = hoveredTool == item.tool
+                            let color = AgentFilterBarView.brandColor(for: item.tool)
+                            let pct = totalTokens > 0 ? (Double(item.tokens) / Double(totalTokens) * 100) : 0
+
+                            HStack(spacing: 6) {
+                                Circle().fill(color).frame(width: 8, height: 8)
+                                Text(AgentFilterBarView.displayName(for: item.tool))
+                                    .font(.caption)
+                                    .fontWeight(isSelected ? .bold : .regular)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(TokenFormatter.formatCompact(item.tokens))
+                                    .font(.caption)
+                                    .fontWeight(isSelected ? .bold : .medium)
+                                Text(String(format: "%.0f%%", pct))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 32, alignment: .trailing)
+                            }
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(isSelected ? color.opacity(0.18) : Color.clear)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(isSelected ? color.opacity(0.6) : Color.clear, lineWidth: 1)
+                            )
+                            .onHover { isHovered in
+                                hoveredTool = isHovered ? item.tool : nil
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(height: 220)
-                .chartLegend(position: .bottom, spacing: 12)
+                .frame(height: 200)
             } else {
                 VStack(spacing: 8) {
                     Spacer()
@@ -301,7 +724,7 @@ public struct DashboardContentView: View {
                         .font(.caption)
                     Spacer()
                 }
-                .frame(height: 220)
+                .frame(height: 200)
                 .frame(maxWidth: .infinity)
             }
         }
@@ -311,23 +734,205 @@ public struct DashboardContentView: View {
         .cornerRadius(12)
     }
 
+    private func visibleXAxisLabels(for points: [TrendPoint]) -> [String] {
+        let count = points.count
+        guard count > 8 else {
+            return points.map(\.label)
+        }
+        let step: Int
+        if count <= 14 {
+            step = 2
+        } else if count <= 24 {
+            step = 4
+        } else {
+            step = max(1, count / 6)
+        }
+        var visible: [String] = []
+        for i in stride(from: 0, to: count, by: step) {
+            visible.append(points[i].label)
+        }
+        if let last = points.last, !visible.contains(last.label) {
+            let remainder = (count - 1) % step
+            if remainder >= 2 {
+                visible.append(last.label)
+            }
+        }
+        return visible
+    }
+
     private var trendChart: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(trendTitle)
-                .font(.headline)
+            HStack {
+                Text(trendTitle)
+                    .font(.headline)
+                Spacer()
+                Picker("", selection: $trendChartType) {
+                    Image(systemName: "chart.bar.fill")
+                        .tag(TrendChartType.bar)
+                        .help(localization.localized(.chartTypeBar))
+                    Image(systemName: "chart.xyaxis.line")
+                        .tag(TrendChartType.line)
+                        .help(localization.localized(.chartTypeLine))
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 80)
+            }
+
             let trendPoints = periodMetrics?.trendPoints ?? []
             if trendPoints.contains(where: { $0.tokens > 0 }) {
-                Chart(trendPoints) { item in
-                    BarMark(
-                        x: .value("Period", item.label),
-                        y: .value("Tokens", item.tokens)
-                    )
-                    .foregroundStyle(Color.blue.gradient)
-                    .cornerRadius(4)
+                let visibleLabels = visibleXAxisLabels(for: trendPoints)
+                Chart {
+                    ForEach(trendPoints) { item in
+                        if trendChartType == .bar {
+                            BarMark(
+                                x: .value("Period", item.label),
+                                y: .value("Tokens", item.tokens)
+                            )
+                            .foregroundStyle(Color.blue.gradient)
+                            .cornerRadius(4)
+                            .opacity(hoveredTrendPeriod == nil || hoveredTrendPeriod == item.label ? 1.0 : 0.35)
+                        } else {
+                            AreaMark(
+                                x: .value("Period", item.label),
+                                y: .value("Tokens", item.tokens)
+                            )
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [Color.blue.opacity(0.35), Color.blue.opacity(0.03)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .interpolationMethod(.monotone)
+
+                            LineMark(
+                                x: .value("Period", item.label),
+                                y: .value("Tokens", item.tokens)
+                            )
+                            .foregroundStyle(Color.blue)
+                            .interpolationMethod(.monotone)
+                            .lineStyle(StrokeStyle(lineWidth: 2.5))
+
+                            if hoveredTrendPeriod == item.label {
+                                PointMark(
+                                    x: .value("Period", item.label),
+                                    y: .value("Tokens", item.tokens)
+                                )
+                                .foregroundStyle(Color.blue)
+                                .symbolSize(50)
+                            }
+                        }
+                    }
+
+                    if let hovered = hoveredTrendPeriod, trendPoints.contains(where: { $0.label == hovered }) {
+                        RuleMark(x: .value("Period", hovered))
+                            .foregroundStyle(Color.secondary.opacity(0.5))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    }
                 }
-                .frame(height: 220)
+                .chartOverlay { proxy in
+                    GeometryReader { geo in
+                        ZStack(alignment: .topLeading) {
+                            Rectangle()
+                                .fill(Color.clear)
+                                .contentShape(Rectangle())
+                                .onContinuousHover { phase in
+                                    switch phase {
+                                    case .active(let loc):
+                                        guard let plotFrame = proxy.plotFrame else {
+                                            trendHoverLocation = nil
+                                            if hoveredTrendPeriod != nil {
+                                                hoveredTrendPeriod = nil
+                                            }
+                                            return
+                                        }
+                                        let frame = geo[plotFrame]
+                                        let isInside = loc.x >= frame.minX && loc.x <= frame.maxX &&
+                                                       loc.y >= frame.minY && loc.y <= frame.maxY + 24
+                                        let next: String? = {
+                                            guard isInside else { return nil }
+                                            guard let label = proxy.value(atX: loc.x - frame.origin.x, as: String.self) else { return nil }
+                                            return trendPoints.contains(where: { $0.label == label }) ? label : nil
+                                        }()
+                                        if hoveredTrendPeriod != next {
+                                            hoveredTrendPeriod = next
+                                        }
+                                        if next != nil {
+                                            trendHoverLocation = loc
+                                        } else {
+                                            trendHoverLocation = nil
+                                        }
+                                    case .ended:
+                                        trendHoverLocation = nil
+                                        if hoveredTrendPeriod != nil {
+                                            hoveredTrendPeriod = nil
+                                        }
+                                    }
+                                }
+
+                            if let loc = trendHoverLocation,
+                               let hovered = hoveredTrendPeriod,
+                               let point = trendPoints.first(where: { $0.label == hovered }) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(point.label)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    Text("\(TokenFormatter.formatFull(point.tokens)) tokens")
+                                        .font(.caption).bold()
+                                    Text(PricingEngine.shared.spendString(point.costUSD))
+                                        .font(.caption2)
+                                        .foregroundColor(.green)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(Color(NSColor.windowBackgroundColor))
+                                .cornerRadius(6)
+                                .shadow(color: Color.black.opacity(0.2), radius: 3, x: 0, y: 1)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color(NSColor.separatorColor), lineWidth: 0.8)
+                                )
+                                .position(tooltipPosition(for: loc, in: geo.size, tooltipSize: CGSize(width: 140, height: 60)))
+                                .allowsHitTesting(false)
+                            }
+                        }
+                    }
+                }
+                .frame(height: 230)
+                .chartXAxis {
+                    AxisMarks(values: visibleLabels) { value in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+                            .foregroundStyle(Color.secondary.opacity(0.3))
+                        AxisTick()
+                            .foregroundStyle(Color.secondary.opacity(0.5))
+                        AxisValueLabel {
+                            if let str = value.as(String.self) {
+                                Text(str)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
                 .chartYAxis {
-                    AxisMarks(position: .leading)
+                    AxisMarks(position: .leading) { value in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+                            .foregroundStyle(Color.secondary.opacity(0.3))
+                        AxisTick()
+                            .foregroundStyle(Color.secondary.opacity(0.5))
+                        AxisValueLabel {
+                            if let tokens = value.as(Int.self) {
+                                Text(TokenFormatter.formatCompact(tokens))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            } else if let tokens = value.as(Double.self) {
+                                Text(TokenFormatter.formatCompact(Int(tokens)))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
                 }
             } else {
                 VStack(spacing: 8) {
@@ -340,7 +945,187 @@ public struct DashboardContentView: View {
                         .font(.caption)
                     Spacer()
                 }
-                .frame(height: 220)
+                .frame(height: 230)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(12)
+    }
+
+    private var modelChart: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(localization.localized(.modelUsageBreakdown, arguments: rangeSubtitle))
+                .font(.headline)
+
+            let activeModels = Array(modelDistribution.filter { $0.tokens > 0 }.prefix(6))
+            if !activeModels.isEmpty {
+                let totalTokens = activeModels.reduce(0) { $0 + $1.tokens }
+                HStack(spacing: 16) {
+                    Chart(Array(activeModels.enumerated()), id: \.element.model) { idx, item in
+                        let color = modelColor(for: item.model, index: idx)
+                        SectorMark(
+                            angle: .value("Tokens", item.tokens),
+                            innerRadius: .ratio(0.58),
+                            outerRadius: .ratio(1.0),
+                            angularInset: 1.5
+                        )
+                        .cornerRadius(4)
+                        .foregroundStyle(color)
+                        .opacity(hoveredModel == nil || hoveredModel == item.model ? 1.0 : 0.45)
+                    }
+                    .chartLegend(.hidden)
+                    .chartBackground { proxy in
+                        GeometryReader { geo in
+                            let frame = proxy.plotFrame.map { geo[$0] } ?? geo.frame(in: .local)
+                            VStack(spacing: 2) {
+                                if let hovered = hoveredModel, let item = activeModels.first(where: { $0.model == hovered }) {
+                                    Text(item.model)
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Text(TokenFormatter.formatCompact(item.tokens))
+                                        .font(.caption).bold()
+                                    let pct = totalTokens > 0 ? (Double(item.tokens) / Double(totalTokens) * 100) : 0
+                                    let idx = activeModels.firstIndex(where: { $0.model == hovered }) ?? 0
+                                    Text(String(format: "%.0f%%", pct))
+                                        .font(.caption2)
+                                        .foregroundColor(modelColor(for: item.model, index: idx))
+                                } else {
+                                    Text("Total")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    Text(TokenFormatter.formatCompact(totalTokens))
+                                        .font(.caption).bold()
+                                }
+                            }
+                            .frame(width: 86)
+                            .position(x: frame.midX, y: frame.midY)
+                        }
+                    }
+                    .frame(width: 170, height: 170)
+                    .chartOverlay { proxy in
+                        GeometryReader { geo in
+                            ZStack(alignment: .topLeading) {
+                                Rectangle()
+                                    .fill(Color.clear)
+                                    .contentShape(Rectangle())
+                                    .onContinuousHover { phase in
+                                        switch phase {
+                                        case .active(let loc):
+                                            updateHoveredDonut(
+                                                location: loc,
+                                                proxy: proxy,
+                                                geo: geo,
+                                                items: activeModels.map { (name: $0.model, tokens: $0.tokens) },
+                                                setHovered: { next in
+                                                    if hoveredModel != next {
+                                                        hoveredModel = next
+                                                    }
+                                                    if next != nil {
+                                                        modelHoverLocation = loc
+                                                    } else {
+                                                        modelHoverLocation = nil
+                                                    }
+                                                }
+                                            )
+                                        case .ended:
+                                            modelHoverLocation = nil
+                                            if hoveredModel != nil {
+                                                hoveredModel = nil
+                                            }
+                                        }
+                                    }
+
+                                if let loc = modelHoverLocation,
+                                   let hovered = hoveredModel,
+                                   let item = activeModels.first(where: { $0.model == hovered }) {
+                                    let pct = totalTokens > 0 ? (Double(item.tokens) / Double(totalTokens) * 100) : 0
+                                    let idx = activeModels.firstIndex(where: { $0.model == hovered }) ?? 0
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(item.model)
+                                            .font(.caption2).bold()
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Text("\(TokenFormatter.formatFull(item.tokens)) tokens")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                        Text(String(format: "%.1f%% · %@", pct, PricingEngine.shared.spendString(item.costUSD)))
+                                            .font(.caption2)
+                                            .foregroundColor(modelColor(for: item.model, index: idx))
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(Color(NSColor.windowBackgroundColor))
+                                    .cornerRadius(6)
+                                    .shadow(color: Color.black.opacity(0.2), radius: 3, x: 0, y: 1)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(Color(NSColor.separatorColor), lineWidth: 0.8)
+                                    )
+                                    .position(tooltipPosition(for: loc, in: geo.size, tooltipSize: CGSize(width: 150, height: 55)))
+                                    .allowsHitTesting(false)
+                                }
+                            }
+                        }
+                    }
+
+                    // Vertical Legend on Right (highlighted when hovered)
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(activeModels.enumerated()), id: \.element.model) { idx, item in
+                            let isSelected = hoveredModel == item.model
+                            let color = modelColor(for: item.model, index: idx)
+                            let pct = totalTokens > 0 ? (Double(item.tokens) / Double(totalTokens) * 100) : 0
+
+                            HStack(spacing: 6) {
+                                Circle().fill(color).frame(width: 8, height: 8)
+                                Text(item.model)
+                                    .font(.caption)
+                                    .fontWeight(isSelected ? .bold : .regular)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer()
+                                Text(TokenFormatter.formatCompact(item.tokens))
+                                    .font(.caption)
+                                    .fontWeight(isSelected ? .bold : .medium)
+                                Text(String(format: "%.0f%%", pct))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 32, alignment: .trailing)
+                            }
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(isSelected ? color.opacity(0.18) : Color.clear)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(isSelected ? color.opacity(0.6) : Color.clear, lineWidth: 1)
+                            )
+                            .onHover { isHovered in
+                                hoveredModel = isHovered ? item.model : nil
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .frame(height: 200)
+            } else {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: "cpu")
+                        .font(.system(size: 32))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Text(localization.localized(.noModelData, arguments: rangeSubtitle))
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                    Spacer()
+                }
+                .frame(height: 200)
                 .frame(maxWidth: .infinity)
             }
         }
@@ -376,19 +1161,19 @@ public struct DashboardContentView: View {
                 .padding(.vertical, 24)
             } else {
                 let maxTokens = max(projectRankings.first?.totalTokens ?? 1, 1)
+                let displayedProjects = isProjectsExpanded ? projectRankings : Array(projectRankings.prefix(3))
                 VStack(spacing: 8) {
-                    ForEach(Array(projectRankings.enumerated()), id: \.element.project) { index, item in
+                    ForEach(Array(displayedProjects.enumerated()), id: \.element.project) { index, item in
                         HStack(spacing: 12) {
                             medalBadge(rank: index + 1)
                                 .frame(width: 28, alignment: .leading)
 
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(item.project)
-                                    .font(.subheadline)
+                                let folderName = (item.project as NSString).lastPathComponent.isEmpty ? item.project : (item.project as NSString).lastPathComponent
+                                Text(folderName)
+                                    .font(.subheadline).bold()
                                     .lineLimit(1)
-                                    .truncationMode(.middle)
                                     .help(item.project)
-
                                 GeometryReader { geo in
                                     let ratio = CGFloat(item.totalTokens) / CGFloat(maxTokens)
                                     ZStack(alignment: .leading) {
@@ -415,6 +1200,32 @@ public struct DashboardContentView: View {
                         .padding(.horizontal, 10)
                         .background(Color(NSColor.windowBackgroundColor).opacity(0.5))
                         .cornerRadius(6)
+                    }
+
+                    if projectRankings.count > 3 {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isProjectsExpanded.toggle()
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(isProjectsExpanded
+                                    ? localization.localized(.showLess)
+                                    : localization.localized(.showMoreProjects, arguments: projectRankings.count - 3)
+                                )
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                Image(systemName: isProjectsExpanded ? "chevron.up" : "chevron.down")
+                                    .font(.caption2)
+                            }
+                            .foregroundColor(.accentColor)
+                            .padding(.vertical, 5)
+                            .padding(.horizontal, 10)
+                            .background(Color.accentColor.opacity(0.08))
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 4)
                     }
                 }
             }
@@ -486,5 +1297,13 @@ public struct DashboardContentView: View {
         todaySummary = try? await aggregator.fetchTodaySummary()
         periodMetrics = try? await aggregator.fetchPeriodMetrics(range: selectedRange, toolFilter: selectedToolFilter)
         heatmapCells = (try? await aggregator.fetchHeatmap(range: selectedRange, toolFilter: selectedToolFilter)) ?? []
+        allTimeTotals = try? await aggregator.fetchAllTimeTotals(toolFilter: selectedToolFilter)
     }
+}
+
+#Preview {
+    let db = try! DatabaseManager.inMemory()
+    let aggregator = MetricsAggregator(database: db)
+    return DashboardContentView(aggregator: aggregator)
+        .frame(width: 900, height: 700)
 }
