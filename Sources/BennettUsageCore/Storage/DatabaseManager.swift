@@ -1,6 +1,10 @@
 import Foundation
 import SQLite3
 
+// sqlite3_bind_* 以 SQLITE_STATIC(nil)绑定时,SQLite 不会拷贝缓冲区,而是在 step 时才读取;
+// Swift 桥接的临时 NSString/Data 缓冲区可能在 step 前被释放,必须用 SQLITE_TRANSIENT 让 SQLite 拷贝。
+private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
 public final class DatabaseManager: @unchecked Sendable {
     private var db: OpaquePointer?
     private let lock = NSRecursiveLock()
@@ -135,19 +139,19 @@ public final class DatabaseManager: @unchecked Sendable {
                 defer { sqlite3_finalize(rollupStmt) }
 
                 for r in records {
-                    sqlite3_bind_text(recordStmt, 1, (r.id as NSString).utf8String, -1, nil)
-                    sqlite3_bind_text(recordStmt, 2, (r.sourceId as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(recordStmt, 1, (r.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(recordStmt, 2, (r.sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
                     sqlite3_bind_int64(recordStmt, 3, Int64(r.timestamp.timeIntervalSince1970 * 1000))
-                    sqlite3_bind_text(recordStmt, 4, (r.dayKey as NSString).utf8String, -1, nil)
-                    sqlite3_bind_text(recordStmt, 5, (r.sessionKey as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(recordStmt, 4, (r.dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_text(recordStmt, 5, (r.sessionKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
                     if let pf = r.projectFolder {
-                        sqlite3_bind_text(recordStmt, 6, (pf as NSString).utf8String, -1, nil)
+                        sqlite3_bind_text(recordStmt, 6, (pf as NSString).utf8String, -1, SQLITE_TRANSIENT)
                     } else {
                         sqlite3_bind_null(recordStmt, 6)
                     }
-                    sqlite3_bind_text(recordStmt, 7, (r.model as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(recordStmt, 7, (r.model as NSString).utf8String, -1, SQLITE_TRANSIENT)
                     if let prov = r.provider {
-                        sqlite3_bind_text(recordStmt, 8, (prov as NSString).utf8String, -1, nil)
+                        sqlite3_bind_text(recordStmt, 8, (prov as NSString).utf8String, -1, SQLITE_TRANSIENT)
                     } else {
                         sqlite3_bind_null(recordStmt, 8)
                     }
@@ -166,8 +170,8 @@ public final class DatabaseManager: @unchecked Sendable {
                     sqlite3_reset(recordStmt)
 
                     if wasInserted {
-                        sqlite3_bind_text(rollupStmt, 1, (r.dayKey as NSString).utf8String, -1, nil)
-                        sqlite3_bind_text(rollupStmt, 2, (r.sourceId as NSString).utf8String, -1, nil)
+                        sqlite3_bind_text(rollupStmt, 1, (r.dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                        sqlite3_bind_text(rollupStmt, 2, (r.sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
                         sqlite3_bind_int(rollupStmt, 3, Int32(r.totalTokens))
                         sqlite3_bind_int(rollupStmt, 4, Int32(r.inputTokens))
                         sqlite3_bind_int(rollupStmt, 5, Int32(r.outputTokens))
@@ -198,9 +202,9 @@ public final class DatabaseManager: @unchecked Sendable {
                 }
                 defer { sqlite3_finalize(cursorStmt) }
 
-                sqlite3_bind_text(cursorStmt, 1, (sourceId as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(cursorStmt, 1, (sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 _ = cursorData.withUnsafeBytes { rawBuffer in
-                    sqlite3_bind_blob(cursorStmt, 2, rawBuffer.baseAddress, Int32(rawBuffer.count), nil)
+                    sqlite3_bind_blob(cursorStmt, 2, rawBuffer.baseAddress, Int32(rawBuffer.count), SQLITE_TRANSIENT)
                 }
                 sqlite3_bind_int64(cursorStmt, 3, Int64(Date().timeIntervalSince1970 * 1000))
 
@@ -227,17 +231,17 @@ public final class DatabaseManager: @unchecked Sendable {
         }
         defer { sqlite3_finalize(stmt) }
 
-        sqlite3_bind_text(stmt, 1, (pattern as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 1, (pattern as NSString).utf8String, -1, SQLITE_TRANSIENT)
         var result: [DailyRollup] = []
         while true {
             let step = sqlite3_step(stmt)
             if step == SQLITE_ROW {
                 let dayKey = String(cString: sqlite3_column_text(stmt, 0))
                 let sourceId = String(cString: sqlite3_column_text(stmt, 1))
-                let totalTokens = Int(sqlite3_column_int(stmt, 2))
-                let inputTokens = Int(sqlite3_column_int(stmt, 3))
-                let outputTokens = Int(sqlite3_column_int(stmt, 4))
-                let cacheTokens = Int(sqlite3_column_int(stmt, 5))
+                let totalTokens = Int(sqlite3_column_int64(stmt, 2))
+                let inputTokens = Int(sqlite3_column_int64(stmt, 3))
+                let outputTokens = Int(sqlite3_column_int64(stmt, 4))
+                let cacheTokens = Int(sqlite3_column_int64(stmt, 5))
                 let costUSD = sqlite3_column_double(stmt, 6)
                 result.append(DailyRollup(
                     dayKey: dayKey,
@@ -266,18 +270,18 @@ public final class DatabaseManager: @unchecked Sendable {
         }
         defer { sqlite3_finalize(stmt) }
 
-        sqlite3_bind_text(stmt, 1, (startDate as NSString).utf8String, -1, nil)
-        sqlite3_bind_text(stmt, 2, (endDate as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 1, (startDate as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, (endDate as NSString).utf8String, -1, SQLITE_TRANSIENT)
         var result: [DailyRollup] = []
         while true {
             let step = sqlite3_step(stmt)
             if step == SQLITE_ROW {
                 let dayKey = String(cString: sqlite3_column_text(stmt, 0))
                 let sourceId = String(cString: sqlite3_column_text(stmt, 1))
-                let totalTokens = Int(sqlite3_column_int(stmt, 2))
-                let inputTokens = Int(sqlite3_column_int(stmt, 3))
-                let outputTokens = Int(sqlite3_column_int(stmt, 4))
-                let cacheTokens = Int(sqlite3_column_int(stmt, 5))
+                let totalTokens = Int(sqlite3_column_int64(stmt, 2))
+                let inputTokens = Int(sqlite3_column_int64(stmt, 3))
+                let outputTokens = Int(sqlite3_column_int64(stmt, 4))
+                let cacheTokens = Int(sqlite3_column_int64(stmt, 5))
                 let costUSD = sqlite3_column_double(stmt, 6)
                 result.append(DailyRollup(
                     dayKey: dayKey,
@@ -383,42 +387,49 @@ public final class DatabaseManager: @unchecked Sendable {
         return years
     }
 
-    public func fetchProjectRankings(limit: Int = 10, sourceId: String? = nil) throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
+    public func fetchProjectRankings(
+        limit: Int = 10,
+        sourceId: String? = nil,
+        startDate: String? = nil,
+        endDate: String? = nil
+    ) throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
         lock.lock(); defer { lock.unlock() }
-        let hasFilter = (sourceId != nil && !sourceId!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        let sql: String
-        if hasFilter {
-            sql = """
-            SELECT project_folder, SUM(total_tokens) AS sum_tokens, SUM(cost_usd) AS sum_cost
-            FROM unified_token_records
-            WHERE project_folder IS NOT NULL AND project_folder != '' AND LOWER(source_id) = LOWER(?)
-            GROUP BY project_folder
-            ORDER BY sum_tokens DESC
-            LIMIT ?;
-            """
-        } else {
-            sql = """
-            SELECT project_folder, SUM(total_tokens) AS sum_tokens, SUM(cost_usd) AS sum_cost
-            FROM unified_token_records
-            WHERE project_folder IS NOT NULL AND project_folder != ''
-            GROUP BY project_folder
-            ORDER BY sum_tokens DESC
-            LIMIT ?;
-            """
+
+        var whereClauses = ["project_folder IS NOT NULL", "project_folder != ''"]
+        var binds: [String] = []
+        if let sourceId = sourceId, !sourceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            whereClauses.append("LOWER(source_id) = LOWER(?)")
+            binds.append(sourceId.trimmingCharacters(in: .whitespacesAndNewlines))
         }
+        if let start = startDate {
+            whereClauses.append("day_key >= ?")
+            binds.append(start)
+        }
+        if let end = endDate {
+            whereClauses.append("day_key <= ?")
+            binds.append(end)
+        }
+
+        let sql = """
+        SELECT project_folder, SUM(total_tokens) AS sum_tokens, SUM(cost_usd) AS sum_cost
+        FROM unified_token_records
+        WHERE \(whereClauses.joined(separator: " AND "))
+        GROUP BY project_folder
+        ORDER BY sum_tokens DESC
+        LIMIT ?;
+        """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw NSError(domain: "DatabaseManager", code: 13, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare project rankings statement: \(lastErrorMessage())"])
         }
         defer { sqlite3_finalize(stmt) }
 
-        if hasFilter {
-            let filter = sourceId!.trimmingCharacters(in: .whitespacesAndNewlines)
-            sqlite3_bind_text(stmt, 1, (filter as NSString).utf8String, -1, nil)
-            sqlite3_bind_int(stmt, 2, Int32(limit))
-        } else {
-            sqlite3_bind_int(stmt, 1, Int32(limit))
+        var bindIndex: Int32 = 1
+        for value in binds {
+            sqlite3_bind_text(stmt, bindIndex, (value as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            bindIndex += 1
         }
+        sqlite3_bind_int(stmt, bindIndex, Int32(limit))
 
         var result: [(project: String, totalTokens: Int, costUSD: Double)] = []
         while true {
@@ -484,7 +495,7 @@ public final class DatabaseManager: @unchecked Sendable {
         var bindIndex: Int32 = 1
         for val in binds {
             if let str = val as? String {
-                sqlite3_bind_text(stmt, bindIndex, (str as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, bindIndex, (str as NSString).utf8String, -1, SQLITE_TRANSIENT)
             } else if let int64 = val as? Int64 {
                 sqlite3_bind_int64(stmt, bindIndex, int64)
             }
@@ -519,7 +530,7 @@ public final class DatabaseManager: @unchecked Sendable {
         }
         defer { sqlite3_finalize(stmt) }
 
-        sqlite3_bind_text(stmt, 1, (sourceId as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 1, (sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
         let step = sqlite3_step(stmt)
         if step == SQLITE_ROW {
             let count = Int(sqlite3_column_int(stmt, 0))
@@ -547,7 +558,7 @@ public final class DatabaseManager: @unchecked Sendable {
         }
         defer { sqlite3_finalize(stmt) }
 
-        sqlite3_bind_text(stmt, 1, (sourceId as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 1, (sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
         let step = sqlite3_step(stmt)
         if step == SQLITE_ROW {
             if let blob = sqlite3_column_blob(stmt, 0) {
@@ -613,7 +624,7 @@ public final class DatabaseManager: @unchecked Sendable {
         defer { sqlite3_finalize(stmt) }
 
         if filterApplied, let source = trimmedSource {
-            sqlite3_bind_text(stmt, 1, (source as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 1, (source as NSString).utf8String, -1, SQLITE_TRANSIENT)
         }
 
         if sqlite3_step(stmt) == SQLITE_ROW {

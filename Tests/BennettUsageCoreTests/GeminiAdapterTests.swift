@@ -103,6 +103,32 @@ final class GeminiAdapterTests: XCTestCase {
         XCTAssertEqual(second.records.first(where: { $0.id == "gemini_sess-1_m9" })?.outputTokens, 20)
     }
 
+    func testFallbackIdsAreStableAcrossRunsForMessagesWithoutId() async throws {
+        // Two files, each with an id-less gemini message. Fallback ids must be
+        // derived per file so re-runs (and varying enumeration order) do not
+        // mint new ids and duplicate the rows.
+        _ = try writeSessionFile(name: "session-a.jsonl", lines: [
+            #"{"sessionId":"sess-a","messages":[]}"#,
+            #"{"timestamp":"2026-09-10T18:13:22.500Z","type":"gemini","tokens":{"input":10,"output":5}}"#,
+        ])
+        _ = try writeSessionFile(name: "session-b.jsonl", lines: [
+            #"{"sessionId":"sess-b","messages":[]}"#,
+            #"{"timestamp":"2026-09-10T18:14:22.500Z","type":"gemini","tokens":{"input":20,"output":6}}"#,
+        ])
+
+        let adapter = GeminiAdapter()
+        let geminiRoot = tempDir.appendingPathComponent("gemini")
+        let first = try await adapter.fetchIncrementalRecords(from: geminiRoot, since: nil)
+        XCTAssertEqual(first.records.count, 2)
+
+        let second = try await adapter.fetchIncrementalRecords(from: geminiRoot, since: first.newCursor)
+        XCTAssertEqual(second.records.count, 2)
+        XCTAssertEqual(
+            Set(second.records.map(\.id)),
+            Set(first.records.map(\.id))
+        )
+    }
+
     func testAdapterMetadata() {
         let adapter = GeminiAdapter()
         XCTAssertEqual(adapter.sourceId, "gemini")

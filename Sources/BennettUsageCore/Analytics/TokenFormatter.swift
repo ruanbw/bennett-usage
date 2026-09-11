@@ -19,10 +19,18 @@ public enum TokenFormatter {
             return "\(tokens)"
         } else if absTokens < 1_000_000 {
             let val = Double(absTokens) / 1_000.0
+            if roundsUpToThousand(val, maxDecimals: 1) {
+                let mVal = Double(absTokens) / 1_000_000.0
+                return "\(sign)\(formatValue(mVal, maxDecimals: 2))M"
+            }
             return "\(sign)\(formatValue(val, maxDecimals: 1))k"
         } else if absTokens < 1_000_000_000 {
             let val = Double(absTokens) / 1_000_000.0
             let decimals = val < 10.0 ? 2 : 1
+            if roundsUpToThousand(val, maxDecimals: decimals) {
+                let bVal = Double(absTokens) / 1_000_000_000.0
+                return "\(sign)\(formatValue(bVal, maxDecimals: 2))B"
+            }
             return "\(sign)\(formatValue(val, maxDecimals: decimals))M"
         } else {
             let val = Double(absTokens) / 1_000_000_000.0
@@ -52,6 +60,12 @@ public enum TokenFormatter {
             return trimmed
         }
         return str
+    }
+
+    /// Returns true when the display-rounded value would read as 1000 of the current unit.
+    private static func roundsUpToThousand(_ value: Double, maxDecimals: Int) -> Bool {
+        let factor = pow(10.0, Double(maxDecimals))
+        return (value * factor).rounded(.toNearestOrAwayFromZero) >= 1000 * factor
     }
 
     /// Format token integer with standard thousand commas (e.g. 14,250,000).

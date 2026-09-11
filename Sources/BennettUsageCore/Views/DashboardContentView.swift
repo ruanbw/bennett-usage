@@ -28,6 +28,7 @@ public struct DashboardContentView: View {
     @State private var modelHoverLocation: CGPoint? = nil
     @State private var isProjectsExpanded: Bool = false
     @State private var allTimeTotals: AllTimeTotals? = nil
+    @State private var refreshTick = 0
 
     public init(
         aggregator: MetricsAggregator,
@@ -105,8 +106,11 @@ public struct DashboardContentView: View {
             }
             .padding(24)
         }
-        .task(id: "\(selectedRange)_\(selectedToolFilter ?? "all")") {
+        .task(id: "\(selectedRange)_\(selectedToolFilter ?? "all")_\(refreshTick)") {
             await loadData()
+        }
+        .task {
+            await autoRefreshLoop()
         }
     }
 
@@ -1294,10 +1298,27 @@ public struct DashboardContentView: View {
 
     private func loadData() async {
         availableYears = (try? await aggregator.fetchAvailableYears()) ?? []
+        if Task.isCancelled { return }
         todaySummary = try? await aggregator.fetchTodaySummary()
+        if Task.isCancelled { return }
         periodMetrics = try? await aggregator.fetchPeriodMetrics(range: selectedRange, toolFilter: selectedToolFilter)
+        if Task.isCancelled { return }
         heatmapCells = (try? await aggregator.fetchHeatmap(range: selectedRange, toolFilter: selectedToolFilter)) ?? []
+        if Task.isCancelled { return }
         allTimeTotals = try? await aggregator.fetchAllTimeTotals(toolFilter: selectedToolFilter)
+    }
+
+    private func autoRefreshLoop() async {
+        while !Task.isCancelled {
+            let seconds = UserDefaults.standard.integer(forKey: "bennett_auto_refresh_seconds")
+            if seconds > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+                if Task.isCancelled { return }
+                refreshTick += 1
+            } else {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
     }
 }
 

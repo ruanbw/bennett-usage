@@ -33,6 +33,17 @@ final class TokenFormatterTests: XCTestCase {
         XCTAssertEqual(TokenFormatter.formatCompact(12_000_000_000), "12B")
     }
 
+    func testFormatCompactUnitBoundaryEscalation() {
+        // Values that round to 1000 of a unit must escalate to the next unit.
+        XCTAssertEqual(TokenFormatter.formatCompact(999_949), "999.9k")
+        XCTAssertEqual(TokenFormatter.formatCompact(999_950), "1M")
+        XCTAssertEqual(TokenFormatter.formatCompact(999_999), "1M")
+        XCTAssertEqual(TokenFormatter.formatCompact(-999_999), "-1M")
+        XCTAssertEqual(TokenFormatter.formatCompact(999_949_999), "999.9M")
+        XCTAssertEqual(TokenFormatter.formatCompact(999_950_000), "1B")
+        XCTAssertEqual(TokenFormatter.formatCompact(999_999_999), "1B")
+    }
+
     func testFormatFull() {
         XCTAssertEqual(TokenFormatter.formatFull(0), "0")
         XCTAssertEqual(TokenFormatter.formatFull(999), "999")

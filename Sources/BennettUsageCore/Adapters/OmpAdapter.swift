@@ -58,11 +58,13 @@ public struct OmpAdapter: AgentSourceAdapter, @unchecked Sendable {
 
         while sqlite3_step(stmt) == SQLITE_ROW {
             let rowId = sqlite3_column_int64(stmt, 0)
-            let entryId = String(cString: sqlite3_column_text(stmt, 1))
-            _ = entryId
-            let sessionFile = String(cString: sqlite3_column_text(stmt, 2))
+            // entry_id (column 1) is not needed; do not read it —
+            // String(cString:) would crash on a NULL column.
+            // Columns 2 (session_file) and 4 (model) are read defensively:
+            // NULL there must fall back instead of crashing.
+            let sessionFile = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? ""
             let folder = sqlite3_column_text(stmt, 3).map { String(cString: $0) }
-            let model = String(cString: sqlite3_column_text(stmt, 4))
+            let model = sqlite3_column_text(stmt, 4).map { String(cString: $0) } ?? "unknown"
             let provider = sqlite3_column_text(stmt, 5).map { String(cString: $0) }
             let timestampMs = sqlite3_column_int64(stmt, 6)
             let inputTokens = Int(sqlite3_column_int(stmt, 7))

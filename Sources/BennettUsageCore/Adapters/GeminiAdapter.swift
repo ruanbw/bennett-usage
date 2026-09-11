@@ -56,7 +56,7 @@ public struct GeminiAdapter: AgentSourceAdapter, @unchecked Sendable {
             var sessionId = fileUrl.deletingPathExtension().lastPathComponent
             var projectFolder: String?
 
-            func processMessage(_ message: [String: Any]) {
+            func processMessage(_ message: [String: Any], fallbackIndex: Int) {
                 guard (message["type"] as? String) == "gemini",
                       let tokens = message["tokens"] as? [String: Any]
                 else { return }
@@ -77,7 +77,10 @@ public struct GeminiAdapter: AgentSourceAdapter, @unchecked Sendable {
                 }
 
                 let messageId = (message["id"] as? String)
-                    ?? "offset_\(records.count)"
+                    // Fallback must be stable across sync runs (records are
+                    // re-emitted and deduplicated by id), so derive it from the
+                    // position within this file, not from the global record count.
+                    ?? "offset_\(fallbackIndex)"
                 let record = UnifiedTokenRecord(
                     id: "gemini_\(sessionId)_\(messageId)",
                     sourceId: sourceId,
@@ -104,14 +107,18 @@ public struct GeminiAdapter: AgentSourceAdapter, @unchecked Sendable {
                         projectFolder = first
                     }
                     let messages = root["messages"] as? [[String: Any]] ?? []
-                    for message in messages { processMessage(message) }
+                    for (i, message) in messages.enumerated() {
+                        processMessage(message, fallbackIndex: i)
+                    }
                 }
             } else {
                 // Streaming JSONL: metadata record first, then per-message records.
                 var searchRange = data.startIndex..<data.endIndex
+                var lineIndex = 0
                 while let newlineIndex = data[searchRange].firstIndex(of: 0x0A) {
                     let lineData = data[searchRange.lowerBound..<newlineIndex]
                     searchRange = data.index(after: newlineIndex)..<data.endIndex
+                    defer { lineIndex += 1 }
 
                     guard !lineData.isEmpty,
                           let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any]
@@ -125,9 +132,11 @@ public struct GeminiAdapter: AgentSourceAdapter, @unchecked Sendable {
 
                     if let messages = json["messages"] as? [[String: Any]] {
                         // Metadata record still carrying a full message snapshot.
-                        for message in messages { processMessage(message) }
+                        for (i, message) in messages.enumerated() {
+                            processMessage(message, fallbackIndex: lineIndex + i)
+                        }
                     } else {
-                        processMessage(json)
+                        processMessage(json, fallbackIndex: lineIndex)
                     }
                 }
             }

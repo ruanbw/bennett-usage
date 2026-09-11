@@ -5,11 +5,17 @@ final class HeatmapGridViewTests: XCTestCase {
     @MainActor
     func testHeatmapGridWeekChunking() {
         var cells: [HeatmapDayCell] = []
-        let now = Date()
+        let calendar = Calendar.current
+        var start = calendar.startOfDay(for: Date())
+        // Start exactly on the calendar's first weekday so the first week has
+        // no leading placeholders: 14 consecutive days must fill 2 full weeks.
+        while calendar.component(.weekday, from: start) != calendar.firstWeekday {
+            start = calendar.date(byAdding: .day, value: 1, to: start)!
+        }
         for i in 0..<14 {
             cells.append(HeatmapDayCell(
-                date: now,
-                dayKey: "2026-01-\(i + 1)",
+                date: calendar.date(byAdding: .day, value: i, to: start)!,
+                dayKey: String(format: "2026-01-%02d", i + 1),
                 totalTokens: i * 100,
                 costUSD: Double(i) * 0.01,
                 intensityLevel: i % 5,
@@ -21,6 +27,35 @@ final class HeatmapGridViewTests: XCTestCase {
         XCTAssertEqual(view.weeks.count, 2)
         XCTAssertEqual(view.weeks[0].count, 7)
         XCTAssertEqual(view.weeks[1].count, 7)
+        XCTAssertTrue(view.weeks[0].allSatisfy { $0 != nil })
+        XCTAssertEqual(view.weeks[0].compactMap(\.self).first?.dayKey, "2026-01-01")
+    }
+
+    @MainActor
+    func testHeatmapGridWeekLeadingPlaceholderAlignment() {
+        // Days starting mid-week must be padded with nil placeholders so the
+        // same weekday always lands in the same row across the grid.
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: Date())
+        let cells = (0..<3).map { i in
+            HeatmapDayCell(
+                date: calendar.date(byAdding: .day, value: i, to: start)!,
+                dayKey: String(format: "2026-01-%02d", i + 1),
+                totalTokens: i * 100,
+                costUSD: Double(i) * 0.01,
+                intensityLevel: i % 5,
+                toolBreakdown: ["omp": i * 100]
+            )
+        }
+
+        let view = HeatmapGridView(cells: cells)
+        XCTAssertEqual(view.weeks.count, 1)
+        let firstWeek = view.weeks[0]
+        XCTAssertEqual(firstWeek.count, 7)
+        let expectedLeading = ((calendar.component(.weekday, from: start) - calendar.firstWeekday) % 7 + 7) % 7
+        XCTAssertTrue(firstWeek[..<expectedLeading].allSatisfy { $0 == nil })
+        XCTAssertEqual(firstWeek[expectedLeading]?.dayKey, "2026-01-01")
+        XCTAssertEqual(firstWeek[expectedLeading + 2]?.dayKey, "2026-01-03")
     }
 
     @MainActor

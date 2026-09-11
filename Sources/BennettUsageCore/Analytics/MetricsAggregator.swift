@@ -233,7 +233,8 @@ public final class MetricsAggregator: Sendable {
         formatter.timeZone = TimeZone.current
         let todayKey = formatter.string(from: Date())
 
-        let calendar = Calendar.current
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
         let year = calendar.component(.year, from: Date())
         let rollups = try database.fetchDailyRollups(forYear: year).filter { $0.dayKey == todayKey }
 
@@ -316,7 +317,7 @@ public final class MetricsAggregator: Sendable {
     public func fetchAvailableYears() async throws -> [Int] {
         let years = try database.fetchAvailableYears()
         if years.isEmpty {
-            return [Calendar.current.component(.year, from: Date())]
+            return [Calendar(identifier: .gregorian).component(.year, from: Date())]
         }
         return years
     }
@@ -544,7 +545,7 @@ public final class MetricsAggregator: Sendable {
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter)
+            let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter, startDate: startKey, endDate: endKey)
 
             let labelFormatter = DateFormatter()
             labelFormatter.dateFormat = (daysCount == 7) ? "E MM/dd" : "MM/dd"
@@ -601,7 +602,7 @@ public final class MetricsAggregator: Sendable {
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter)
+            let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter, startDate: startKey, endDate: endKey)
 
             let monthFormatter = DateFormatter()
             monthFormatter.dateFormat = "MMM yy"
@@ -650,7 +651,7 @@ public final class MetricsAggregator: Sendable {
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter)
+            let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter, startDate: "\(year)-01-01", endDate: "\(year)-12-31")
 
             let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
             var trendPoints: [TrendPoint] = []

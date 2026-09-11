@@ -16,6 +16,17 @@ public struct UnifiedTokenRecord: Identifiable, Sendable, Codable, Equatable {
     public var totalTokens: Int { inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens }
     public let rawCostUSD: Double?
 
+    /// Fixed-format machine-readable date; pinned to POSIX locale + Gregorian
+    /// calendar so non-Gregorian user locales cannot corrupt the year.
+    private static let dayKeyFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone.current
+        return formatter
+    }()
+
     public init(
         id: String,
         sourceId: String,
@@ -37,10 +48,7 @@ public struct UnifiedTokenRecord: Identifiable, Sendable, Codable, Equatable {
         if let dayKey = dayKey {
             self.dayKey = dayKey
         } else {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd"
-            formatter.timeZone = TimeZone.current
-            self.dayKey = formatter.string(from: timestamp)
+            self.dayKey = Self.dayKeyFormatter.string(from: timestamp)
         }
         self.sessionKey = sessionKey
         self.projectFolder = projectFolder

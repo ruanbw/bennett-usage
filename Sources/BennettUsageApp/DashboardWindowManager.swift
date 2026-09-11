@@ -6,15 +6,19 @@ import BennettUsageCore
 public final class DashboardWindowManager {
     public static let shared = DashboardWindowManager()
     private var window: NSWindow?
+    private let presentation = DashboardPresentationState()
 
     public func show(aggregator: MetricsAggregator, syncCoordinator: SyncCoordinator, openSettings: Bool = false) {
         if let window = window {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            if openSettings {
+                presentation.isShowingSettings = true
+            }
             return
         }
 
-        let view = DashboardView(aggregator: aggregator, showSettingsInitially: openSettings)
+        let view = DashboardView(aggregator: aggregator, presentation: presentation, showSettingsInitially: openSettings)
         let hostingController = NSHostingController(rootView: view)
         hostingController.sizingOptions = []
 

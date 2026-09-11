@@ -19,9 +19,15 @@ public struct HeatmapGridView: View {
         self.localization = localization
         self.onSelectDay = onSelectDay
     }
-    public var weeks: [[HeatmapDayCell]] {
-        var result: [[HeatmapDayCell]] = []
-        var currentWeek: [HeatmapDayCell] = []
+    /// Weeks aligned to the calendar: column 0 starts at `firstWeekday`, and the
+    /// leading slots of the first week are `nil` placeholders so that a given
+    /// weekday always renders in the same row (GitHub-style calendar layout).
+    public var weeks: [[HeatmapDayCell?]] {
+        guard let first = cells.first else { return [] }
+        let calendar = Calendar.current
+        let leading = ((calendar.component(.weekday, from: first.date) - calendar.firstWeekday) % 7 + 7) % 7
+        var result: [[HeatmapDayCell?]] = []
+        var currentWeek: [HeatmapDayCell?] = Array(repeating: nil, count: leading)
         for cell in cells {
             currentWeek.append(cell)
             if currentWeek.count == 7 {
@@ -41,8 +47,7 @@ public struct HeatmapGridView: View {
                 ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
                     VStack(spacing: 3) {
                         ForEach(0..<7) { dayIndex in
-                            if dayIndex < week.count {
-                                let cell = week[dayIndex]
+                            if dayIndex < week.count, let cell = week[dayIndex] {
                                 RoundedRectangle(cornerRadius: 2)
                                     .fill(colorFor(intensity: cell.intensityLevel))
                                     .frame(maxWidth: .infinity)
