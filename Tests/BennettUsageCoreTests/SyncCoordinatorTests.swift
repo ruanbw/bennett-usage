@@ -8,6 +8,7 @@ private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
     let sfSymbolIcon: String = "hammer"
     let path: URL?
     var recordsToReturn: [UnifiedTokenRecord] = []
+    var fetchCallCount = 0
     var newCursorToReturn: SyncCursor = .rowId(1)
 
     init(sourceId: String = "mock", path: URL? = nil) {
@@ -20,6 +21,7 @@ private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
     }
 
     func fetchIncrementalRecords(from directory: URL, since cursor: SyncCursor?) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        fetchCallCount += 1
         return (recordsToReturn, newCursorToReturn)
     }
 }
@@ -209,5 +211,44 @@ final class SyncCoordinatorTests: XCTestCase {
         let records = try db.fetchRecords(sinceTimestamp: 0)
         XCTAssertEqual(records[0].id, "new_offset_rec_1")
         XCTAssertEqual(try db.fetchCursor(for: "cutover_source"), .fileOffsets(["/test/session.jsonl": 128]))
+    }
+
+    func testSyncAllWithChangedPathsOnlyReadsMatchingAdapters() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let dirA = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dirB = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dirA, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dirB, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: dirA)
+            try? FileManager.default.removeItem(at: dirB)
+        }
+
+        let mockA = MockSyncAdapter(sourceId: "mock_a", path: dirA)
+        let mockB = MockSyncAdapter(sourceId: "mock_b", path: dirB)
+        registry.register(mockA)
+        registry.register(mockB)
+
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+
+        // Event under dirA: only adapter A may be read.
+        let count = try await coordinator.syncAll(
+            changedPaths: [dirA.appendingPathComponent("session.jsonl").path]
+        )
+        XCTAssertEqual(count, 0)
+        XCTAssertEqual(mockA.fetchCallCount, 1)
+        XCTAssertEqual(mockB.fetchCallCount, 0)
+
+        // nil changedPaths = full sync: both adapters read.
+        _ = try await coordinator.syncAll()
+        XCTAssertEqual(mockA.fetchCallCount, 2)
+        XCTAssertEqual(mockB.fetchCallCount, 1)
+
+        // Event outside every adapter root: nothing is read.
+        let unrelated = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "/x.jsonl").path
+        _ = try await coordinator.syncAll(changedPaths: [unrelated])
+        XCTAssertEqual(mockA.fetchCallCount, 2)
+        XCTAssertEqual(mockB.fetchCallCount, 1)
     }
 }

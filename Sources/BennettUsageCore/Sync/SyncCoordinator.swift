@@ -22,7 +22,7 @@ public actor SyncCoordinator {
     }
 
     @discardableResult
-    public func syncAll() async throws -> Int {
+    public func syncAll(changedPaths: [String]? = nil) async throws -> Int {
         if isSyncing {
             needsResync = true
             return 0
@@ -32,15 +32,21 @@ public actor SyncCoordinator {
         var total = 0
         repeat {
             needsResync = false
-            total += try await syncAllOnce()
+            total += try await syncAllOnce(changedPaths: changedPaths)
         } while needsResync
         return total
     }
 
-    private func syncAllOnce() async throws -> Int {
+    private func syncAllOnce(changedPaths: [String]? = nil) async throws -> Int {
         var totalIngested = 0
         for adapter in registry.allAdapters() {
             guard let path = adapter.detectDefaultPath() else { continue }
+            // Event-driven sync: skip adapters whose watched tree contains
+            // none of the changed paths — no new consumption there to read.
+            if let changedPaths, !changedPaths.isEmpty,
+               !Self.isPathAffected(root: path.path, changedPaths: changedPaths) {
+                continue
+            }
             do {
                 let cursor = try database.fetchCursor(for: adapter.sourceId)
                 let (records, newCursor) = try await adapter.fetchIncrementalRecords(from: path, since: cursor)
@@ -96,7 +102,10 @@ public actor SyncCoordinator {
                     return record
                 }
 
-                try database.insertRecords(pricedRecords, updateCursorFor: adapter.sourceId, cursor: finalCursor)
+                // No new records and an unchanged cursor: nothing to persist.
+                if !pricedRecords.isEmpty || finalCursor != cursor {
+                    try database.insertRecords(pricedRecords, updateCursorFor: adapter.sourceId, cursor: finalCursor)
+                }
                 totalIngested += pricedRecords.count
             } catch {
                 print("Error syncing adapter \(adapter.sourceId): \(error)")
@@ -115,11 +124,26 @@ public actor SyncCoordinator {
         return totalIngested
     }
 
+    /// True when a changed path lies inside the adapter's watched root (or is
+    /// the root itself, or a parent of it — FSEvents may coalesce upward).
+    private static func isPathAffected(root: String, changedPaths: [String]) -> Bool {
+        let normalizedRoot = root.hasSuffix("/") ? String(root.dropLast()) : root
+        for changed in changedPaths {
+            let normalized = changed.hasSuffix("/") ? String(changed.dropLast()) : changed
+            if normalized == normalizedRoot
+                || normalized.hasPrefix(normalizedRoot + "/")
+                || normalizedRoot.hasPrefix(normalized + "/") {
+                return true
+            }
+        }
+        return false
+    }
+
     public func startWatching() {
         let paths = registry.allAdapters().compactMap { $0.detectDefaultPath()?.path }
-        self.watcher = FSEventsWatcher(paths: paths) { [weak self] _ in
+        self.watcher = FSEventsWatcher(paths: paths) { [weak self] eventPaths in
             Task { [weak self] in
-                _ = try? await self?.syncAll()
+                _ = try? await self?.syncAll(changedPaths: eventPaths)
             }
         }
     }
