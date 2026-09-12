@@ -79,6 +79,52 @@ final class SettingsSheetViewTests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsCategoryPropertiesAndLocalization() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+        manager.setLanguage(.en)
+
+        XCTAssertEqual(SettingsCategory.allCases.count, 5)
+        for category in SettingsCategory.allCases {
+            XCTAssertEqual(category.id, category.rawValue)
+            XCTAssertFalse(category.systemImage.isEmpty)
+            XCTAssertFalse(category.title(localization: manager).isEmpty)
+            XCTAssertFalse(category.fullTitle(localization: manager).isEmpty)
+            XCTAssertFalse(category.subtitle(localization: manager).isEmpty)
+        }
+
+        manager.setLanguage(.zh)
+        for category in SettingsCategory.allCases {
+            XCTAssertFalse(category.title(localization: manager).isEmpty)
+            XCTAssertFalse(category.fullTitle(localization: manager).isEmpty)
+            XCTAssertFalse(category.subtitle(localization: manager).isEmpty)
+        }
+    }
+
+    @MainActor
+    func testSettingsViewsWithSpecificInitialCategory() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+        let contentView = SettingsContentView(
+            aggregator: aggregator,
+            localization: manager,
+            initialCategory: .agents,
+            onDismiss: {}
+        )
+        XCTAssertNotNil(contentView.body)
+
+        var dismissed = false
+        let sheetView = SettingsSheetView(
+            aggregator: aggregator,
+            localization: manager,
+            initialCategory: .storage,
+            onDismiss: { dismissed = true }
+        )
+        XCTAssertEqual(sheetView.initialCategory, .storage)
+        XCTAssertNotNil(sheetView.body)
+        sheetView.onDismiss()
+        XCTAssertTrue(dismissed)
+    }
+
+    @MainActor
     func testLanguageSwitchingInSettingsSheet() {
         let manager = LocalizationManager(userDefaults: testDefaults)
         XCTAssertEqual(manager.selectedLanguage, .system)
