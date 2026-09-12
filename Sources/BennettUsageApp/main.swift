@@ -19,6 +19,7 @@ AdapterRegistry.shared.register(PiAdapter())
 AdapterRegistry.shared.register(ClaudeAdapter())
 AdapterRegistry.shared.register(CodexAdapter())
 AdapterRegistry.shared.register(GeminiAdapter())
+AdapterRegistry.shared.register(AntigravityAdapter())
 
 let aggregator = MetricsAggregator(database: db)
 let coordinator = SyncCoordinator(database: db)

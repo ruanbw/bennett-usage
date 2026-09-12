@@ -22,6 +22,7 @@ extension AgentSourceAdapter {
         case "claude": return "~/.claude"
         case "codex": return "~/.codex"
         case "gemini": return "~/.gemini"
+        case "antigravity": return "~/.gemini/antigravity/conversations"
         default: return ""
         }
     }

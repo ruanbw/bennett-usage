@@ -280,10 +280,10 @@ public final class MetricsAggregator: Sendable {
     public func fetchAgentHealthInfos() async throws -> [AgentHealthInfo] {
         var adapters = AdapterRegistry.shared.allAdapters()
         if adapters.isEmpty {
-            adapters = [PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter(), GeminiAdapter()]
+            adapters = [PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter(), GeminiAdapter(), AntigravityAdapter()]
         } else {
             let existingIds = Set(adapters.map { $0.sourceId.lowercased() })
-            let defaults: [AgentSourceAdapter] = [PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter(), GeminiAdapter()]
+            let defaults: [AgentSourceAdapter] = [PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter(), GeminiAdapter(), AntigravityAdapter()]
             for def in defaults {
                 if !existingIds.contains(def.sourceId.lowercased()) {
                     adapters.append(def)
