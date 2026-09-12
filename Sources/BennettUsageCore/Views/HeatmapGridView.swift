@@ -46,40 +46,7 @@ public struct HeatmapGridView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 3) {
-                ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
-                    VStack(spacing: 3) {
-                        ForEach(0..<7) { dayIndex in
-                            if dayIndex < week.count, let cell = week[dayIndex] {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(colorFor(intensity: cell.intensityLevel))
-                                    .frame(maxWidth: .infinity)
-                                    .aspectRatio(1, contentMode: .fit)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 2)
-                                            .stroke(
-                                                cell.dayKey == selectedDayKey ? Color.accentColor :
-                                                hoveredCell?.id == cell.id ? Color.primary : Color.clear,
-                                                lineWidth: cell.dayKey == selectedDayKey ? 1.5 : 1
-                                            )
-                                    )
-                                    .onHover { isHovered in
-                                        hoveredCell = isHovered ? cell : nil
-                                    }
-                                    .onTapGesture {
-                                        onSelectDay?(cell)
-                                    }
-                                    .help(tooltipText(for: cell))
-                            } else {
-                                Color.clear
-                                    .frame(maxWidth: .infinity)
-                                    .aspectRatio(1, contentMode: .fit)
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity)
+            grid
 
             // Legend
             HStack(spacing: 4) {
@@ -97,6 +64,47 @@ public struct HeatmapGridView: View {
         .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
         .cornerRadius(8)
     }
+
+    private var grid: some View {
+        let weeks = self.weeks
+        return HStack(spacing: 3) {
+            ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
+                VStack(spacing: 3) {
+                        ForEach(0..<7) { dayIndex in
+                            if dayIndex < week.count, let cell = week[dayIndex] {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(colorFor(intensity: cell.intensityLevel))
+                                    .frame(maxWidth: .infinity)
+                                    .aspectRatio(1, contentMode: .fit)
+                                    .overlay {
+                                        if cell.dayKey == selectedDayKey || hoveredCell?.id == cell.id {
+                                            RoundedRectangle(cornerRadius: 2)
+                                                .stroke(
+                                                    cell.dayKey == selectedDayKey ? Color.accentColor : Color.primary,
+                                                    lineWidth: cell.dayKey == selectedDayKey ? 1.5 : 1
+                                                )
+                                        }
+                                    }
+                                    .onHover { isHovered in
+                                        hoveredCell = isHovered ? cell : nil
+                                    }
+                                    .onTapGesture {
+                                        onSelectDay?(cell)
+                                    }
+                                    .help(tooltipText(for: cell))
+                            } else {
+                                Color.clear
+                                    .frame(maxWidth: .infinity)
+                                    .aspectRatio(1, contentMode: .fit)
+                            }
+                        }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .drawingGroup()
+    }
+
 
     private func colorFor(intensity: Int) -> Color {
         switch intensity {
