@@ -6,7 +6,6 @@ public struct HeatmapGridView: View {
     public let onSelectDay: ((HeatmapDayCell) -> Void)?
     public let localization: LocalizationManager
 
-    @State private var hoveredCell: HeatmapDayCell?
 
     public init(
         cells: [HeatmapDayCell],
@@ -70,41 +69,79 @@ public struct HeatmapGridView: View {
         return HStack(spacing: 3) {
             ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
                 VStack(spacing: 3) {
-                        ForEach(0..<7) { dayIndex in
-                            if dayIndex < week.count, let cell = week[dayIndex] {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(colorFor(intensity: cell.intensityLevel))
-                                    .frame(maxWidth: .infinity)
-                                    .aspectRatio(1, contentMode: .fit)
-                                    .overlay {
-                                        if cell.dayKey == selectedDayKey || hoveredCell?.id == cell.id {
-                                            RoundedRectangle(cornerRadius: 2)
-                                                .stroke(
-                                                    cell.dayKey == selectedDayKey ? Color.accentColor : Color.primary,
-                                                    lineWidth: cell.dayKey == selectedDayKey ? 1.5 : 1
-                                                )
-                                        }
-                                    }
-                                    .onHover { isHovered in
-                                        hoveredCell = isHovered ? cell : nil
-                                    }
-                                    .onTapGesture {
-                                        onSelectDay?(cell)
-                                    }
-                                    .help(tooltipText(for: cell))
-                            } else {
-                                Color.clear
-                                    .frame(maxWidth: .infinity)
-                                    .aspectRatio(1, contentMode: .fit)
-                            }
+                    ForEach(0..<7) { dayIndex in
+                        if dayIndex < week.count, let cell = week[dayIndex] {
+                            HeatmapDayCellView(
+                                cell: cell,
+                                isSelected: cell.dayKey == selectedDayKey,
+                                localization: localization
+                            ) { onSelectDay?($0) }
+                        } else {
+                            Color.clear
+                                .frame(maxWidth: .infinity)
+                                .aspectRatio(1, contentMode: .fit)
                         }
+                    }
                 }
             }
         }
         .frame(maxWidth: .infinity)
-        .drawingGroup()
     }
 
+
+    private func colorFor(intensity: Int) -> Color {
+        switch intensity {
+        case 1: return Color.green.opacity(0.3)
+        case 2: return Color.green.opacity(0.55)
+        case 3: return Color.green.opacity(0.8)
+        case 4: return Color.green
+        default: return Color(NSColor.separatorColor).opacity(0.2)
+        }
+    }
+
+}
+
+
+/// A single day square. Hover/tooltip state is deliberately kept here — not on
+/// the grid — so crossing one square re-renders only that square instead of
+/// re-diffing the whole 371-cell grid and reformatting every tooltip. The
+/// custom `==` lets SwiftUI skip unchanged squares when the parent re-renders.
+/// `drawingGroup` was removed: with interactive controls (hover/tap/help) the
+/// render-server round-trip costs more than plain layer drawing of solid rects.
+private struct HeatmapDayCellView: View {
+    let cell: HeatmapDayCell
+    let isSelected: Bool
+    let localization: LocalizationManager
+    let onSelect: (HeatmapDayCell) -> Void
+
+    @State private var isHovered = false
+
+    static func == (lhs: HeatmapDayCellView, rhs: HeatmapDayCellView) -> Bool {
+        lhs.cell == rhs.cell
+            && lhs.isSelected == rhs.isSelected
+            && lhs.localization === rhs.localization
+    }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 2)
+            .fill(colorFor(intensity: cell.intensityLevel))
+            .frame(maxWidth: .infinity)
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                if isSelected || isHovered {
+                    RoundedRectangle(cornerRadius: 2)
+                        .stroke(
+                            isSelected ? Color.accentColor : Color.primary,
+                            lineWidth: isSelected ? 1.5 : 1
+                        )
+                }
+            }
+            .onHover { isHovered = $0 }
+            .onTapGesture { onSelect(cell) }
+            // Formatted lazily: only the hovered square builds its tooltip
+            // string; every other square carries an empty (never-shown) one.
+            .help(isHovered ? tooltipText(for: cell) : "")
+    }
 
     private func colorFor(intensity: Int) -> Color {
         switch intensity {
@@ -125,7 +162,6 @@ public struct HeatmapGridView: View {
         return "\(cell.dayKey)\n\(detail)"
     }
 }
-
 #Preview {
     HeatmapGridView(
         cells: (0..<91).reversed().map { i in
@@ -146,3 +182,8 @@ public struct HeatmapGridView: View {
     )
     .padding()
 }
+
+/// MainActor-isolated conformance: `View` infers `@MainActor` on the struct,
+/// so the custom `==` is MainActor-isolated too. SwiftUI diffs on the main
+/// actor, so an isolated conformance is both correct and required here.
+extension HeatmapDayCellView: @MainActor Equatable {}

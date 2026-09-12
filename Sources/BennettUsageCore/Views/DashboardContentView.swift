@@ -22,7 +22,6 @@ public struct DashboardContentView: View {
     public let onOpenSettings: (() -> Void)?
 
     @State private var heatmapCells: [HeatmapDayCell] = []
-    @State private var todaySummary: TodaySummary?
     @State private var periodMetrics: PeriodMetrics?
     @State private var selectedRange: TimeRangeOption
     @State private var availableYears: [Int] = []
@@ -862,29 +861,59 @@ public struct DashboardContentView: View {
 
     private func loadData() async {
         let years = (try? await aggregator.fetchAvailableYears()) ?? []
-        availableYears = years
+        if years != availableYears {
+            availableYears = years
+        }
         if !years.isEmpty && !years.contains(selectedHeatmapYear) {
             selectedHeatmapYear = years.first!
         }
         if Task.isCancelled { return }
-        todaySummary = try? await aggregator.fetchTodaySummary()
+        let metrics = try? await aggregator.fetchPeriodMetrics(range: selectedRange, toolFilter: selectedToolFilter)
         if Task.isCancelled { return }
-        periodMetrics = try? await aggregator.fetchPeriodMetrics(range: selectedRange, toolFilter: selectedToolFilter)
+        if metrics != periodMetrics {
+            periodMetrics = metrics
+        }
+        let cells = (try? await aggregator.fetchAnnualHeatmap(year: selectedHeatmapYear, toolFilter: selectedToolFilter)) ?? []
         if Task.isCancelled { return }
-        heatmapCells = (try? await aggregator.fetchAnnualHeatmap(year: selectedHeatmapYear, toolFilter: selectedToolFilter)) ?? []
+        if cells != heatmapCells {
+            heatmapCells = cells
+        }
+        let summary = try? await aggregator.fetchAnnualSummary(year: selectedHeatmapYear, toolFilter: selectedToolFilter)
         if Task.isCancelled { return }
-        annualSummary = try? await aggregator.fetchAnnualSummary(year: selectedHeatmapYear, toolFilter: selectedToolFilter)
-        if Task.isCancelled { return }
+        // Tuples are not Equatable; compare field-wise before assigning so an
+        // unchanged year does not invalidate the whole heatmap section.
+        if summary?.annualTokens != annualSummary?.annualTokens
+            || summary?.annualCostUSD != annualSummary?.annualCostUSD
+            || summary?.mostActiveTool != annualSummary?.mostActiveTool
+            || summary?.activeDays != annualSummary?.activeDays
+            || summary?.totalDays != annualSummary?.totalDays {
+            annualSummary = summary
+        }
         let annualMetrics = try? await aggregator.fetchPeriodMetrics(range: .year(selectedHeatmapYear), toolFilter: selectedToolFilter)
-        annualTrendPoints = annualMetrics?.trendPoints ?? []
         if Task.isCancelled { return }
+        let trendPoints = annualMetrics?.trendPoints ?? []
+        if trendPoints != annualTrendPoints {
+            annualTrendPoints = trendPoints
+        }
         let distributionTools = (periodMetrics?.toolDistribution ?? []).map(\.tool)
         let heatmapTools = Set(heatmapCells.flatMap { $0.toolBreakdown.keys })
         let allAgentNames = Array(Set(distributionTools).union(heatmapTools)).sorted()
-        agentNames = allAgentNames
-        cachedAgentColors = ChartPalette.shared.colors(for: allAgentNames)
-        cachedModelColors = ChartPalette.shared.colors(for: (periodMetrics?.modelDistribution ?? []).map(\.model))
-        allTimeTotals = try? await aggregator.fetchAllTimeTotals(toolFilter: selectedToolFilter)
+        if allAgentNames != agentNames {
+            agentNames = allAgentNames
+        }
+        let agentColors = ChartPalette.shared.colors(for: allAgentNames)
+        if agentColors != cachedAgentColors {
+            cachedAgentColors = agentColors
+        }
+        let modelColors = ChartPalette.shared.colors(for: (periodMetrics?.modelDistribution ?? []).map(\.model))
+        if modelColors != cachedModelColors {
+            cachedModelColors = modelColors
+        }
+        let totals = try? await aggregator.fetchAllTimeTotals(toolFilter: selectedToolFilter)
+        if Task.isCancelled { return }
+        if totals != allTimeTotals {
+            allTimeTotals = totals
+        }
     }
 
     private func autoRefreshLoop() async {

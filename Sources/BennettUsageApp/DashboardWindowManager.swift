@@ -3,7 +3,7 @@ import SwiftUI
 import BennettUsageCore
 
 @MainActor
-public final class DashboardWindowManager {
+public final class DashboardWindowManager: NSObject, NSWindowDelegate {
     public static let shared = DashboardWindowManager()
     private var window: NSWindow?
     private let presentation = DashboardPresentationState()
@@ -38,9 +38,22 @@ public final class DashboardWindowManager {
         newWindow.setContentSize(NSSize(width: 1080, height: 740))
         newWindow.center()
         newWindow.isReleasedWhenClosed = false
+        newWindow.delegate = self
         self.window = newWindow
 
         newWindow.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - NSWindowDelegate
+
+    /// Dropping the only strong reference on close tears down the hosting
+    /// controller and its SwiftUI tree, cancelling the view's `.task`
+    /// lifecycles (autoRefreshLoop) and notification subscriptions with it.
+    /// Reopening goes through `show(...)` and builds a fresh window.
+    public func windowWillClose(_ notification: Notification) {
+        window?.delegate = nil
+        window = nil
+        presentation.isShowingSettings = false
     }
 }
