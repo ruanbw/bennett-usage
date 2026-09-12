@@ -40,7 +40,7 @@ public actor SyncCoordinator {
     private func syncAllOnce(changedPaths: [String]? = nil) async throws -> Int {
         var totalIngested = 0
         for adapter in registry.allAdapters() {
-            guard let path = adapter.detectDefaultPath() else { continue }
+            guard let path = dataRoot(for: adapter) else { continue }
             // Event-driven sync: skip adapters whose watched tree contains
             // none of the changed paths — no new consumption there to read.
             if let changedPaths, !changedPaths.isEmpty,
@@ -49,8 +49,8 @@ public actor SyncCoordinator {
             }
             do {
                 let cursor = try database.fetchCursor(for: adapter.sourceId)
-                let (records, newCursor) = try await adapter.fetchIncrementalRecords(from: path, since: cursor)
-                
+                let (records, newCursor) = try await Self.fetchOffActor(adapter, from: path, since: cursor)
+
                 let isCutover: Bool
                 switch (cursor, newCursor) {
                 case (.rowId, .fileOffsets):
@@ -65,7 +65,7 @@ public actor SyncCoordinator {
                 let finalCursor: SyncCursor
                 if isCutover {
                     try database.resetRecords(for: adapter.sourceId)
-                    let (freshRecords, freshCursor) = try await adapter.fetchIncrementalRecords(from: path, since: nil)
+                    let (freshRecords, freshCursor) = try await Self.fetchOffActor(adapter, from: path, since: nil)
                     finalRecords = freshRecords
                     finalCursor = freshCursor
                 } else {
@@ -140,11 +140,45 @@ public actor SyncCoordinator {
     }
 
     public func startWatching() {
-        let paths = registry.allAdapters().compactMap { $0.detectDefaultPath()?.path }
+        let paths = registry.allAdapters().compactMap { dataRoot(for: $0)?.path }
         self.watcher = FSEventsWatcher(paths: paths) { [weak self] eventPaths in
             Task { [weak self] in
                 _ = try? await self?.syncAll(changedPaths: eventPaths)
             }
         }
+    }
+
+    /// Adapter fetches do full-tree enumeration + JSON parsing synchronously.
+    /// Running them inside the actor stalled the cooperative pool for tens of
+    /// seconds on first launch and queued UI refreshes; run the heavy section
+    /// on a detached task and let the actor await only the result. Cursors and
+    /// persistence stay on the actor.
+    private nonisolated static func fetchOffActor(
+        _ adapter: AgentSourceAdapter,
+        from path: URL,
+        since cursor: SyncCursor?
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        try await Task.detached(priority: .userInitiated) {
+            try await adapter.fetchIncrementalRecords(from: path, since: cursor)
+        }.value
+    }
+
+    /// Directory the coordinator watches and enumerates for an adapter.
+    /// - `isSyncStub` adapters (no fetch implementation) are skipped outright.
+    /// - Otherwise the narrowed `syncRootPath` is used when it exists as a
+    ///   directory (e.g. gemini → ~/.gemini/tmp).
+    /// - Otherwise the adapter's own detection applies (preserves OmpAdapter's
+    ///   stats.db fallback when the sessions directory is missing). Custom
+    ///   adapters without narrowing knowledge are unaffected.
+    private func dataRoot(for adapter: AgentSourceAdapter) -> URL? {
+        if adapter.isSyncStub { return nil }
+        if let raw = adapter.syncRootPath, !raw.isEmpty {
+            let narrowed = URL(fileURLWithPath: (raw as NSString).expandingTildeInPath)
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: narrowed.path, isDirectory: &isDir), isDir.boolValue {
+                return narrowed
+            }
+        }
+        return adapter.detectDefaultPath()
     }
 }

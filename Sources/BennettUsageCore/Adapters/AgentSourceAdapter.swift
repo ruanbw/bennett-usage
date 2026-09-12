@@ -27,3 +27,27 @@ extension AgentSourceAdapter {
         }
     }
 }
+
+extension AgentSourceAdapter {
+    /// Statically known data root for the sync infrastructure, when it is
+    /// narrower than `defaultPath` (keeps FSEvents quiet on unrelated writes
+    /// and avoids overlapping trees between adapters). `nil` (the default)
+    /// means "no static narrowing knowledge" — the coordinator falls back to
+    /// `detectDefaultPath()`. Custom/third-party adapters need no override.
+    public var syncRootPath: String? {
+        switch sourceId.lowercased() {
+        case "gemini":
+            // GeminiAdapter only reads tmp/<projectHash>/chats/session-*.jsonl;
+            // ~/.gemini itself also contains antigravity/conversations, which
+            // has its own adapter and watch root.
+            return "~/.gemini/tmp"
+        default:
+            return nil
+        }
+    }
+
+    /// `true` marks adapters whose `fetchIncrementalRecords` is a stub
+    /// (returns no records); the coordinator then skips syncing and watching
+    /// them entirely. Defaults to `false` for real implementations.
+    public var isSyncStub: Bool { false }
+}

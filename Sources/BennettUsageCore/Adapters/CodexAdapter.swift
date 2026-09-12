@@ -14,7 +14,8 @@ public struct CodexAdapter: AgentSourceAdapter, @unchecked Sendable {
         let url = URL(fileURLWithPath: path)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
-
+    /// No fetch implementation yet: the coordinator skips sync and watch.
+    public var isSyncStub: Bool { true }
     public func fetchIncrementalRecords(
         from directory: URL,
         since cursor: SyncCursor?

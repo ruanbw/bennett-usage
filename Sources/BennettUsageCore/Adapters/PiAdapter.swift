@@ -37,11 +37,14 @@ public struct PiAdapter: AgentSourceAdapter, @unchecked Sendable {
             let filePath = fileUrl.path
             let lastOffset = offsets[filePath] ?? 0
 
-            guard let handle = try? FileHandle(forReadingFrom: fileUrl) else { continue }
-            defer { try? handle.close() }
-
+            // Skip unchanged files via prefetched size before paying for an
+            // open(); the enumerator already fetched .fileSizeKey so this
+            // resourceValues read is served from the prefetch cache.
             let fileSize = Int64((try? fileUrl.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
             if fileSize <= lastOffset { continue }
+
+            guard let handle = try? FileHandle(forReadingFrom: fileUrl) else { continue }
+            defer { try? handle.close() }
 
             try handle.seek(toOffset: UInt64(lastOffset))
             guard let data = try? handle.readToEnd(), !data.isEmpty else { continue }
