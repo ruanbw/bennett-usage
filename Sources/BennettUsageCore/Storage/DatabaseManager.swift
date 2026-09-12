@@ -8,6 +8,12 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 public final class DatabaseManager: @unchecked Sendable {
     private var db: OpaquePointer?
     private let lock = NSRecursiveLock()
+    /// Prepared statements for hot, fixed-shape queries. All access is guarded by `lock`;
+    /// entries are reset + cleared before each reuse and finalized in deinit.
+    private var preparedStatements: [String: OpaquePointer] = [:]
+    /// Bumped on every mutation of `daily_rollups`; keys the yearly rollup memo below.
+    private var rollupsRevision = 0
+    private var yearlyRollupsCache: (year: Int, revision: Int, rollups: [DailyRollup])?
     public let path: String
 
     public init(path: String) throws {
@@ -28,6 +34,10 @@ public final class DatabaseManager: @unchecked Sendable {
     }
 
     deinit {
+        for stmt in preparedStatements.values {
+            sqlite3_finalize(stmt)
+        }
+        preparedStatements.removeAll()
         if let db = db {
             sqlite3_close(db)
         }
@@ -97,6 +107,20 @@ public final class DatabaseManager: @unchecked Sendable {
             return String(cString: sqlite3_errmsg(db))
         }
         return "Unknown database error"
+    }
+
+    private func cachedStatement(sql: String, errorCode: Int, description: String) throws -> OpaquePointer {
+        if let existing = preparedStatements[sql] {
+            sqlite3_reset(existing)
+            sqlite3_clear_bindings(existing)
+            return existing
+        }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let prepared = stmt else {
+            throw NSError(domain: "DatabaseManager", code: errorCode, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare \(description): \(lastErrorMessage())"])
+        }
+        preparedStatements[sql] = prepared
+        return prepared
     }
 
     public func insertRecords(
@@ -216,6 +240,7 @@ public final class DatabaseManager: @unchecked Sendable {
             }
 
             try execute(sql: "COMMIT;")
+            if !records.isEmpty { rollupsRevision += 1 }
         } catch {
             try? execute(sql: "ROLLBACK;")
             throw error
@@ -224,13 +249,12 @@ public final class DatabaseManager: @unchecked Sendable {
 
     public func fetchDailyRollups(forYear year: Int) throws -> [DailyRollup] {
         lock.lock(); defer { lock.unlock() }
+        if let cached = yearlyRollupsCache, cached.year == year, cached.revision == rollupsRevision {
+            return cached.rollups
+        }
         let pattern = "\(year)-%"
         let sql = "SELECT day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd FROM daily_rollups WHERE day_key LIKE ? ORDER BY day_key ASC;"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "DatabaseManager", code: 9, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare daily rollups fetch statement: \(lastErrorMessage())"])
-        }
-        defer { sqlite3_finalize(stmt) }
+        let stmt = try cachedStatement(sql: sql, errorCode: 9, description: "daily rollups fetch statement")
 
         sqlite3_bind_text(stmt, 1, (pattern as NSString).utf8String, -1, SQLITE_TRANSIENT)
         var result: [DailyRollup] = []
@@ -259,17 +283,14 @@ public final class DatabaseManager: @unchecked Sendable {
                 throw NSError(domain: "DatabaseManager", code: 10, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch daily rollups: \(lastErrorMessage())"])
             }
         }
+        yearlyRollupsCache = (year: year, revision: rollupsRevision, rollups: result)
         return result
     }
 
     public func fetchDailyRollups(dayKey: String) throws -> [DailyRollup] {
         lock.lock(); defer { lock.unlock() }
         let sql = "SELECT day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd FROM daily_rollups WHERE day_key = ? ORDER BY source_id ASC;"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "DatabaseManager", code: 9, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare daily rollups day fetch statement: \(lastErrorMessage())"])
-        }
-        defer { sqlite3_finalize(stmt) }
+        let stmt = try cachedStatement(sql: sql, errorCode: 9, description: "daily rollups day fetch statement")
 
         sqlite3_bind_text(stmt, 1, (dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
         var result: [DailyRollup] = []
@@ -304,11 +325,7 @@ public final class DatabaseManager: @unchecked Sendable {
     public func fetchDailyRollups(startDate: String, endDate: String) throws -> [DailyRollup] {
         lock.lock(); defer { lock.unlock() }
         let sql = "SELECT day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd FROM daily_rollups WHERE day_key >= ? AND day_key <= ? ORDER BY day_key ASC;"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "DatabaseManager", code: 9, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare daily rollups range fetch statement: \(lastErrorMessage())"])
-        }
-        defer { sqlite3_finalize(stmt) }
+        let stmt = try cachedStatement(sql: sql, errorCode: 9, description: "daily rollups range fetch statement")
 
         sqlite3_bind_text(stmt, 1, (startDate as NSString).utf8String, -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 2, (endDate as NSString).utf8String, -1, SQLITE_TRANSIENT)
@@ -431,12 +448,13 @@ public final class DatabaseManager: @unchecked Sendable {
         limit: Int = 10,
         sourceId: String? = nil,
         startDate: String? = nil,
-        endDate: String? = nil
+        endDate: String? = nil,
+        sinceTimestamp: Int64? = nil
     ) throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
         lock.lock(); defer { lock.unlock() }
 
         var whereClauses = ["project_folder IS NOT NULL", "project_folder != ''"]
-        var binds: [String] = []
+        var binds: [Any] = []
         if let sourceId = sourceId, !sourceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             whereClauses.append("source_id = ? COLLATE NOCASE")
             binds.append(sourceId.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -449,6 +467,10 @@ public final class DatabaseManager: @unchecked Sendable {
             whereClauses.append("day_key <= ?")
             binds.append(end)
         }
+        if let since = sinceTimestamp {
+            whereClauses.append("timestamp >= ?")
+            binds.append(since)
+        }
 
         let sql = """
         SELECT project_folder, SUM(total_tokens) AS sum_tokens, SUM(cost_usd) AS sum_cost
@@ -458,18 +480,18 @@ public final class DatabaseManager: @unchecked Sendable {
         ORDER BY sum_tokens DESC
         LIMIT ?;
         """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "DatabaseManager", code: 13, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare project rankings statement: \(lastErrorMessage())"])
-        }
-        defer { sqlite3_finalize(stmt) }
+        let stmt = try cachedStatement(sql: sql, errorCode: 13, description: "project rankings statement")
 
         var bindIndex: Int32 = 1
         for value in binds {
-            sqlite3_bind_text(stmt, bindIndex, (value as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            if let str = value as? String {
+                sqlite3_bind_text(stmt, bindIndex, (str as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            } else if let int64 = value as? Int64 {
+                sqlite3_bind_int64(stmt, bindIndex, int64)
+            }
             bindIndex += 1
         }
-        sqlite3_bind_int(stmt, bindIndex, Int32(limit))
+        sqlite3_bind_int64(stmt, bindIndex, Int64(limit))
 
         var result: [(project: String, totalTokens: Int, costUSD: Double)] = []
         while true {
@@ -657,11 +679,7 @@ public final class DatabaseManager: @unchecked Sendable {
             """
         }
 
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "DatabaseManager", code: 20, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare all time totals statement: \(lastErrorMessage())"])
-        }
-        defer { sqlite3_finalize(stmt) }
+        let stmt = try cachedStatement(sql: sql, errorCode: 20, description: "all time totals statement")
 
         if filterApplied, let source = trimmedSource {
             sqlite3_bind_text(stmt, 1, (source as NSString).utf8String, -1, SQLITE_TRANSIENT)
@@ -692,6 +710,128 @@ public final class DatabaseManager: @unchecked Sendable {
             cacheWriteTokens: 0,
             totalCostUSD: 0.0
         )
+    }
+
+    public struct HourlyBucketTotals: Sendable, Equatable {
+        public let hourIndex: Int
+        public let totalTokens: Int
+        public let totalCostUSD: Double
+
+        public init(hourIndex: Int, totalTokens: Int, totalCostUSD: Double) {
+            self.hourIndex = hourIndex
+            self.totalTokens = totalTokens
+            self.totalCostUSD = totalCostUSD
+        }
+    }
+
+    /// Aggregates tokens and cost into hour-sized buckets keyed by
+    /// `(timestamp - originTimestamp) / 3_600_000`, computed entirely in SQL so
+    /// no raw rows are materialized in Swift. Callers discard indexes outside
+    /// the range they care about.
+    public func fetchHourlyBuckets(
+        originTimestamp: Int64,
+        sinceTimestamp: Int64,
+        sourceId: String? = nil
+    ) throws -> [HourlyBucketTotals] {
+        lock.lock(); defer { lock.unlock() }
+
+        var whereClauses: [String] = ["timestamp >= ?2"]
+        var binds: [(index: Int32, value: Any)] = [(2, sinceTimestamp)]
+        let trimmedSource = sourceId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let source = trimmedSource, !source.isEmpty {
+            whereClauses.append("source_id = ?3 COLLATE NOCASE")
+            binds.append((3, source))
+        }
+
+        let sql = """
+        SELECT (timestamp - ?1) / 3600000 AS hour_index,
+               COALESCE(SUM(total_tokens), 0),
+               COALESCE(SUM(cost_usd), 0.0)
+        FROM unified_token_records
+        WHERE \(whereClauses.joined(separator: " AND "))
+        GROUP BY hour_index;
+        """
+
+        let stmt = try cachedStatement(sql: sql, errorCode: 27, description: "hourly buckets statement")
+        sqlite3_bind_int64(stmt, 1, originTimestamp)
+        for bind in binds {
+            if let intVal = bind.value as? Int64 {
+                sqlite3_bind_int64(stmt, bind.index, intVal)
+            } else if let strVal = bind.value as? String {
+                sqlite3_bind_text(stmt, bind.index, (strVal as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            }
+        }
+
+        var result: [HourlyBucketTotals] = []
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_ROW {
+                let hourIndex = Int(sqlite3_column_int64(stmt, 0))
+                let totalTokens = Int(sqlite3_column_int64(stmt, 1))
+                let totalCostUSD = sqlite3_column_double(stmt, 2)
+                result.append(HourlyBucketTotals(hourIndex: hourIndex, totalTokens: totalTokens, totalCostUSD: totalCostUSD))
+            } else if step == SQLITE_DONE {
+                break
+            } else {
+                throw NSError(domain: "DatabaseManager", code: 28, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch hourly buckets: \(lastErrorMessage())"])
+            }
+        }
+        return result
+    }
+
+    public func fetchToolDistribution(
+        sourceId: String? = nil,
+        sinceTimestamp: Int64? = nil
+    ) throws -> [(tool: String, tokens: Int, costUSD: Double)] {
+        lock.lock(); defer { lock.unlock() }
+
+        var whereClauses: [String] = []
+        var binds: [Any] = []
+        if let since = sinceTimestamp {
+            whereClauses.append("timestamp >= ?")
+            binds.append(since)
+        }
+        let trimmedSource = sourceId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let source = trimmedSource, !source.isEmpty {
+            whereClauses.append("source_id = ? COLLATE NOCASE")
+            binds.append(source)
+        }
+
+        let whereString = whereClauses.isEmpty ? "" : "WHERE " + whereClauses.joined(separator: " AND ")
+        let sql = """
+        SELECT source_id, SUM(total_tokens) AS sum_tokens, SUM(cost_usd) AS sum_cost
+        FROM unified_token_records
+        \(whereString)
+        GROUP BY source_id
+        ORDER BY sum_tokens DESC;
+        """
+
+        let stmt = try cachedStatement(sql: sql, errorCode: 29, description: "tool distribution statement")
+        var bindIndex: Int32 = 1
+        for val in binds {
+            if let intVal = val as? Int64 {
+                sqlite3_bind_int64(stmt, bindIndex, intVal)
+            } else if let strVal = val as? String {
+                sqlite3_bind_text(stmt, bindIndex, (strVal as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            }
+            bindIndex += 1
+        }
+
+        var result: [(tool: String, tokens: Int, costUSD: Double)] = []
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_ROW {
+                let tool = String(cString: sqlite3_column_text(stmt, 0))
+                let tokens = Int(sqlite3_column_int64(stmt, 1))
+                let costUSD = sqlite3_column_double(stmt, 2)
+                result.append((tool: tool, tokens: tokens, costUSD: costUSD))
+            } else if step == SQLITE_DONE {
+                break
+            } else {
+                throw NSError(domain: "DatabaseManager", code: 30, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch tool distribution: \(lastErrorMessage())"])
+            }
+        }
+        return result
     }
 
     public struct PeriodTotals: Sendable, Equatable {
@@ -763,11 +903,7 @@ public final class DatabaseManager: @unchecked Sendable {
         \(whereString);
         """
 
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "DatabaseManager", code: 21, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare period totals statement: \(lastErrorMessage())"])
-        }
-        defer { sqlite3_finalize(stmt) }
+        let stmt = try cachedStatement(sql: sql, errorCode: 21, description: "period totals statement")
 
         var bindIndex: Int32 = 1
         for val in bindValues {
@@ -812,6 +948,7 @@ public final class DatabaseManager: @unchecked Sendable {
             """
             try execute(sql: sql)
             try execute(sql: "COMMIT;")
+            rollupsRevision += 1
         } catch {
             try? execute(sql: "ROLLBACK;")
             throw error
@@ -826,6 +963,7 @@ public final class DatabaseManager: @unchecked Sendable {
             try execute(sql: "DELETE FROM daily_rollups;")
             try execute(sql: "DELETE FROM sync_cursors;")
             try execute(sql: "COMMIT;")
+            rollupsRevision += 1
         } catch {
             try? execute(sql: "ROLLBACK;")
             throw error
@@ -865,6 +1003,7 @@ public final class DatabaseManager: @unchecked Sendable {
             sqlite3_finalize(stmt3)
 
             try execute(sql: "COMMIT;")
+            rollupsRevision += 1
         } catch {
             try? execute(sql: "ROLLBACK;")
             throw error

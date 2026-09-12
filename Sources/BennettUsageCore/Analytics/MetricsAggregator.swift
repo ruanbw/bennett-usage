@@ -33,7 +33,7 @@ public struct TrendPoint: Identifiable, Sendable, Equatable {
     }
 }
 
-public struct PeriodMetrics: Sendable {
+public struct PeriodMetrics: Sendable, Equatable {
     public let totalTokens: Int
     public let totalCostUSD: Double
     public let inputTokens: Int
@@ -75,6 +75,28 @@ public struct PeriodMetrics: Sendable {
         self.toolDistribution = toolDistribution
         self.projectRankings = projectRankings
         self.modelDistribution = modelDistribution
+    }
+    public static func == (lhs: PeriodMetrics, rhs: PeriodMetrics) -> Bool {
+        lhs.totalTokens == rhs.totalTokens
+            && lhs.totalCostUSD == rhs.totalCostUSD
+            && lhs.inputTokens == rhs.inputTokens
+            && lhs.outputTokens == rhs.outputTokens
+            && lhs.cacheReadTokens == rhs.cacheReadTokens
+            && lhs.cacheWriteTokens == rhs.cacheWriteTokens
+            && lhs.mostActiveTool == rhs.mostActiveTool
+            && lhs.trendPoints == rhs.trendPoints
+            && lhs.toolDistribution.count == rhs.toolDistribution.count
+            && zip(lhs.toolDistribution, rhs.toolDistribution).allSatisfy {
+                $0.tool == $1.tool && $0.tokens == $1.tokens && $0.costUSD == $1.costUSD
+            }
+            && lhs.projectRankings.count == rhs.projectRankings.count
+            && zip(lhs.projectRankings, rhs.projectRankings).allSatisfy {
+                $0.project == $1.project && $0.totalTokens == $1.totalTokens && $0.costUSD == $1.costUSD
+            }
+            && lhs.modelDistribution.count == rhs.modelDistribution.count
+            && zip(lhs.modelDistribution, rhs.modelDistribution).allSatisfy {
+                $0.model == $1.model && $0.tokens == $1.tokens && $0.costUSD == $1.costUSD
+            }
     }
 }
 
@@ -439,55 +461,32 @@ public final class MetricsAggregator: Sendable {
         case .last24Hours:
             let sinceTime = now.addingTimeInterval(-24 * 3600)
             let sinceTimestamp = Int64(sinceTime.timeIntervalSince1970 * 1000)
-            var records = try database.fetchRecords(sinceTimestamp: sinceTimestamp)
-            if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                records = records.filter { $0.sourceId.lowercased() == filterLower }
-            }
 
-            let totalTokens = records.reduce(0) { $0 + $1.totalTokens }
-            let totalCost = records.reduce(0.0) { $0 + ($1.rawCostUSD ?? 0.0) }
-            let inputTokens = records.reduce(0) { $0 + $1.inputTokens }
-            let outputTokens = records.reduce(0) { $0 + $1.outputTokens }
-            let cacheReadTokens = records.reduce(0) { $0 + $1.cacheReadTokens }
-            let cacheWriteTokens = records.reduce(0) { $0 + $1.cacheWriteTokens }
-
-            var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
-            for r in records {
-                let cur = toolTotals[r.sourceId] ?? (0, 0.0)
-                toolTotals[r.sourceId] = (cur.tokens + r.totalTokens, cur.costUSD + (r.rawCostUSD ?? 0.0))
-            }
-            let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
-                .sorted { $0.tokens > $1.tokens }
+            // Totals, tool distribution, project rankings and hour buckets are
+            // aggregated in SQL; no raw rows are materialized in Swift.
+            let totals = try database.fetchPeriodTotals(sinceTimestamp: sinceTimestamp, sourceId: toolFilter)
+            let toolDist = try database.fetchToolDistribution(sourceId: toolFilter, sinceTimestamp: sinceTimestamp)
             let mostActive = toolDist.first?.tool ?? "None"
+            let projRankings = try database.fetchProjectRankings(limit: .max, sourceId: toolFilter, sinceTimestamp: sinceTimestamp)
 
-            var projTotals: [String: (tokens: Int, costUSD: Double)] = [:]
-            for r in records {
-                if let p = r.projectFolder, !p.isEmpty {
-                    let cur = projTotals[p] ?? (0, 0.0)
-                    projTotals[p] = (cur.tokens + r.totalTokens, cur.costUSD + (r.rawCostUSD ?? 0.0))
-                }
+            let currentHour = calendar.date(bySettingHour: calendar.component(.hour, from: now), minute: 0, second: 0, of: now) ?? now
+            let currentHourMillis = Int64(currentHour.timeIntervalSince1970 * 1000)
+            let buckets = try database.fetchHourlyBuckets(originTimestamp: currentHourMillis, sinceTimestamp: sinceTimestamp, sourceId: toolFilter)
+
+            var bucketTokens = [Int](repeating: 0, count: 24)
+            var bucketCosts = [Double](repeating: 0.0, count: 24)
+            // SQL yields (timestamp - currentHour)/3600000, i.e. negative
+            // whole-hours-ago (0 = current hour); newest bucket is index 23.
+            for bucket in buckets {
+                let index = 23 + bucket.hourIndex
+                guard index >= 0, index < 24 else { continue }
+                bucketTokens[index] += bucket.totalTokens
+                bucketCosts[index] += bucket.totalCostUSD
             }
-            let projRankings = projTotals.map { (project: $0.key, totalTokens: $0.value.tokens, costUSD: $0.value.costUSD) }
-                .sorted { $0.totalTokens > $1.totalTokens }
 
             let hourFormatter = DateFormatter()
             hourFormatter.dateFormat = "HH:00"
             hourFormatter.timeZone = TimeZone.current
-
-            let currentHour = calendar.date(bySettingHour: calendar.component(.hour, from: now), minute: 0, second: 0, of: now) ?? now
-
-            // Single pass: bucket each record into its hour slot instead of
-            // filtering the full record list 24 times.
-            var bucketTokens = [Int](repeating: 0, count: 24)
-            var bucketCosts = [Double](repeating: 0.0, count: 24)
-            for r in records {
-                let hoursAgo = calendar.dateComponents([.hour], from: r.timestamp, to: currentHour).hour ?? 24
-                let index = 23 - hoursAgo
-                guard index >= 0, index < 24 else { continue }
-                bucketTokens[index] += r.totalTokens
-                bucketCosts[index] += (r.rawCostUSD ?? 0.0)
-            }
 
             var trendPoints: [TrendPoint] = []
             for i in 0..<24 {
@@ -502,12 +501,12 @@ public final class MetricsAggregator: Sendable {
             let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, sinceTimestamp: sinceTimestamp)) ?? []
 
             return PeriodMetrics(
-                totalTokens: totalTokens,
-                totalCostUSD: totalCost,
-                inputTokens: inputTokens,
-                outputTokens: outputTokens,
-                cacheReadTokens: cacheReadTokens,
-                cacheWriteTokens: cacheWriteTokens,
+                totalTokens: totals.totalTokens,
+                totalCostUSD: totals.totalCostUSD,
+                inputTokens: totals.inputTokens,
+                outputTokens: totals.outputTokens,
+                cacheReadTokens: totals.cacheReadTokens,
+                cacheWriteTokens: totals.cacheWriteTokens,
                 mostActiveTool: mostActive,
                 trendPoints: trendPoints,
                 toolDistribution: toolDist,
@@ -515,50 +514,27 @@ public final class MetricsAggregator: Sendable {
                 modelDistribution: modelDist
             )
 
+
         case .today:
             let startOfToday = calendar.startOfDay(for: now)
             let sinceTimestamp = Int64(startOfToday.timeIntervalSince1970 * 1000)
-            var records = try database.fetchRecords(sinceTimestamp: sinceTimestamp)
-            if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                records = records.filter { $0.sourceId.lowercased() == filterLower }
-            }
 
-            let totalTokens = records.reduce(0) { $0 + $1.totalTokens }
-            let totalCost = records.reduce(0.0) { $0 + ($1.rawCostUSD ?? 0.0) }
-            let inputTokens = records.reduce(0) { $0 + $1.inputTokens }
-            let outputTokens = records.reduce(0) { $0 + $1.outputTokens }
-            let cacheReadTokens = records.reduce(0) { $0 + $1.cacheReadTokens }
-            let cacheWriteTokens = records.reduce(0) { $0 + $1.cacheWriteTokens }
-
-            var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
-            for r in records {
-                let cur = toolTotals[r.sourceId] ?? (0, 0.0)
-                toolTotals[r.sourceId] = (cur.tokens + r.totalTokens, cur.costUSD + (r.rawCostUSD ?? 0.0))
-            }
-            let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
-                .sorted { $0.tokens > $1.tokens }
+            // Totals, tool distribution, project rankings and hour buckets are
+            // aggregated in SQL; no raw rows are materialized in Swift.
+            let totals = try database.fetchPeriodTotals(sinceTimestamp: sinceTimestamp, sourceId: toolFilter)
+            let toolDist = try database.fetchToolDistribution(sourceId: toolFilter, sinceTimestamp: sinceTimestamp)
             let mostActive = toolDist.first?.tool ?? "None"
+            let projRankings = try database.fetchProjectRankings(limit: .max, sourceId: toolFilter, sinceTimestamp: sinceTimestamp)
 
-            var projTotals: [String: (tokens: Int, costUSD: Double)] = [:]
-            for r in records {
-                if let p = r.projectFolder, !p.isEmpty {
-                    let cur = projTotals[p] ?? (0, 0.0)
-                    projTotals[p] = (cur.tokens + r.totalTokens, cur.costUSD + (r.rawCostUSD ?? 0.0))
-                }
-            }
-            let projRankings = projTotals.map { (project: $0.key, totalTokens: $0.value.tokens, costUSD: $0.value.costUSD) }
-                .sorted { $0.totalTokens > $1.totalTokens }
+            let buckets = try database.fetchHourlyBuckets(originTimestamp: sinceTimestamp, sinceTimestamp: sinceTimestamp, sourceId: toolFilter)
 
-            // Single pass over records; every record in this range falls on
-            // today, so its calendar hour is the bucket index.
             var bucketTokens = [Int](repeating: 0, count: 24)
             var bucketCosts = [Double](repeating: 0.0, count: 24)
-            for r in records {
-                let hour = calendar.component(.hour, from: r.timestamp)
+            for bucket in buckets {
+                let hour = bucket.hourIndex
                 guard hour >= 0, hour < 24 else { continue }
-                bucketTokens[hour] += r.totalTokens
-                bucketCosts[hour] += (r.rawCostUSD ?? 0.0)
+                bucketTokens[hour] += bucket.totalTokens
+                bucketCosts[hour] += bucket.totalCostUSD
             }
 
             var trendPoints: [TrendPoint] = []
@@ -573,18 +549,19 @@ public final class MetricsAggregator: Sendable {
             let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, sinceTimestamp: sinceTimestamp)) ?? []
 
             return PeriodMetrics(
-                totalTokens: totalTokens,
-                totalCostUSD: totalCost,
-                inputTokens: inputTokens,
-                outputTokens: outputTokens,
-                cacheReadTokens: cacheReadTokens,
-                cacheWriteTokens: cacheWriteTokens,
+                totalTokens: totals.totalTokens,
+                totalCostUSD: totals.totalCostUSD,
+                inputTokens: totals.inputTokens,
+                outputTokens: totals.outputTokens,
+                cacheReadTokens: totals.cacheReadTokens,
+                cacheWriteTokens: totals.cacheWriteTokens,
                 mostActiveTool: mostActive,
                 trendPoints: trendPoints,
                 toolDistribution: toolDist,
                 projectRankings: projRankings,
                 modelDistribution: modelDist
             )
+
 
         case .last7Days, .last30Days:
             let daysCount = (range == .last7Days) ? 7 : 30
