@@ -1042,17 +1042,22 @@ private struct TrendChartCard: View {
                                 }
                             }
                         } else {
+                            // Empty buckets must still produce a mark: a
+                            // model's line has to dip to zero when it was idle,
+                            // both to stay visible in ranges where it only
+                            // appears once and to avoid bridging idle buckets.
+                            // `by:` is what gives each model its own series —
+                            // a constant `foregroundStyle` puts every model on
+                            // one polyline that jumps across the whole chart.
                             ForEach(activeModelNames(), id: \.self) { model in
                                 ForEach(trendPoints) { item in
-                                    if let tokens = item.modelTokens[model], tokens > 0 {
-                                        LineMark(
-                                            x: .value("Period", item.label),
-                                            y: .value("Tokens", tokens)
-                                        )
-                                        .foregroundStyle(modelColors[model] ?? .gray)
-                                        .interpolationMethod(.monotone)
-                                        .lineStyle(StrokeStyle(lineWidth: 2))
-                                    }
+                                    LineMark(
+                                        x: .value("Period", item.label),
+                                        y: .value("Tokens", item.modelTokens[model] ?? 0)
+                                    )
+                                    .foregroundStyle(by: .value("Model", model))
+                                    .interpolationMethod(.monotone)
+                                    .lineStyle(StrokeStyle(lineWidth: 2))
                                 }
                             }
                             ForEach(trendPoints) { item in
