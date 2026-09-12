@@ -1,11 +1,98 @@
 import SwiftUI
 import AppKit
 
+/// Category navigation items in the macOS System Settings-style view.
+public enum SettingsCategory: String, CaseIterable, Identifiable, Sendable {
+    case general
+    case agents
+    case pricing
+    case storage
+    case about
+
+    public var id: String { rawValue }
+
+    public func title(localization: LocalizationManager) -> String {
+        switch self {
+        case .general:
+            return localization.localized(.settingsNavGeneral)
+        case .agents:
+            return localization.localized(.settingsNavAgents)
+        case .pricing:
+            return localization.localized(.settingsNavPricing)
+        case .storage:
+            return localization.localized(.settingsNavStorage)
+        case .about:
+            return localization.localized(.settingsNavAbout)
+        }
+    }
+
+    public func fullTitle(localization: LocalizationManager) -> String {
+        switch self {
+        case .general:
+            return localization.localized(.generalSettings)
+        case .agents:
+            return localization.localized(.agentHealthSection)
+        case .pricing:
+            return localization.localized(.pricingSection)
+        case .storage:
+            return localization.localized(.storageSection)
+        case .about:
+            return localization.localized(.about)
+        }
+    }
+
+    public func subtitle(localization: LocalizationManager) -> String {
+        switch self {
+        case .general:
+            return localization.localized(.settingsGeneralSubtitle)
+        case .agents:
+            return localization.localized(.settingsAgentsSubtitle)
+        case .pricing:
+            return localization.localized(.settingsPricingSubtitle)
+        case .storage:
+            return localization.localized(.settingsStorageSubtitle)
+        case .about:
+            return localization.localized(.settingsAboutSubtitle)
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .general:
+            return "slider.horizontal.3"
+        case .agents:
+            return "bolt.shield.fill"
+        case .pricing:
+            return "dollarsign"
+        case .storage:
+            return "internaldrive.fill"
+        case .about:
+            return "info"
+        }
+    }
+
+    public var iconColor: Color {
+        switch self {
+        case .general:
+            return .blue
+        case .agents:
+            return .green
+        case .pricing:
+            return .orange
+        case .storage:
+            return .purple
+        case .about:
+            return .gray
+        }
+    }
+}
+
 public struct SettingsContentView: View {
     public let aggregator: MetricsAggregator?
     @ObservedObject public var localization: LocalizationManager
     public let onDismiss: (() -> Void)?
 
+    @State private var selectedCategory: SettingsCategory
     @State private var agentHealthInfos: [AgentHealthInfo] = []
     @State private var isSyncing: Bool = false
     @State private var exchangeRateText: String = ""
@@ -17,11 +104,13 @@ public struct SettingsContentView: View {
     public init(
         aggregator: MetricsAggregator? = nil,
         localization: LocalizationManager = .shared,
+        initialCategory: SettingsCategory = .general,
         onDismiss: (() -> Void)? = nil
     ) {
         self.aggregator = aggregator
         self.localization = localization
         self.onDismiss = onDismiss
+        self._selectedCategory = State(initialValue: initialCategory)
     }
 
     private var selectedLanguageBinding: Binding<AppLanguage> {
@@ -39,39 +128,43 @@ public struct SettingsContentView: View {
         return appSupport?.appendingPathComponent("BennettUsage/usage.db").path ?? "~/Library/Application Support/BennettUsage/usage.db"
     }
 
+    private var connectedAgentCount: Int {
+        agentHealthInfos.filter(\.isInstalled).count
+    }
+
+    private var isAnyAgentConnected: Bool {
+        connectedAgentCount > 0
+    }
+
+    private var autoRefreshSubtitle: String {
+        if autoRefreshSeconds == 0 {
+            return localization.localized(.autoRefreshOff)
+        } else {
+            return String(format: localization.localized(.autoRefreshSeconds), autoRefreshSeconds)
+        }
+    }
+
     public var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Label(localization.localized(.settings), systemImage: "gearshape.fill")
-                    .font(.title2.bold())
-                Spacer()
-                if let onDismiss = onDismiss {
-                    Button(action: onDismiss) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                            .font(.system(size: 18))
-                    }
-                    .buttonStyle(.plain)
-                    .help(localization.localized(.done))
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
-            .padding(.bottom, 14)
+        HStack(spacing: 0) {
+            // Left Sidebar
+            sidebarView
+                .frame(width: 200)
 
             Divider()
 
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 20) {
-                    generalSection
-                    agentHealthSection
-                    pricingSection
-                    storageSection
-                    aboutSection
+            // Right Detail Content Area
+            VStack(spacing: 0) {
+                detailHeaderView
+
+                Divider()
+
+                ScrollView(.vertical, showsIndicators: true) {
+                    detailContentView
+                        .padding(24)
                 }
-                .padding(24)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(NSColor.windowBackgroundColor))
         }
         .background(Color(NSColor.windowBackgroundColor))
         .alert(localization.localized(.clearRecordsConfirmTitle), isPresented: $isShowingClearAlert) {
@@ -100,15 +193,139 @@ public struct SettingsContentView: View {
         }
     }
 
-    // MARK: - Section 1: General Settings
-    private var generalSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(localization.localized(.generalSettings))
-                .font(.headline)
+    // MARK: - Sidebar View
+    private var sidebarView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Sidebar Header
+            HStack(spacing: 8) {
+                Image(systemName: "gearshape.2.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.accentColor)
+                Text(localization.localized(.settings))
+                    .font(.headline.weight(.semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 20)
+            .padding(.bottom, 14)
 
-            VStack(spacing: 12) {
-                HStack {
-                    Label(localization.localized(.language), systemImage: "globe")
+            // Category Items
+            VStack(spacing: 4) {
+                ForEach(SettingsCategory.allCases) { category in
+                    categoryRow(category)
+                }
+            }
+            .padding(.horizontal, 10)
+
+            Spacer()
+
+            // Sidebar Footer: Active agents summary
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(isAnyAgentConnected ? Color.green : Color.secondary.opacity(0.4))
+                    .frame(width: 7, height: 7)
+                Text(String(format: localization.localized(.agentsConnected), connectedAgentCount))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+        }
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.55))
+    }
+
+    private func categoryRow(_ category: SettingsCategory) -> some View {
+        let isSelected = selectedCategory == category
+        return Button(action: {
+            selectedCategory = category
+        }) {
+            HStack(spacing: 10) {
+                // Colored squircle icon
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(category.iconColor)
+                        .frame(width: 22, height: 22)
+                    Image(systemName: category.systemImage)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                }
+
+                Text(category.title(localization: localization))
+                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                    .foregroundColor(isSelected ? .primary : .secondary)
+
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Detail Header View
+    private var detailHeaderView: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(selectedCategory.fullTitle(localization: localization))
+                    .font(.title2.bold())
+                Text(selectedCategory.subtitle(localization: localization))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            if let onDismiss = onDismiss {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help(localization.localized(.done))
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .background(Color(NSColor.windowBackgroundColor))
+    }
+
+    // MARK: - Detail Content Switcher
+    @ViewBuilder
+    private var detailContentView: some View {
+        switch selectedCategory {
+        case .general:
+            generalPane
+        case .agents:
+            agentsPane
+        case .pricing:
+            pricingPane
+        case .storage:
+            storagePane
+        case .about:
+            aboutPane
+        }
+    }
+
+    // MARK: - Section 1: General Settings Pane
+    private var generalPane: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            settingsCard {
+                // Language selection row
+                HStack(spacing: 12) {
+                    cardRowIcon("globe", color: .blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(localization.localized(.language))
+                            .font(.body.weight(.medium))
+                        Text(localization.localized(.systemDefault))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     Spacer()
                     Picker("", selection: selectedLanguageBinding) {
                         ForEach(localization.availableLanguages) { lang in
@@ -118,11 +335,20 @@ public struct SettingsContentView: View {
                     .pickerStyle(.menu)
                     .frame(width: 180)
                 }
+                .padding(.vertical, 4)
 
                 Divider()
 
-                HStack {
-                    Label(localization.localized(.autoRefreshLabel), systemImage: "arrow.clockwise")
+                // Auto Refresh row
+                HStack(spacing: 12) {
+                    cardRowIcon("arrow.clockwise", color: .cyan)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(localization.localized(.autoRefreshLabel))
+                            .font(.body.weight(.medium))
+                        Text(autoRefreshSubtitle)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     Spacer()
                     Picker("", selection: $autoRefreshSeconds) {
                         Text(localization.localized(.autoRefreshOff)).tag(0)
@@ -133,19 +359,19 @@ public struct SettingsContentView: View {
                     .pickerStyle(.menu)
                     .frame(width: 180)
                 }
+                .padding(.vertical, 4)
             }
-            .padding(16)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(10)
         }
     }
 
-    // MARK: - Section 2: Agent Health & Diagnostics
-    private var agentHealthSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    // MARK: - Section 2: Agent Health & Diagnostics Pane
+    private var agentsPane: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Summary and Rescan action bar
             HStack {
-                Text(localization.localized(.agentHealthSection))
-                    .font(.headline)
+                Text(String(format: localization.localized(.agentsConnected), connectedAgentCount))
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(.secondary)
                 Spacer()
                 Button(action: {
                     Task { await rescanAgents() }
@@ -160,76 +386,110 @@ public struct SettingsContentView: View {
                         Text(localization.localized(.rescanNow))
                     }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
                 .disabled(isSyncing)
             }
 
-            VStack(spacing: 10) {
+            // Agents list card
+            settingsCard {
                 if agentHealthInfos.isEmpty {
                     HStack {
                         Spacer()
-                        Text(localization.localized(.agentsConnected, arguments: 0))
+                        Text(String(format: localization.localized(.agentsConnected), 0))
                             .foregroundColor(.secondary)
                             .font(.subheadline)
                         Spacer()
                     }
-                    .padding(.vertical, 12)
+                    .padding(.vertical, 18)
                 } else {
                     ForEach(agentHealthInfos) { info in
-                        HStack(spacing: 12) {
-                            Circle()
-                                .fill(info.isInstalled ? Color.green : Color.secondary.opacity(0.35))
-                                .frame(width: 9, height: 9)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(info.displayName)
-                                    .font(.body.weight(.medium))
-                                Text(info.defaultPath)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-
-                            Spacer()
-
-                            VStack(alignment: .trailing, spacing: 2) {
-                                Text("\(formatNumber(info.recordCount)) records")
-                                    .font(.caption.monospacedDigit())
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.secondary.opacity(0.12))
-                                    .cornerRadius(4)
-
-                                if let lastTimestamp = info.lastRecordTimestamp {
-                                    Text(relativeTimestamp(lastTimestamp))
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                        }
+                        agentHealthRow(info)
                         if info.id != agentHealthInfos.last?.id {
                             Divider()
                         }
                     }
                 }
             }
-            .padding(16)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(10)
         }
     }
 
-    // MARK: - Section 3: Pricing & Currency
-    private var pricingSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(localization.localized(.pricingSection))
-                .font(.headline)
+    private func agentHealthRow(_ info: AgentHealthInfo) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(info.isInstalled ? Color.green.opacity(0.14) : Color.secondary.opacity(0.12))
+                    .frame(width: 32, height: 32)
+                Image(systemName: info.isInstalled ? "checkmark.circle.fill" : "circle.dashed")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(info.isInstalled ? .green : .secondary)
+            }
 
-            VStack(spacing: 12) {
-                HStack {
-                    Label(localization.localized(.preferredCurrencyLabel), systemImage: "dollarsign.circle")
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(info.displayName)
+                        .font(.body.weight(.semibold))
+                    if info.isInstalled {
+                        Text("Active")
+                            .font(.system(size: 10, weight: .bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Color.green.opacity(0.15))
+                            .foregroundColor(.green)
+                            .cornerRadius(4)
+                    } else {
+                        Text("Not Found")
+                            .font(.system(size: 10, weight: .medium))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Color.secondary.opacity(0.12))
+                            .foregroundColor(.secondary)
+                            .cornerRadius(4)
+                    }
+                }
+
+                Text(info.defaultPath)
+                    .font(.caption.monospaced())
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(info.defaultPath)
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 3) {
+                Text("\(formatNumber(info.recordCount)) records")
+                    .font(.caption.weight(.medium).monospacedDigit())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.10))
+                    .cornerRadius(6)
+
+                if let lastTimestamp = info.lastRecordTimestamp {
+                    Text(relativeTimestamp(lastTimestamp))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    // MARK: - Section 3: Pricing & Currency Pane
+    private var pricingPane: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Preferred Currency Card
+            settingsCard {
+                HStack(spacing: 12) {
+                    cardRowIcon("coloncurrencysign.circle.fill", color: .orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(localization.localized(.preferredCurrencyLabel))
+                            .font(.body.weight(.medium))
+                        Text("USD ($) / CNY (¥)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     Spacer()
                     Picker("", selection: $selectedCurrency) {
                         Text(localization.localized(.usdOption)).tag(PreferredCurrency.usd)
@@ -241,11 +501,20 @@ public struct SettingsContentView: View {
                         PricingEngine.shared.setPreferredCurrency(newCurrency)
                     }
                 }
+                .padding(.vertical, 4)
+            }
 
-                Divider()
-
-                HStack {
-                    Label(localization.localized(.exchangeRateLabel), systemImage: "chart.line.uptrend.xyaxis")
+            // Exchange Rate Card
+            settingsCard {
+                HStack(spacing: 12) {
+                    cardRowIcon("chart.line.uptrend.xyaxis", color: .green)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(localization.localized(.exchangeRateLabel))
+                            .font(.body.weight(.medium))
+                        Text("1 USD = \(exchangeRateText) CNY")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     Spacer()
                     HStack(spacing: 6) {
                         Text("1 USD =")
@@ -268,128 +537,202 @@ public struct SettingsContentView: View {
                         .controlSize(.small)
                     }
                 }
+                .padding(.vertical, 4)
             }
-            .padding(16)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(10)
         }
     }
 
-    // MARK: - Section 4: Storage & Maintenance
-    private var storageSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(localization.localized(.storageSection))
-                .font(.headline)
-
-            VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "cylinder.split.1x2")
-                            .foregroundColor(.secondary)
+    // MARK: - Section 4: Storage & Maintenance Pane
+    private var storagePane: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Database Info Card
+            settingsCard {
+                HStack(alignment: .top, spacing: 12) {
+                    cardRowIcon("cylinder.split.1x2", color: .purple)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("SQLite Database")
+                            .font(.body.weight(.semibold))
                         Text(resolvedDbPath)
                             .font(.caption.monospaced())
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .help(resolvedDbPath)
+
+                        if !storageStatusText.isEmpty {
+                            Text(storageStatusText)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(.primary)
+                                .padding(.top, 2)
+                        }
                     }
-
-                    if !storageStatusText.isEmpty {
-                        Text(storageStatusText)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundColor(.primary)
-                    }
-                }
-
-                Divider()
-
-                HStack(spacing: 12) {
+                    Spacer()
                     Button(action: revealDatabaseInFinder) {
                         Label(localization.localized(.revealInFinder), systemImage: "folder")
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    Button(action: {
-                        Task {
-                            try? await aggregator?.rebuildDailyRollups()
-                            await updateStorageStatus()
-                        }
-                    }) {
-                        Label(localization.localized(.rebuildRollups), systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    Spacer()
-
-                    Button(role: .destructive, action: {
-                        isShowingClearAlert = true
-                    }) {
-                        Label(localization.localized(.clearAllRecords), systemImage: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .foregroundColor(.red)
+                    .controlSize(.regular)
                 }
+                .padding(.vertical, 4)
             }
-            .padding(16)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(10)
-        }
-    }
 
-    // MARK: - Section 5: About
-    private var aboutSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(localization.localized(.about))
-                .font(.headline)
-
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 14) {
-                    Image(systemName: "gauge.with.dots.needle.bottom.50percent")
-                        .font(.system(size: 32))
-                        .foregroundColor(.accentColor)
-                        .frame(width: 36, height: 36)
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Text(localization.localized(.appName))
-                                .font(.headline)
-                            Text("v1.0.0")
+            // Maintenance Actions Card
+            settingsCard {
+                VStack(spacing: 12) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(localization.localized(.rebuildRollups))
+                                .font(.body.weight(.medium))
+                            Text("Re-aggregate token usage and daily summaries from raw records")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
+                        Spacer()
+                        Button(action: {
+                            Task {
+                                try? await aggregator?.rebuildDailyRollups()
+                                await updateStorageStatus()
+                            }
+                        }) {
+                            Label(localization.localized(.rebuildRollups), systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                    }
 
+                    Divider()
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(localization.localized(.clearAllRecords))
+                                .font(.body.weight(.medium))
+                                .foregroundColor(.red)
+                            Text("Permanently delete all stored token usage history")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button(role: .destructive, action: {
+                            isShowingClearAlert = true
+                        }) {
+                            Label(localization.localized(.clearAllRecords), systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                        .foregroundColor(.red)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    // MARK: - Section 5: About Pane
+    private var aboutPane: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Hero Card
+            settingsCard {
+                HStack(spacing: 16) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.accentColor, Color.purple],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 52, height: 52)
+                        Image(systemName: "gauge.with.dots.needle.bottom.50percent")
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(localization.localized(.appName))
+                                .font(.title3.bold())
+                            Text("v1.0.0")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
                         Text(localization.localized(.aboutDescription))
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                }
-
-                Divider()
-
-                HStack {
-                    Label("100% Local & Private", systemImage: "lock.shield.fill")
-                        .font(.caption.weight(.medium))
-                        .foregroundColor(.green)
-
                     Spacer()
+                }
+                .padding(.vertical, 4)
+            }
 
+            // Privacy Card
+            settingsCard {
+                HStack(alignment: .top, spacing: 14) {
+                    cardRowIcon("lock.shield.fill", color: .green)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("100% Local-First & Private")
+                            .font(.body.weight(.semibold))
+                            .foregroundColor(.primary)
+                        Text("All analytics and token logs are stored exclusively in your local SQLite database. Bennett Usage never collects, transmits, or inspects your source code, prompts, or API keys.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            // Repository Link Card
+            settingsCard {
+                HStack {
+                    cardRowIcon("chevron.left.forwardslash.chevron.right", color: .secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Open Source")
+                            .font(.body.weight(.medium))
+                        Text("github.com/ruanbw/bennett-usage")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
                     if let githubURL = URL(string: "https://github.com/ruanbw/bennett-usage") {
                         Link(destination: githubURL) {
                             HStack(spacing: 4) {
-                                Image(systemName: "arrow.up.right.square")
                                 Text("GitHub")
+                                Image(systemName: "arrow.up.right.square")
                             }
-                            .font(.caption)
                         }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
                 }
+                .padding(.vertical, 4)
             }
-            .padding(16)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(10)
+        }
+    }
+
+    // MARK: - Reusable UI Helpers
+    private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(spacing: 12) {
+            content()
+        }
+        .padding(16)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private func cardRowIcon(_ name: String, color: Color) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(color.opacity(0.15))
+                .frame(width: 28, height: 28)
+            Image(systemName: name)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(color)
         }
     }
 
@@ -448,5 +791,5 @@ public struct SettingsContentView: View {
 
 #Preview {
     SettingsContentView(aggregator: nil)
-        .frame(width: 700, height: 600)
+        .frame(width: 750, height: 510)
 }
