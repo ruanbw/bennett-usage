@@ -38,6 +38,7 @@ public struct DashboardContentView: View {
     @State private var isProjectsExpanded: Bool = false
     @State private var allTimeTotals: AllTimeTotals? = nil
     @State private var refreshTick = 0
+    @State private var lastDataUpdateLoad: Date = .distantPast
     @State private var selectedHeatmapYear: Int = Calendar.current.component(.year, from: Date())
     @State private var annualSummary: (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String, activeDays: Int, totalDays: Int)? = nil
     @State private var annualTrendPoints: [TrendPoint] = []
@@ -136,9 +137,7 @@ public struct DashboardContentView: View {
             await autoRefreshLoop()
         }
         .onReceive(NotificationCenter.default.publisher(for: .bennettUsageDataDidUpdate)) { _ in
-            Task {
-                await loadData()
-            }
+            Task { await loadDataThrottled() }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             Task {
@@ -1620,6 +1619,16 @@ public struct DashboardContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(NSColor.controlBackgroundColor))
         .cornerRadius(10)
+    }
+
+    /// Data-update notifications can arrive in bursts while agents are active;
+    /// each full `loadData` re-aggregates every record in range, so collapse
+    /// bursts into at most one reload per second.
+    private func loadDataThrottled() async {
+        let now = Date()
+        guard now.timeIntervalSince(lastDataUpdateLoad) >= 1.0 else { return }
+        lastDataUpdateLoad = now
+        await loadData()
     }
 
     private func loadData() async {

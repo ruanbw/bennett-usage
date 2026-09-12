@@ -5,6 +5,11 @@ public actor SyncCoordinator {
     private let registry: AdapterRegistry
     private let pricingEngine: PricingEngine
     private var watcher: FSEventsWatcher?
+    // Coalescing: while a sync is running, additional FSEvent-triggered
+    // requests collapse into a single follow-up pass instead of queueing one
+    // full-tree walk per event.
+    private var isSyncing = false
+    private var needsResync = false
 
     public init(
         database: DatabaseManager,
@@ -18,6 +23,21 @@ public actor SyncCoordinator {
 
     @discardableResult
     public func syncAll() async throws -> Int {
+        if isSyncing {
+            needsResync = true
+            return 0
+        }
+        isSyncing = true
+        defer { isSyncing = false }
+        var total = 0
+        repeat {
+            needsResync = false
+            total += try await syncAllOnce()
+        } while needsResync
+        return total
+    }
+
+    private func syncAllOnce() async throws -> Int {
         var totalIngested = 0
         for adapter in registry.allAdapters() {
             guard let path = adapter.detectDefaultPath() else { continue }

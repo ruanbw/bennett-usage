@@ -129,7 +129,7 @@ public struct OmpAdapter: AgentSourceAdapter, @unchecked Sendable {
         let fileManager = FileManager.default
         let enumerator = fileManager.enumerator(
             at: rootDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey]
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
         )
 
         let isoFormatter = ISO8601DateFormatter()
@@ -141,9 +141,9 @@ public struct OmpAdapter: AgentSourceAdapter, @unchecked Sendable {
             let filePath = fileUrl.resolvingSymlinksInPath().path
             let lastOffset = offsets[filePath] ?? offsets[fileUrl.path] ?? 0
 
-            let fileSize = (try? fileManager.attributesOfItem(atPath: filePath)[.size] as? Int64)
-                ?? (try? fileManager.attributesOfItem(atPath: fileUrl.path)[.size] as? Int64)
-                ?? 0
+            // Pre-fetched via includingPropertiesForKeys: avoids a
+            // lstat/listxattr/getxattr round-trip per file on every sync.
+            let fileSize = Int64((try? fileUrl.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
             if fileSize <= lastOffset { continue }
 
             guard let handle = try? FileHandle(forReadingFrom: fileUrl) else { continue }
