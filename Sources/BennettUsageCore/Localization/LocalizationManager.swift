@@ -141,8 +141,18 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case cacheWrite
     case cacheRead
     case cacheHitRate
+    // Settings Navigation & Details
+    case settingsNavGeneral
+    case settingsNavAgents
+    case settingsNavPricing
+    case settingsNavStorage
+    case settingsNavAbout
+    case settingsGeneralSubtitle
+    case settingsAgentsSubtitle
+    case settingsPricingSubtitle
+    case settingsStorageSubtitle
+    case settingsAboutSubtitle
 }
-
 public typealias LocalizationKey = LocalizedKey
 
 /// Global localization manager supporting instant reactive language switching,
@@ -384,9 +394,20 @@ private let englishDictionary: [LocalizedKey: String] = [
     .modelOutput: "Output",
     .cacheWrite: "Cache Write",
     .cacheRead: "Cache Read",
-    .cacheHitRate: "Cache Hit Rate"
-]
+    .cacheHitRate: "Cache Hit Rate",
 
+    // Settings Navigation & Details
+    .settingsNavGeneral: "General",
+    .settingsNavAgents: "Agent Health",
+    .settingsNavPricing: "Pricing & Currency",
+    .settingsNavStorage: "Storage & Data",
+    .settingsNavAbout: "About Bennett",
+    .settingsGeneralSubtitle: "Language preferences and dashboard refresh interval",
+    .settingsAgentsSubtitle: "Local AI agent detection, session logs, and health status",
+    .settingsPricingSubtitle: "Reference exchange rates and primary currency display",
+    .settingsStorageSubtitle: "Local database metrics, index rollups, and cache maintenance",
+    .settingsAboutSubtitle: "Version details, privacy commitment, and repository links"
+]
 private let chineseDictionary: [LocalizedKey: String] = [
     // App & Common
     .appName: "Bennett Usage",
@@ -505,5 +526,17 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .modelOutput: "模型输出",
     .cacheWrite: "缓存写入",
     .cacheRead: "缓存命中",
-    .cacheHitRate: "缓存命中率"
+    .cacheHitRate: "缓存命中率",
+
+    // Settings Navigation & Details
+    .settingsNavGeneral: "通用设置",
+    .settingsNavAgents: "Agent 状态",
+    .settingsNavPricing: "计价与汇率",
+    .settingsNavStorage: "数据与存储",
+    .settingsNavAbout: "关于应用",
+    .settingsGeneralSubtitle: "配置界面语言偏好与看板数据自动刷新频率",
+    .settingsAgentsSubtitle: "本地各 AI 编程 Agent 日志路径与会话采集状态诊断",
+    .settingsPricingSubtitle: "配置 USD 与 CNY 参考汇率换算与主货币显示",
+    .settingsStorageSubtitle: "查看本地 SQLite 数据库状态、重建统计与数据清理",
+    .settingsAboutSubtitle: "版本信息、100% 本地隐私保证与开源仓库信息"
 ]
