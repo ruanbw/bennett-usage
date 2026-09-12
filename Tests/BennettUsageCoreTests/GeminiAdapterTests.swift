@@ -77,7 +77,7 @@ final class GeminiAdapterTests: XCTestCase {
         XCTAssertEqual(record.cacheReadTokens, 0)
     }
 
-    func testIncrementalFetchYieldsStableIdsAfterAppend() async throws {
+    func testIncrementalFetchReturnsOnlyAppendedRecords() async throws {
         let url = try writeSessionFile(name: "session-2026-09-10T18-13-00-abc.jsonl", lines: [
             #"{"sessionId":"sess-1","messages":[]}"#,
             #"{"id":"m2","timestamp":"2026-09-10T18:13:22.500Z","type":"gemini","model":"gemini-2.5-pro","tokens":{"input":1000,"output":300,"cached":200,"thoughts":50,"total":1350}}"#,
@@ -94,20 +94,23 @@ final class GeminiAdapterTests: XCTestCase {
         let appended = Data(#"{"id":"m9","timestamp":"2026-09-10T18:30:00Z","type":"gemini","model":"gemini-2.5-pro","tokens":{"input":10,"output":20,"total":30}}"#.appending("\n").utf8)
         try handle.write(contentsOf: appended)
 
-        // Files are re-parsed from the start; ids stay stable so the database
-        // INSERT OR IGNORE deduplicates the previously ingested message.
+        // Incremental sync parses only the appended complete lines and emits
+        // only the new record; unchanged history is not re-sent (the database
+        // INSERT OR IGNORE dedupe no longer relies on re-emission).
         let second = try await adapter.fetchIncrementalRecords(from: geminiRoot, since: first.newCursor)
-        XCTAssertEqual(second.records.count, 2)
-        XCTAssertEqual(Set(second.records.map(\.id)), ["gemini_sess-1_m2", "gemini_sess-1_m9"])
-        XCTAssertEqual(second.records.first(where: { $0.id == "gemini_sess-1_m9" })?.inputTokens, 10)
-        XCTAssertEqual(second.records.first(where: { $0.id == "gemini_sess-1_m9" })?.outputTokens, 20)
+        XCTAssertEqual(second.records.count, 1)
+        let record = try XCTUnwrap(second.records.first)
+        XCTAssertEqual(record.id, "gemini_sess-1_m9")
+        XCTAssertEqual(record.inputTokens, 10)
+        XCTAssertEqual(record.outputTokens, 20)
     }
 
     func testUnchangedFilesSkippedAndFallbackIdsStableAfterAppend() async throws {
         // Two files, each with an id-less gemini message. Unchanged files are
-        // skipped entirely on the next sync; appending re-parses the file and
-        // must keep minting stable offset-based fallback ids so earlier rows
-        // deduplicate instead of duplicating.
+        // skipped entirely on the next sync; after an append only the new
+        // line is emitted, and a cursor-less full re-parse must mint the same
+        // offset-based fallback ids (absolute line numbers) so historical
+        // rows deduplicate instead of duplicating.
         _ = try writeSessionFile(name: "session-a.jsonl", lines: [
             #"{"sessionId":"sess-a","messages":[]}"#,
             #"{"timestamp":"2026-09-10T18:13:22.500Z","type":"gemini","tokens":{"input":10,"output":5}}"#,
@@ -121,13 +124,13 @@ final class GeminiAdapterTests: XCTestCase {
         let geminiRoot = tempDir.appendingPathComponent("gemini")
         let first = try await adapter.fetchIncrementalRecords(from: geminiRoot, since: nil)
         XCTAssertEqual(first.records.count, 2)
+        let historicalId = try XCTUnwrap(first.records.first(where: { $0.sessionKey == "sess-a" })?.id)
 
         let second = try await adapter.fetchIncrementalRecords(from: geminiRoot, since: first.newCursor)
         XCTAssertEqual(second.records.count, 0, "unchanged session files should be skipped")
 
-        // Append an id-less message to session-a: the file is re-parsed from
-        // the start (header metadata), so both fallback ids are re-emitted
-        // and must be stable across runs.
+        // Append an id-less message to session-a: only the appended line is
+        // parsed and emitted, carrying its absolute-line fallback id.
         _ = try writeSessionFile(name: "session-a.jsonl", lines: [
             #"{"sessionId":"sess-a","messages":[]}"#,
             #"{"timestamp":"2026-09-10T18:13:22.500Z","type":"gemini","tokens":{"input":10,"output":5}}"#,
@@ -135,10 +138,21 @@ final class GeminiAdapterTests: XCTestCase {
         ])
 
         let third = try await adapter.fetchIncrementalRecords(from: geminiRoot, since: second.newCursor)
+        XCTAssertEqual(third.records.count, 1)
+        let appended = try XCTUnwrap(third.records.first)
+        XCTAssertEqual(appended.id, "gemini_sess-a_offset_2")
+        XCTAssertEqual(appended.inputTokens, 30)
+        XCTAssertEqual(appended.outputTokens, 7)
+
+        // Losing the cursor forces a full re-parse; the historical row's
+        // fallback id must be identical to the one minted by the first sync,
+        // so INSERT OR IGNORE still deduplicates it.
+        let full = try await adapter.fetchIncrementalRecords(from: geminiRoot, since: nil)
         XCTAssertEqual(
-            Set(third.records.map(\.id)),
-            ["gemini_sess-a_offset_1", "gemini_sess-a_offset_2"]
+            Set(full.records.map(\.id)),
+            ["gemini_sess-a_offset_1", "gemini_sess-a_offset_2", "gemini_sess-b_offset_1"]
         )
+        XCTAssertEqual(full.records.first(where: { $0.sessionKey == "sess-a" })?.id, historicalId)
     }
 
     func testAdapterMetadata() {

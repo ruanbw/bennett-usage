@@ -48,7 +48,13 @@ public struct AntigravityAdapter: AgentSourceAdapter, @unchecked Sendable {
         if case .fileOffsets(let dict) = cursor {
             previousOffsets = dict
         }
-        var offsets: [String: Int64] = [:]
+        // Start from the previous cursor so unchanged databases keep their
+        // entries. Per-database keys:
+        //   "<path>"        — main DB file size (unchanged-file fast path)
+        //   "<path>::steps" — last consumed steps.idx among step_type = 15 rows
+        //   "<path>::gen"   — number of gen_metadata rows already paired with
+        //                     the consumed steps (1:1 with steps in idx order)
+        var offsets = previousOffsets
         var records: [UnifiedTokenRecord] = []
 
         let fileManager = FileManager.default
@@ -57,31 +63,58 @@ public struct AntigravityAdapter: AgentSourceAdapter, @unchecked Sendable {
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
         )) ?? []
 
+        var seenPaths = Set<String>()
         for dbUrl in contents where dbUrl.pathExtension == "db" {
             guard (try? dbUrl.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
-            let size = (try? dbUrl.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-            offsets[dbUrl.path] = Int64(size)
+            let path = dbUrl.path
+            seenPaths.insert(path)
+            let size = Int64((try? dbUrl.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+            let lastSize = previousOffsets[path] ?? 0
 
             // Skip conversation DBs whose main file is unchanged since the
             // last sync. A non-empty -wal means recent steps may not be
             // checkpointed into the main file yet — re-parse to be safe.
-            let lastOffset = previousOffsets[dbUrl.path] ?? 0
-            let walSize = ((try? fileManager.attributesOfItem(atPath: dbUrl.path + "-wal"))?[.size] as? Int64) ?? 0
-            if Int64(size) == lastOffset, walSize == 0 { continue }
+            let walSize = ((try? fileManager.attributesOfItem(atPath: path + "-wal"))?[.size] as? Int64) ?? 0
+            if size == lastSize, walSize == 0 { continue }
 
-            // READONLY can fail against a WAL database with a stale -shm and no
-            // live writer (SQLite cannot recover the WAL without write access).
-            // Retry with READWRITE — only SELECTs run; the sole "write" is the
-            // WAL recovery any SQLite client performs on such databases.
-            let parsed = parseConversationDB(at: dbUrl, openReadOnly: true)
-                ?? parseConversationDB(at: dbUrl, openReadOnly: false)
+            let lastStepIdx = previousOffsets["\(path)::steps"]
+            let genBase = Int(previousOffsets["\(path)::gen"] ?? 0)
+
+            var result: DBParseResult?
+            // Incremental pass: only steps past the last consumed idx. A
+            // missing "<path>::steps" (first sighting or legacy cursor) or a
+            // shrunk file forces a full (re)parse instead.
+            if let since = lastStepIdx, size >= lastSize {
+                result = parseConversationDB(at: dbUrl, openReadOnly: true, sinceStepIdx: since, genBase: genBase)
+                    ?? parseConversationDB(at: dbUrl, openReadOnly: false, sinceStepIdx: since, genBase: genBase)
+            }
+            // Fall back to a full parse on first sighting, on shrink, or when
+            // the incremental pass fails. A failed full parse keeps the old
+            // cursor so the next sync retries this database.
+            if result == nil,
+               let full = parseConversationDB(at: dbUrl, openReadOnly: true, sinceStepIdx: nil, genBase: 0)
+                   ?? parseConversationDB(at: dbUrl, openReadOnly: false, sinceStepIdx: nil, genBase: 0) {
+                result = full
+            }
+
             // Record the offset only after a successful parse: a failed parse
             // keeps the old offset so the next sync retries this file.
-            if let parsed {
-                records.append(contentsOf: parsed)
+            if let result {
+                records.append(contentsOf: result.records)
+                offsets[path] = size
+                offsets["\(path)::steps"] = result.nextStepIdx
+                offsets["\(path)::gen"] = Int64(result.nextGenOffset)
             } else {
-                offsets[dbUrl.path] = lastOffset
+                offsets[path] = lastSize
             }
+        }
+
+        // Drop cursor entries for databases that no longer exist.
+        offsets = offsets.filter { key, _ in
+            if let range = key.range(of: "::", options: .backwards) {
+                return seenPaths.contains(String(key[..<range.lowerBound]))
+            }
+            return seenPaths.contains(key)
         }
 
         return (records, .fileOffsets(offsets))
@@ -89,7 +122,21 @@ public struct AntigravityAdapter: AgentSourceAdapter, @unchecked Sendable {
 
     // MARK: - Conversation database parsing
 
-    private func parseConversationDB(at dbUrl: URL, openReadOnly: Bool) -> [UnifiedTokenRecord]? {
+    private struct DBParseResult {
+        let records: [UnifiedTokenRecord]
+        /// Largest steps.idx consumed among step_type = 15 rows (equals
+        /// `sinceStepIdx` when no new rows were read).
+        let nextStepIdx: Int64
+        /// Number of gen_metadata rows now paired with the consumed steps.
+        let nextGenOffset: Int
+    }
+
+    private func parseConversationDB(
+        at dbUrl: URL,
+        openReadOnly: Bool,
+        sinceStepIdx: Int64?,
+        genBase: Int
+    ) -> DBParseResult? {
         let flags = SQLITE_OPEN_FULLMUTEX | (openReadOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE)
         var db: OpaquePointer?
         guard sqlite3_open_v2(dbUrl.path, &db, flags, nil) == SQLITE_OK else {
@@ -101,10 +148,16 @@ public struct AntigravityAdapter: AgentSourceAdapter, @unchecked Sendable {
 
         let conversationId = dbUrl.deletingPathExtension().lastPathComponent
 
-        // gen_metadata rows pair 1:1 (by idx order) with step_type=15 steps.
+        // gen_metadata rows pair 1:1 (by idx order) with step_type = 15 steps.
+        // genBase skips the rows already paired with previously consumed steps.
         var models: [String] = []
         var modelStmt: OpaquePointer?
-        if sqlite3_prepare_v2(db, "SELECT data FROM gen_metadata ORDER BY idx ASC", -1, &modelStmt, nil) == SQLITE_OK {
+        if sqlite3_prepare_v2(
+            db,
+            "SELECT data FROM gen_metadata ORDER BY idx ASC LIMIT -1 OFFSET ?",
+            -1, &modelStmt, nil
+        ) == SQLITE_OK {
+            sqlite3_bind_int64(modelStmt, 1, Int64(genBase))
             while sqlite3_step(modelStmt) == SQLITE_ROW {
                 models.append(Self.modelName(fromBlob: sqlite3_column_blob(modelStmt, 0),
                                             size: Int(sqlite3_column_bytes(modelStmt, 0))))
@@ -112,18 +165,21 @@ public struct AntigravityAdapter: AgentSourceAdapter, @unchecked Sendable {
             sqlite3_finalize(modelStmt)
         }
 
+        let stepSQL = sinceStepIdx == nil
+            ? "SELECT idx, metadata FROM steps WHERE step_type = 15 ORDER BY idx ASC"
+            : "SELECT idx, metadata FROM steps WHERE step_type = 15 AND idx > ? ORDER BY idx ASC"
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(
-            db,
-            "SELECT idx, metadata FROM steps WHERE step_type = 15 ORDER BY idx ASC",
-            -1, &stmt, nil
-        ) == SQLITE_OK else {
+        guard sqlite3_prepare_v2(db, stepSQL, -1, &stmt, nil) == SQLITE_OK else {
             return nil
         }
         defer { sqlite3_finalize(stmt) }
+        if let since = sinceStepIdx {
+            sqlite3_bind_int64(stmt, 1, since)
+        }
 
         var records: [UnifiedTokenRecord] = []
         var modelIndex = 0
+        var maxStepIdx = sinceStepIdx ?? 0
 
         var stepFailed = false
 
@@ -134,9 +190,12 @@ public struct AntigravityAdapter: AgentSourceAdapter, @unchecked Sendable {
                 break
             }
 
-            defer { modelIndex += 1 }
-
+            // Count every row (even ones with unusable metadata): gen_metadata
+            // pairing is positional, so skipped rows still consume a slot.
             let stepIdx = sqlite3_column_int64(stmt, 0)
+            maxStepIdx = max(maxStepIdx, stepIdx)
+            modelIndex += 1
+
             let metadata = sqlite3_column_blob(stmt, 1)
             let metadataSize = Int(sqlite3_column_bytes(stmt, 1))
 
@@ -144,7 +203,7 @@ public struct AntigravityAdapter: AgentSourceAdapter, @unchecked Sendable {
                   let usage = Self.stepUsage(from: data)
             else { continue }
 
-            let model = modelIndex < models.count ? models[modelIndex] : nil
+            let model = modelIndex - 1 < models.count ? models[modelIndex - 1] : nil
 
             let record = UnifiedTokenRecord(
                 id: "antigravity_\(conversationId)_\(stepIdx)",
@@ -166,7 +225,11 @@ public struct AntigravityAdapter: AgentSourceAdapter, @unchecked Sendable {
         // A mid-loop error (e.g. SQLITE_BUSY, readonly WAL recovery failure)
         // makes the record set incomplete — signal the caller to retry.
         if stepFailed { return nil }
-        return records
+        return DBParseResult(
+            records: records,
+            nextStepIdx: maxStepIdx,
+            nextGenOffset: genBase + modelIndex
+        )
     }
 
     // MARK: - Protobuf decoding
