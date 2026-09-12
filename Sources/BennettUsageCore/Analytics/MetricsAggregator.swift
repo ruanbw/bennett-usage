@@ -199,6 +199,10 @@ public final class MetricsAggregator: Sendable {
         dateComponents.year = year + 1
         guard let nextYearDate = calendar.date(from: dateComponents) else { return [] }
 
+        // Hide days that have not arrived yet: cap the grid at tomorrow (today included).
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? nextYearDate
+        let endDate = min(nextYearDate, tomorrow)
+
         let dayFormatter = DateFormatter()
         dayFormatter.dateFormat = "yyyy-MM-dd"
         dayFormatter.timeZone = TimeZone.current
@@ -207,7 +211,7 @@ public final class MetricsAggregator: Sendable {
         var currentDate = startDate
         var maxTokens = 0
 
-        while currentDate < nextYearDate {
+        while currentDate < endDate {
             let dayKey = dayFormatter.string(from: currentDate)
             let items = rollupsByDay[dayKey] ?? []
             let dayTokens = items.reduce(0) { $0 + $1.totalTokens }

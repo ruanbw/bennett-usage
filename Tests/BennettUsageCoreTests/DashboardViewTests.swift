@@ -181,7 +181,12 @@ final class DashboardViewTests: XCTestCase {
         XCTAssertEqual(summary.totalDays, 365)
 
         let annualHeatmap = try await aggregator.fetchAnnualHeatmap(year: 2026)
-        XCTAssertEqual(annualHeatmap.count, 365)
+        let calendar = Calendar(identifier: .gregorian)
+        if calendar.component(.year, from: Date()) == 2026 {
+            XCTAssertEqual(annualHeatmap.count, calendar.ordinality(of: .day, in: .year, for: Date())!)
+        } else {
+            XCTAssertEqual(annualHeatmap.count, 365)
+        }
         let dayCell = annualHeatmap.first(where: { $0.dayKey == "2026-02-14" })
         XCTAssertEqual(dayCell?.totalTokens, 12000)
         XCTAssertEqual(dayCell?.intensityLevel, 4)

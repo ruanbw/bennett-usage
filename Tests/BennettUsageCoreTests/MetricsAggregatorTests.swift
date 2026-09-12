@@ -16,7 +16,9 @@ final class MetricsAggregatorTests: XCTestCase {
         try db.insertRecords([r1, r2])
 
         let cells = try await aggregator.fetchAnnualHeatmap(year: 2026)
-        XCTAssertTrue(cells.count >= 365)
+        // Future days of the current year must be excluded.
+        XCTAssertFalse(cells.contains { $0.date > Date() })
+        XCTAssertTrue(cells.contains { $0.dayKey == "2026-01-15" })
         
         let jan15 = cells.first(where: { $0.dayKey == "2026-01-15" })
         let feb20 = cells.first(where: { $0.dayKey == "2026-02-20" })
