@@ -107,6 +107,7 @@ public struct DashboardContentView: View {
                     trendPoints: periodMetrics?.trendPoints ?? [],
                     trendTitle: trendTitle,
                     rangeSubtitle: rangeSubtitle,
+                    modelColors: cachedModelColors,
                     localization: localization
                 )
                 distributionChartsSection
@@ -997,6 +998,7 @@ private struct TrendChartCard: View {
     let trendPoints: [TrendPoint]
     let trendTitle: String
     let rangeSubtitle: String
+    var modelColors: [String: Color] = [:]
     @ObservedObject var localization: LocalizationManager
 
     @State private var trendChartType: TrendChartType = .bar
@@ -1026,44 +1028,86 @@ private struct TrendChartCard: View {
             if trendPoints.contains(where: { $0.tokens > 0 }) {
                 let visibleLabels = visibleXAxisLabels(for: trendPoints)
                 Chart {
-                    ForEach(trendPoints) { item in
+                    if hasModelBreakdown {
                         if trendChartType == .bar {
-                            BarMark(
-                                x: .value("Period", item.label),
-                                y: .value("Tokens", item.tokens)
-                            )
-                            .foregroundStyle(Color.blue.gradient)
-                            .cornerRadius(4)
-                            .opacity(hoveredTrendPeriod == nil || hoveredTrendPeriod == item.label ? 1.0 : 0.35)
+                            ForEach(trendPoints) { item in
+                                ForEach(breakdown(for: item), id: \.model) { row in
+                                    BarMark(
+                                        x: .value("Period", item.label),
+                                        y: .value("Tokens", row.tokens)
+                                    )
+                                    .foregroundStyle(by: .value("Model", row.model))
+                                    .cornerRadius(2)
+                                    .opacity(hoveredTrendPeriod == nil || hoveredTrendPeriod == item.label ? 1.0 : 0.35)
+                                }
+                            }
                         } else {
-                            AreaMark(
-                                x: .value("Period", item.label),
-                                y: .value("Tokens", item.tokens)
-                            )
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [Color.blue.opacity(0.35), Color.blue.opacity(0.03)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
+                            ForEach(activeModelNames(), id: \.self) { model in
+                                ForEach(trendPoints) { item in
+                                    if let tokens = item.modelTokens[model], tokens > 0 {
+                                        LineMark(
+                                            x: .value("Period", item.label),
+                                            y: .value("Tokens", tokens)
+                                        )
+                                        .foregroundStyle(modelColors[model] ?? .gray)
+                                        .interpolationMethod(.monotone)
+                                        .lineStyle(StrokeStyle(lineWidth: 2))
+                                    }
+                                }
+                            }
+                            ForEach(trendPoints) { item in
+                                if hoveredTrendPeriod == item.label {
+                                    ForEach(breakdown(for: item), id: \.model) { row in
+                                        PointMark(
+                                            x: .value("Period", item.label),
+                                            y: .value("Tokens", row.tokens)
+                                        )
+                                        .foregroundStyle(modelColors[row.model] ?? .gray)
+                                        .symbolSize(50)
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        ForEach(trendPoints) { item in
+                            if trendChartType == .bar {
+                                BarMark(
+                                    x: .value("Period", item.label),
+                                    y: .value("Tokens", item.tokens)
                                 )
-                            )
-                            .interpolationMethod(.monotone)
+                                .foregroundStyle(Color.blue.gradient)
+                                .cornerRadius(4)
+                                .opacity(hoveredTrendPeriod == nil || hoveredTrendPeriod == item.label ? 1.0 : 0.35)
+                            } else {
+                                AreaMark(
+                                    x: .value("Period", item.label),
+                                    y: .value("Tokens", item.tokens)
+                                )
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: [Color.blue.opacity(0.35), Color.blue.opacity(0.03)],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                                .interpolationMethod(.monotone)
 
-                            LineMark(
-                                x: .value("Period", item.label),
-                                y: .value("Tokens", item.tokens)
-                            )
-                            .foregroundStyle(Color.blue)
-                            .interpolationMethod(.monotone)
-                            .lineStyle(StrokeStyle(lineWidth: 2.5))
-
-                            if hoveredTrendPeriod == item.label {
-                                PointMark(
+                                LineMark(
                                     x: .value("Period", item.label),
                                     y: .value("Tokens", item.tokens)
                                 )
                                 .foregroundStyle(Color.blue)
-                                .symbolSize(50)
+                                .interpolationMethod(.monotone)
+                                .lineStyle(StrokeStyle(lineWidth: 2.5))
+
+                                if hoveredTrendPeriod == item.label {
+                                    PointMark(
+                                        x: .value("Period", item.label),
+                                        y: .value("Tokens", item.tokens)
+                                    )
+                                    .foregroundStyle(Color.blue)
+                                    .symbolSize(50)
+                                }
                             }
                         }
                     }
@@ -1119,6 +1163,8 @@ private struct TrendChartCard: View {
                             if let loc = trendHoverLocation,
                                let hovered = hoveredTrendPeriod,
                                let point = trendPoints.first(where: { $0.label == hovered }) {
+                                let rows = hasModelBreakdown ? Array(breakdown(for: point).prefix(6)) : []
+                                let tooltipSize = CGSize(width: rows.isEmpty ? 140 : 190, height: 60 + CGFloat(rows.count) * 15)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(point.label)
                                         .font(.caption2)
@@ -1128,6 +1174,18 @@ private struct TrendChartCard: View {
                                     Text(PricingEngine.shared.spendString(point.costUSD))
                                         .font(.caption2)
                                         .foregroundColor(.green)
+                                    ForEach(rows, id: \.model) { row in
+                                        HStack(spacing: 4) {
+                                            Circle().fill(modelColors[row.model] ?? .gray).frame(width: 6, height: 6)
+                                            Text(row.model)
+                                                .font(.caption2)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                            Text(TokenFormatter.formatCompact(row.tokens))
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 5)
@@ -1138,13 +1196,17 @@ private struct TrendChartCard: View {
                                     RoundedRectangle(cornerRadius: 6)
                                         .stroke(Color(NSColor.separatorColor), lineWidth: 0.8)
                                 )
-                                .position(tooltipPosition(for: loc, in: geo.size, tooltipSize: CGSize(width: 140, height: 60)))
+                                .position(tooltipPosition(for: loc, in: geo.size, tooltipSize: tooltipSize))
                                 .allowsHitTesting(false)
                             }
                         }
                     }
                 }
                 .frame(height: 230)
+                // The custom legend below the chart replaces Swift Charts'
+                // auto-generated one; leaving both rendered duplicated rows.
+                .chartLegend(.hidden)
+                .chartForegroundStyleScale(domain: activeModelNames(), range: activeModelNames().map { modelColors[$0] ?? .gray })
                 .chartXAxis {
                     AxisMarks(values: visibleLabels) { value in
                         AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
@@ -1179,6 +1241,23 @@ private struct TrendChartCard: View {
                         }
                     }
                 }
+                if hasModelBreakdown {
+                    let legendModels = activeModelNames()
+                    if !legendModels.isEmpty {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 6)], alignment: .leading, spacing: 6) {
+                            ForEach(legendModels, id: \.self) { model in
+                                HStack(spacing: 6) {
+                                    Circle().fill(modelColors[model] ?? .gray).frame(width: 8, height: 8)
+                                    Text(model)
+                                        .font(.caption2)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                }
             } else {
                 VStack(spacing: 8) {
                     Spacer()
@@ -1208,28 +1287,38 @@ private struct TrendChartCard: View {
     }
     private func visibleXAxisLabels(for points: [TrendPoint]) -> [String] {
         let count = points.count
-        guard count > 8 else {
-            return points.map(\.label)
-        }
-        let step: Int
-        if count <= 14 {
-            step = 2
-        } else if count <= 24 {
-            step = 4
-        } else {
-            step = max(1, count / 6)
-        }
-        var visible: [String] = []
-        for i in stride(from: 0, to: count, by: step) {
-            visible.append(points[i].label)
-        }
+        guard count > 0 else { return [] }
+        let step = max(1, Int(ceil(Double(count) / 8)))
+        var visible = stride(from: 0, to: count, by: step).map { points[$0].label }
         if let last = points.last, !visible.contains(last.label) {
-            let remainder = (count - 1) % step
-            if remainder >= 2 {
-                visible.append(last.label)
-            }
+            visible.append(last.label)
         }
         return visible
+    }
+
+    private var hasModelBreakdown: Bool {
+        trendPoints.contains { !$0.modelTokens.isEmpty }
+    }
+
+    /// Models with tokens > 0 for a single bucket, sorted by tokens descending.
+    private func breakdown(for point: TrendPoint) -> [(model: String, tokens: Int)] {
+        point.modelTokens
+            .filter { $0.value > 0 }
+            .sorted { $0.value > $1.value || ($0.value == $1.value && $0.key < $1.key) }
+            .map { ($0.key, $0.value) }
+    }
+
+    /// Models with tokens > 0 across the whole interval, sorted by total tokens descending.
+    private func activeModelNames() -> [String] {
+        var totals: [String: Int] = [:]
+        for point in trendPoints {
+            for (model, tokens) in point.modelTokens where tokens > 0 {
+                totals[model, default: 0] += tokens
+            }
+        }
+        return totals
+            .sorted { $0.value > $1.value || ($0.value == $1.value && $0.key < $1.key) }
+            .map(\.key)
     }
 }
 

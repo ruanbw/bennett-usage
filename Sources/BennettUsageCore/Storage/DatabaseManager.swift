@@ -778,6 +778,117 @@ public final class DatabaseManager: @unchecked Sendable {
         }
         return result
     }
+    /// Aggregates tokens per (hour bucket, model). The hour bucket is keyed by
+    /// `(timestamp - originTimestamp) / 3_600_000` — identical semantics to
+    /// `fetchHourlyBuckets`. Rows with NULL/empty models are excluded (same
+    /// rule as `fetchModelDistribution`), as are zero-token groups so callers
+    /// only ever see models that actually consumed tokens.
+    public func fetchHourlyModelBuckets(
+        originTimestamp: Int64,
+        sinceTimestamp: Int64,
+        sourceId: String? = nil
+    ) throws -> [(hourIndex: Int, model: String, tokens: Int)] {
+        lock.lock(); defer { lock.unlock() }
+
+        var whereClauses: [String] = ["timestamp >= ?2"]
+        var binds: [(index: Int32, value: Any)] = [(2, sinceTimestamp)]
+        let trimmedSource = sourceId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let source = trimmedSource, !source.isEmpty {
+            whereClauses.append("source_id = ?3 COLLATE NOCASE")
+            binds.append((3, source))
+        }
+
+        let sql = """
+        SELECT (timestamp - ?1) / 3600000 AS hour_index,
+               model,
+               SUM(total_tokens) AS sum_tokens
+        FROM unified_token_records
+        WHERE \(whereClauses.joined(separator: " AND "))
+          AND model IS NOT NULL AND model != ''
+        GROUP BY hour_index, model
+        HAVING sum_tokens > 0;
+        """
+
+        let stmt = try cachedStatement(sql: sql, errorCode: 31, description: "hourly model buckets statement")
+        sqlite3_bind_int64(stmt, 1, originTimestamp)
+        for bind in binds {
+            if let intVal = bind.value as? Int64 {
+                sqlite3_bind_int64(stmt, bind.index, intVal)
+            } else if let strVal = bind.value as? String {
+                sqlite3_bind_text(stmt, bind.index, (strVal as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            }
+        }
+
+        var result: [(hourIndex: Int, model: String, tokens: Int)] = []
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_ROW {
+                let hourIndex = Int(sqlite3_column_int64(stmt, 0))
+                let model = String(cString: sqlite3_column_text(stmt, 1))
+                let tokens = Int(sqlite3_column_int64(stmt, 2))
+                result.append((hourIndex: hourIndex, model: model, tokens: tokens))
+            } else if step == SQLITE_DONE {
+                break
+            } else {
+                throw NSError(domain: "DatabaseManager", code: 32, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch hourly model buckets: \(lastErrorMessage())"])
+            }
+        }
+        return result
+    }
+
+    /// Aggregates tokens per (day, model) over an inclusive `yyyy-MM-dd`
+    /// range, matching the `dayKey` format of `DailyRollup`. Rows with
+    /// NULL/empty models are excluded (same rule as `fetchModelDistribution`),
+    /// as are zero-token groups so callers only ever see models that actually
+    /// consumed tokens.
+    public func fetchDailyModelBuckets(
+        startDate: String,
+        endDate: String,
+        sourceId: String? = nil
+    ) throws -> [(dayKey: String, model: String, tokens: Int)] {
+        lock.lock(); defer { lock.unlock() }
+
+        var whereClauses: [String] = ["day_key >= ?1", "day_key <= ?2"]
+        let trimmedSource = sourceId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let source = trimmedSource, !source.isEmpty {
+            whereClauses.append("source_id = ?3 COLLATE NOCASE")
+        }
+
+        let sql = """
+        SELECT day_key,
+               model,
+               SUM(total_tokens) AS sum_tokens
+        FROM unified_token_records
+        WHERE \(whereClauses.joined(separator: " AND "))
+          AND model IS NOT NULL AND model != ''
+        GROUP BY day_key, model
+        HAVING sum_tokens > 0
+        ORDER BY day_key ASC;
+        """
+
+        let stmt = try cachedStatement(sql: sql, errorCode: 33, description: "daily model buckets statement")
+        sqlite3_bind_text(stmt, 1, (startDate as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, (endDate as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        if let source = trimmedSource, !source.isEmpty {
+            sqlite3_bind_text(stmt, 3, (source as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        }
+
+        var result: [(dayKey: String, model: String, tokens: Int)] = []
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_ROW {
+                let dayKey = String(cString: sqlite3_column_text(stmt, 0))
+                let model = String(cString: sqlite3_column_text(stmt, 1))
+                let tokens = Int(sqlite3_column_int64(stmt, 2))
+                result.append((dayKey: dayKey, model: model, tokens: tokens))
+            } else if step == SQLITE_DONE {
+                break
+            } else {
+                throw NSError(domain: "DatabaseManager", code: 34, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch daily model buckets: \(lastErrorMessage())"])
+            }
+        }
+        return result
+    }
 
     public func fetchToolDistribution(
         sourceId: String? = nil,

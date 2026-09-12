@@ -25,11 +25,15 @@ public struct TrendPoint: Identifiable, Sendable, Equatable {
     public let label: String
     public let tokens: Int
     public let costUSD: Double
+    /// Per-model token breakdown for this bucket. Invariant when non-empty:
+    /// `modelTokens.values.reduce(0, +) == tokens`.
+    public let modelTokens: [String: Int]
 
-    public init(label: String, tokens: Int, costUSD: Double) {
+    public init(label: String, tokens: Int, costUSD: Double, modelTokens: [String: Int] = [:]) {
         self.label = label
         self.tokens = tokens
         self.costUSD = costUSD
+        self.modelTokens = modelTokens
     }
 }
 
@@ -452,6 +456,51 @@ public final class MetricsAggregator: Sendable {
         }
     }
 
+    /// Models with the highest total tokens across the given per-bucket
+    /// breakdowns, capped at `limit` (matching `fetchModelDistribution`'s
+    /// default). Decides which models keep their own series in trend charts;
+    /// everything else merges into "Other".
+    private static func topModels(across breakdowns: [[String: Int]], limit: Int = 10) -> Set<String> {
+        var totals: [String: Int] = [:]
+        for breakdown in breakdowns {
+            for (model, tokens) in breakdown {
+                totals[model, default: 0] += tokens
+            }
+        }
+        return Set(totals.sorted { $0.value > $1.value }.prefix(limit).map(\.key))
+    }
+
+    private static func topModels(across breakdownMap: [String: [String: Int]], limit: Int = 10) -> Set<String> {
+        topModels(across: Array(breakdownMap.values), limit: limit)
+    }
+
+    /// Applies the top-model cap to one bucket's breakdown: models in `top`
+    /// keep their own key, everything else merges into "Other". Zero-token
+    /// entries are dropped so all-zero buckets keep an empty dictionary.
+    private static func cappedModelTokens(_ breakdown: [String: Int], top: Set<String>) -> [String: Int] {
+        var capped: [String: Int] = [:]
+        for (model, tokens) in breakdown {
+            guard tokens > 0 else { continue }
+            capped[top.contains(model) ? model : "Other", default: 0] += tokens
+        }
+        return capped
+    }
+
+    /// Groups `fetchHourlyModelBuckets` rows into per-index model breakdowns
+    /// using the same index mapping as the caller's `bucketTokens` accumulation.
+    private static func modelBreakdowns(
+        from buckets: [(hourIndex: Int, model: String, tokens: Int)],
+        bucketCount: Int,
+        indexMapping: (Int) -> Int?
+    ) -> [[String: Int]] {
+        var breakdowns: [[String: Int]] = Array(repeating: [:], count: bucketCount)
+        for bucket in buckets {
+            guard let index = indexMapping(bucket.hourIndex), index >= 0, index < bucketCount else { continue }
+            breakdowns[index][bucket.model, default: 0] += bucket.tokens
+        }
+        return breakdowns
+    }
+
     public func fetchPeriodMetrics(range: TimeRangeOption, toolFilter: String? = nil) async throws -> PeriodMetrics {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone.current
@@ -483,6 +532,9 @@ public final class MetricsAggregator: Sendable {
                 bucketTokens[index] += bucket.totalTokens
                 bucketCosts[index] += bucket.totalCostUSD
             }
+            let modelBuckets = try database.fetchHourlyModelBuckets(originTimestamp: currentHourMillis, sinceTimestamp: sinceTimestamp, sourceId: toolFilter)
+            let bucketModels = Self.modelBreakdowns(from: modelBuckets, bucketCount: 24) { 23 + $0 }
+            let topModels = Self.topModels(across: bucketModels)
 
             let hourFormatter = DateFormatter()
             hourFormatter.dateFormat = "HH:00"
@@ -494,7 +546,8 @@ public final class MetricsAggregator: Sendable {
                 trendPoints.append(TrendPoint(
                     label: hourFormatter.string(from: bucketStart),
                     tokens: bucketTokens[i],
-                    costUSD: bucketCosts[i]
+                    costUSD: bucketCosts[i],
+                    modelTokens: Self.cappedModelTokens(bucketModels[i], top: topModels)
                 ))
             }
 
@@ -528,21 +581,30 @@ public final class MetricsAggregator: Sendable {
 
             let buckets = try database.fetchHourlyBuckets(originTimestamp: sinceTimestamp, sinceTimestamp: sinceTimestamp, sourceId: toolFilter)
 
-            var bucketTokens = [Int](repeating: 0, count: 24)
-            var bucketCosts = [Double](repeating: 0.0, count: 24)
+            let currentHour = calendar.component(.hour, from: now)
+            let bucketCount = currentHour + 1
+            var bucketTokens = [Int](repeating: 0, count: bucketCount)
+            var bucketCosts = [Double](repeating: 0.0, count: bucketCount)
             for bucket in buckets {
                 let hour = bucket.hourIndex
-                guard hour >= 0, hour < 24 else { continue }
+                guard hour >= 0, hour <= currentHour else { continue }
                 bucketTokens[hour] += bucket.totalTokens
                 bucketCosts[hour] += bucket.totalCostUSD
             }
 
+            // Only hours that have actually arrived get a bucket; the current
+            // hour is kept (it is already "here"), later hours are omitted.
+            let modelBuckets = try database.fetchHourlyModelBuckets(originTimestamp: sinceTimestamp, sinceTimestamp: sinceTimestamp, sourceId: toolFilter)
+            let bucketModels = Self.modelBreakdowns(from: modelBuckets, bucketCount: bucketCount) { $0 }
+            let topModels = Self.topModels(across: bucketModels)
+
             var trendPoints: [TrendPoint] = []
-            for hour in 0..<24 {
+            for hour in 0...currentHour {
                 trendPoints.append(TrendPoint(
                     label: String(format: "%02d:00", hour),
                     tokens: bucketTokens[hour],
-                    costUSD: bucketCosts[hour]
+                    costUSD: bucketCosts[hour],
+                    modelTokens: Self.cappedModelTokens(bucketModels[hour], top: topModels)
                 ))
             }
 
@@ -599,6 +661,12 @@ public final class MetricsAggregator: Sendable {
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
             let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter, startDate: startKey, endDate: endKey)
+            let modelBuckets = (try? database.fetchDailyModelBuckets(startDate: startKey, endDate: endKey, sourceId: toolFilter)) ?? []
+            var modelsByDay: [String: [String: Int]] = [:]
+            for bucket in modelBuckets {
+                modelsByDay[bucket.dayKey, default: [:]][bucket.model, default: 0] += bucket.tokens
+            }
+            let topModels = Self.topModels(across: modelsByDay)
 
             let labelFormatter = DateFormatter()
             labelFormatter.dateFormat = (daysCount == 7) ? "E MM/dd" : "MM/dd"
@@ -612,7 +680,7 @@ public final class MetricsAggregator: Sendable {
                 let dayRollups = rollupsByDay[key] ?? []
                 let dTokens = dayRollups.reduce(0) { $0 + $1.totalTokens }
                 let dCost = dayRollups.reduce(0.0) { $0 + $1.costUSD }
-                trendPoints.append(TrendPoint(label: label, tokens: dTokens, costUSD: dCost))
+                trendPoints.append(TrendPoint(label: label, tokens: dTokens, costUSD: dCost, modelTokens: Self.cappedModelTokens(modelsByDay[key] ?? [:], top: topModels)))
                 guard let next = calendar.date(byAdding: .day, value: 1, to: cur) else { break }
                 cur = next
             }
@@ -665,6 +733,12 @@ public final class MetricsAggregator: Sendable {
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
             let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter, startDate: startKey, endDate: endKey)
+            let modelBuckets = (try? database.fetchDailyModelBuckets(startDate: startKey, endDate: endKey, sourceId: toolFilter)) ?? []
+            var modelsByMonth: [String: [String: Int]] = [:]
+            for bucket in modelBuckets {
+                modelsByMonth[String(bucket.dayKey.prefix(7)), default: [:]][bucket.model, default: 0] += bucket.tokens
+            }
+            let topModels = Self.topModels(across: modelsByMonth)
 
             let monthFormatter = DateFormatter()
             monthFormatter.dateFormat = "MMM yy"
@@ -681,7 +755,7 @@ public final class MetricsAggregator: Sendable {
                 let monthRollups = rollups.filter { $0.dayKey.hasPrefix(prefix) }
                 let mTokens = monthRollups.reduce(0) { $0 + $1.totalTokens }
                 let mCost = monthRollups.reduce(0.0) { $0 + $1.costUSD }
-                trendPoints.append(TrendPoint(label: monthLabel, tokens: mTokens, costUSD: mCost))
+                trendPoints.append(TrendPoint(label: monthLabel, tokens: mTokens, costUSD: mCost, modelTokens: Self.cappedModelTokens(modelsByMonth[prefix] ?? [:], top: topModels)))
             }
 
             let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, startDate: startKey, endDate: endKey)) ?? []
@@ -723,15 +797,32 @@ public final class MetricsAggregator: Sendable {
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
             let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter, startDate: "\(year)-01-01", endDate: "\(year)-12-31")
+            let modelBuckets = (try? database.fetchDailyModelBuckets(startDate: "\(year)-01-01", endDate: "\(year)-12-31", sourceId: toolFilter)) ?? []
+            var modelsByMonth: [String: [String: Int]] = [:]
+            for bucket in modelBuckets {
+                modelsByMonth[String(bucket.dayKey.prefix(7)), default: [:]][bucket.model, default: 0] += bucket.tokens
+            }
+            let topModels = Self.topModels(across: modelsByMonth)
 
             let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            // The current year only shows months that have started; past years
+            // keep all twelve, future years none.
+            let currentYear = calendar.component(.year, from: now)
+            let monthCount: Int
+            if year < currentYear {
+                monthCount = 12
+            } else if year == currentYear {
+                monthCount = calendar.component(.month, from: now)
+            } else {
+                monthCount = 0
+            }
             var trendPoints: [TrendPoint] = []
-            for m in 1...12 {
+            for m in 1...12 where m <= monthCount {
                 let prefix = String(format: "%04d-%02d", year, m)
                 let monthRollups = rollups.filter { $0.dayKey.hasPrefix(prefix) }
                 let mTokens = monthRollups.reduce(0) { $0 + $1.totalTokens }
                 let mCost = monthRollups.reduce(0.0) { $0 + $1.costUSD }
-                trendPoints.append(TrendPoint(label: monthNames[m - 1], tokens: mTokens, costUSD: mCost))
+                trendPoints.append(TrendPoint(label: monthNames[m - 1], tokens: mTokens, costUSD: mCost, modelTokens: Self.cappedModelTokens(modelsByMonth[prefix] ?? [:], top: topModels)))
             }
             let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, startDate: "\(year)-01-01", endDate: "\(year)-12-31")) ?? []
 

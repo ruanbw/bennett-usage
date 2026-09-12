@@ -136,7 +136,8 @@ final class MetricsAggregatorTests: XCTestCase {
         let metrics = try await aggregator.fetchPeriodMetrics(range: .today)
         XCTAssertEqual(metrics.totalTokens, 500)
         XCTAssertEqual(metrics.totalCostUSD, 0.05, accuracy: 0.0001)
-        XCTAssertEqual(metrics.trendPoints.count, 24)
+        // Future hours of today are omitted; the current hour is kept.
+        XCTAssertEqual(metrics.trendPoints.count, Calendar.current.component(.hour, from: Date()) + 1)
     }
 
     func testFetchRollingHeatmap() async throws {
@@ -463,5 +464,179 @@ final class MetricsAggregatorTests: XCTestCase {
         // Year with no records
         let totalsEmpty = try db.fetchPeriodTotals(year: 2024)
         XCTAssertEqual(totalsEmpty.totalTokens, 0)
+    }
+
+    // MARK: - Per-model trend buckets
+
+    private func date(_ string: String) -> Date {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        formatter.timeZone = TimeZone.current
+        return formatter.date(from: string)!
+    }
+
+    func testFetchHourlyModelBuckets() throws {
+        let origin = date("2026-03-01 08:00")
+        let originMillis = Int64(origin.timeIntervalSince1970 * 1000)
+        func atHour(_ hours: Int) -> Date {
+            origin.addingTimeInterval(TimeInterval(hours) * 3600)
+        }
+
+        let records = [
+            UnifiedTokenRecord(id: "hm1", sourceId: "pi", timestamp: atHour(0), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "claude-opus", provider: nil, inputTokens: 100, outputTokens: 0),
+            UnifiedTokenRecord(id: "hm2", sourceId: "pi", timestamp: atHour(0), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "glm-5", provider: nil, inputTokens: 50, outputTokens: 0),
+            UnifiedTokenRecord(id: "hm3", sourceId: "omp", timestamp: atHour(2), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "claude-opus", provider: nil, inputTokens: 70, outputTokens: 0),
+            UnifiedTokenRecord(id: "hm4", sourceId: "pi", timestamp: atHour(2), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "glm-5", provider: nil, inputTokens: 30, outputTokens: 0),
+        ]
+        try db.insertRecords(records)
+
+        let buckets = try db.fetchHourlyModelBuckets(originTimestamp: originMillis, sinceTimestamp: originMillis)
+        XCTAssertEqual(buckets.count, 4)
+        XCTAssertTrue(buckets.contains { $0.hourIndex == 0 && $0.model == "claude-opus" && $0.tokens == 100 })
+        XCTAssertTrue(buckets.contains { $0.hourIndex == 0 && $0.model == "glm-5" && $0.tokens == 50 })
+        XCTAssertTrue(buckets.contains { $0.hourIndex == 2 && $0.model == "claude-opus" && $0.tokens == 70 })
+        XCTAssertTrue(buckets.contains { $0.hourIndex == 2 && $0.model == "glm-5" && $0.tokens == 30 })
+
+        let piBuckets = try db.fetchHourlyModelBuckets(originTimestamp: originMillis, sinceTimestamp: originMillis, sourceId: "pi")
+        XCTAssertEqual(piBuckets.count, 3)
+        XCTAssertFalse(piBuckets.contains { $0.model == "claude-opus" && $0.tokens == 70 })
+
+        // Invariant: per-hour model sums equal the un-split hourly bucket totals.
+        let totals = try db.fetchHourlyBuckets(originTimestamp: originMillis, sinceTimestamp: originMillis)
+        for total in totals {
+            let modelSum = buckets.filter { $0.hourIndex == total.hourIndex }.reduce(0) { $0 + $1.tokens }
+            XCTAssertEqual(modelSum, total.totalTokens)
+        }
+    }
+
+    func testFetchDailyModelBuckets() throws {
+        let records = [
+            UnifiedTokenRecord(id: "dm1", sourceId: "pi", timestamp: date("2026-03-01 12:00"), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "claude-opus", provider: nil, inputTokens: 100, outputTokens: 0),
+            UnifiedTokenRecord(id: "dm2", sourceId: "pi", timestamp: date("2026-03-01 18:00"), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "glm-5", provider: nil, inputTokens: 40, outputTokens: 0),
+            UnifiedTokenRecord(id: "dm3", sourceId: "omp", timestamp: date("2026-03-03 09:00"), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "glm-5", provider: nil, inputTokens: 60, outputTokens: 0),
+        ]
+        try db.insertRecords(records)
+
+        let buckets = try db.fetchDailyModelBuckets(startDate: "2026-03-01", endDate: "2026-03-31")
+        XCTAssertEqual(buckets.count, 3)
+        XCTAssertTrue(buckets.contains { $0.dayKey == "2026-03-01" && $0.model == "claude-opus" && $0.tokens == 100 })
+        XCTAssertTrue(buckets.contains { $0.dayKey == "2026-03-01" && $0.model == "glm-5" && $0.tokens == 40 })
+        XCTAssertTrue(buckets.contains { $0.dayKey == "2026-03-03" && $0.model == "glm-5" && $0.tokens == 60 })
+
+        let filtered = try db.fetchDailyModelBuckets(startDate: "2026-03-01", endDate: "2026-03-31", sourceId: "omp")
+        XCTAssertEqual(filtered.count, 1)
+        XCTAssertEqual(filtered.first?.dayKey, "2026-03-03")
+        XCTAssertEqual(filtered.first?.model, "glm-5")
+        XCTAssertEqual(filtered.first?.tokens, 60)
+
+        // Range boundaries are inclusive; a day without records yields nothing.
+        let clipped = try db.fetchDailyModelBuckets(startDate: "2026-03-02", endDate: "2026-03-02")
+        XCTAssertTrue(clipped.isEmpty)
+    }
+
+    func testPeriodMetricsModelTokensHourlyRanges() async throws {
+        let now = Date()
+        let records = [
+            UnifiedTokenRecord(id: "mt1", sourceId: "pi", timestamp: now, dayKey: nil, sessionKey: "s", projectFolder: nil, model: "claude-opus", provider: nil, inputTokens: 120, outputTokens: 0),
+            UnifiedTokenRecord(id: "mt2", sourceId: "pi", timestamp: now, dayKey: nil, sessionKey: "s", projectFolder: nil, model: "glm-5", provider: nil, inputTokens: 80, outputTokens: 0),
+        ]
+        try db.insertRecords(records)
+
+        let metrics24 = try await aggregator.fetchPeriodMetrics(range: .last24Hours)
+        XCTAssertEqual(metrics24.trendPoints.count, 24)
+        let newest = metrics24.trendPoints[23]
+        XCTAssertEqual(newest.tokens, 200)
+        XCTAssertEqual(newest.modelTokens["claude-opus"], 120)
+        XCTAssertEqual(newest.modelTokens["glm-5"], 80)
+        XCTAssertEqual(newest.modelTokens.values.reduce(0, +), newest.tokens)
+
+        let today = try await aggregator.fetchPeriodMetrics(range: .today)
+        // Future hours of today must not appear; the current hour is kept.
+        let currentHour = Calendar.current.component(.hour, from: now)
+        XCTAssertEqual(today.trendPoints.count, currentHour + 1)
+        let hourPoint = today.trendPoints[currentHour]
+        XCTAssertEqual(hourPoint.tokens, 200)
+        XCTAssertEqual(hourPoint.modelTokens["claude-opus"], 120)
+        XCTAssertEqual(hourPoint.modelTokens["glm-5"], 80)
+        XCTAssertEqual(hourPoint.modelTokens.values.reduce(0, +), hourPoint.tokens)
+    }
+
+    func testPeriodMetricsModelTokensDailyRange() async throws {
+        let dayFormatter = DateFormatter()
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        dayFormatter.timeZone = TimeZone.current
+        let weekAgo = Calendar.current.date(byAdding: .day, value: -6, to: Date())!
+        let weekAgoKey = dayFormatter.string(from: weekAgo)
+
+        let records = [
+            UnifiedTokenRecord(id: "w1", sourceId: "pi", timestamp: date("\(weekAgoKey) 12:00"), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "claude-opus", provider: nil, inputTokens: 300, outputTokens: 0),
+            UnifiedTokenRecord(id: "w2", sourceId: "pi", timestamp: date("\(weekAgoKey) 18:00"), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "glm-5", provider: nil, inputTokens: 100, outputTokens: 0),
+            UnifiedTokenRecord(id: "w3", sourceId: "pi", timestamp: Date(), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "claude-opus", provider: nil, inputTokens: 50, outputTokens: 0),
+        ]
+        try db.insertRecords(records)
+
+        let metrics = try await aggregator.fetchPeriodMetrics(range: .last7Days)
+        let labelFormatter = DateFormatter()
+        labelFormatter.dateFormat = "E MM/dd"
+        labelFormatter.timeZone = TimeZone.current
+        let weekAgoLabel = labelFormatter.string(from: weekAgo)
+
+        let point = metrics.trendPoints.first { $0.label == weekAgoLabel }
+        XCTAssertNotNil(point)
+        XCTAssertEqual(point?.tokens, 400)
+        XCTAssertEqual(point?.modelTokens["claude-opus"], 300)
+        XCTAssertEqual(point?.modelTokens["glm-5"], 100)
+        XCTAssertEqual(point?.modelTokens.values.reduce(0, +), point?.tokens)
+
+        // Today's point carries only the record written now.
+        let todayPoint = metrics.trendPoints.last
+        XCTAssertEqual(todayPoint?.tokens, 50)
+        XCTAssertEqual(todayPoint?.modelTokens, ["claude-opus": 50])
+    }
+
+    func testPeriodMetricsModelTokensTop10Capping() async throws {
+        let now = Date()
+        var records: [UnifiedTokenRecord] = []
+        for i in 0..<12 {
+            records.append(UnifiedTokenRecord(
+                id: "cap\(i)", sourceId: "pi", timestamp: now, dayKey: nil, sessionKey: "s",
+                projectFolder: nil, model: "model-\(i)", provider: nil,
+                inputTokens: (i + 1) * 10, outputTokens: 0
+            ))
+        }
+        try db.insertRecords(records)
+
+        let metrics = try await aggregator.fetchPeriodMetrics(range: .last24Hours)
+        let newest = metrics.trendPoints[23]
+        XCTAssertEqual(newest.tokens, 780)
+        XCTAssertEqual(newest.modelTokens.count, 11) // top 10 models + "Other"
+        XCTAssertEqual(newest.modelTokens["model-11"], 120)
+        XCTAssertEqual(newest.modelTokens["Other"], 30) // model-0 (10) + model-1 (20)
+        XCTAssertNil(newest.modelTokens["model-0"])
+        XCTAssertNil(newest.modelTokens["model-1"])
+        XCTAssertEqual(newest.modelTokens.values.reduce(0, +), 780)
+    }
+
+    func testPeriodMetricsModelTokensMonthlyYear() async throws {
+        let records = [
+            UnifiedTokenRecord(id: "y1", sourceId: "pi", timestamp: date("2026-03-05 12:00"), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "claude-opus", provider: nil, inputTokens: 500, outputTokens: 0),
+            UnifiedTokenRecord(id: "y2", sourceId: "pi", timestamp: date("2026-03-20 12:00"), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "glm-5", provider: nil, inputTokens: 250, outputTokens: 0),
+            UnifiedTokenRecord(id: "y3", sourceId: "pi", timestamp: date("2026-04-10 12:00"), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "claude-opus", provider: nil, inputTokens: 100, outputTokens: 0),
+        ]
+        try db.insertRecords(records)
+
+        let metrics = try await aggregator.fetchPeriodMetrics(range: .year(2026))
+        XCTAssertEqual(metrics.trendPoints[2].tokens, 750) // Mar
+        XCTAssertEqual(metrics.trendPoints[2].modelTokens["claude-opus"], 500)
+        XCTAssertEqual(metrics.trendPoints[2].modelTokens["glm-5"], 250)
+        XCTAssertEqual(metrics.trendPoints[3].tokens, 100) // Apr
+        XCTAssertEqual(metrics.trendPoints[3].modelTokens, ["claude-opus": 100])
+        XCTAssertEqual(metrics.trendPoints[0].modelTokens, [:]) // empty month
+
+        // The current year only shows months that have started.
+        let calendar = Calendar.current
+        let currentYear = calendar.component(.year, from: Date())
+        let currentMetrics = try await aggregator.fetchPeriodMetrics(range: .year(currentYear))
+        XCTAssertEqual(currentMetrics.trendPoints.count, calendar.component(.month, from: Date()))
     }
 }
