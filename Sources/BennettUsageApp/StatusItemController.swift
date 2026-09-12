@@ -8,7 +8,7 @@ public final class StatusItemController: NSObject {
     private var popover: NSPopover!
     private let aggregator: MetricsAggregator
     private let syncCoordinator: SyncCoordinator
-    private var todaySummary: TodaySummary?
+    private let summaryModel = StatusSummaryModel()
     private let openDashboardAction: () -> Void
     private let openSettingsAction: () -> Void
     private let localization: LocalizationManager
@@ -57,12 +57,10 @@ public final class StatusItemController: NSObject {
         popover = NSPopover()
         popover.contentSize = NSSize(width: 320, height: 260)
         popover.behavior = .transient
-        updatePopoverContent()
-    }
-
-    private func updatePopoverContent() {
+        // Built once; publishing a new `summaryModel.summary` refreshes the
+        // view in place instead of rebuilding the hosting controller.
         let view = MenuBarPopoverView(
-            summary: todaySummary,
+            model: summaryModel,
             localization: localization,
             onOpenDashboard: { [weak self] in self?.openDashboardWindow() },
             onSyncNow: { [weak self] in self?.forceSync() },
@@ -77,23 +75,23 @@ public final class StatusItemController: NSObject {
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            // Show immediately with the cached summary; sync + refresh run async.
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             refreshData()
             forceSync()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }
 
     public func refreshData() {
         Task {
             if let summary = try? await aggregator.fetchTodaySummary() {
-                self.todaySummary = summary
+                summaryModel.summary = summary
                 if let button = self.statusItem.button {
                     button.title = TokenFormatter.formatStatusTitle(summary.totalTokens)
                     button.toolTip = summary.totalTokens > 0
                         ? "\(TokenFormatter.formatFull(summary.totalTokens)) tokens"
                         : self.localization.localized(.statusItemAccessibility)
                 }
-                self.updatePopoverContent()
             }
         }
     }

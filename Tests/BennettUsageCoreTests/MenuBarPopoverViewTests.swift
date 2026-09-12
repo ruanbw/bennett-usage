@@ -27,7 +27,7 @@ final class MenuBarPopoverViewTests: XCTestCase {
         )
 
         let view = MenuBarPopoverView(
-            summary: summary,
+            model: StatusSummaryModel(summary: summary),
             onOpenDashboard: { dashboardOpened = true },
             onSyncNow: { syncTriggered = true },
             onQuit: { quitTriggered = true }
@@ -51,7 +51,7 @@ final class MenuBarPopoverViewTests: XCTestCase {
     @MainActor
     func testMenuBarPopoverViewNilSummary() {
         let view = MenuBarPopoverView(
-            summary: nil,
+            model: StatusSummaryModel(summary: nil),
             onOpenDashboard: {},
             onSyncNow: {},
             onQuit: {}
@@ -68,7 +68,7 @@ final class MenuBarPopoverViewTests: XCTestCase {
         localization.setLanguage(.zh)
 
         let view = MenuBarPopoverView(
-            summary: nil,
+            model: StatusSummaryModel(summary: nil),
             localization: localization,
             onOpenDashboard: {},
             onSyncNow: {},

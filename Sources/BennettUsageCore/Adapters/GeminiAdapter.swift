@@ -31,14 +31,18 @@ public struct GeminiAdapter: AgentSourceAdapter, @unchecked Sendable {
         from rootDirectory: URL,
         since cursor: SyncCursor?
     ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        var previousOffsets: [String: Int64] = [:]
+        if case .fileOffsets(let dict) = cursor {
+            previousOffsets = dict
+        }
         var records: [UnifiedTokenRecord] = []
         var offsets: [String: Int64] = [:]
-        if case .fileOffsets(let dict) = cursor {
-            offsets = dict
-        }
 
         let fileManager = FileManager.default
-        let enumerator = fileManager.enumerator(at: rootDirectory, includingPropertiesForKeys: [.isRegularFileKey])
+        let enumerator = fileManager.enumerator(
+            at: rootDirectory,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
+        )
 
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -51,7 +55,16 @@ public struct GeminiAdapter: AgentSourceAdapter, @unchecked Sendable {
                   (try? fileUrl.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
             else { continue }
 
+            // Skip session files unchanged since the last sync: their records
+            // are already in the database (content-addressed ids dedupe).
+            let fileSize = Int64((try? fileUrl.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            if fileSize > 0, fileSize == (previousOffsets[fileUrl.path] ?? -1) {
+                offsets[fileUrl.path] = fileSize
+                continue
+            }
+
             guard let data = fileManager.contents(atPath: fileUrl.path), !data.isEmpty else { continue }
+
             // Session-scoped context carried across JSONL records.
             var sessionId = fileUrl.deletingPathExtension().lastPathComponent
             var projectFolder: String?

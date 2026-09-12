@@ -36,6 +36,9 @@ public struct HeatmapGridView: View {
             }
         }
         if !currentWeek.isEmpty {
+            // Pad the trailing week to 7 slots so every row renders the same
+            // grid shape (GitHub-style calendar layout).
+            currentWeek.append(contentsOf: Array(repeating: nil, count: 7 - currentWeek.count))
             result.append(currentWeek)
         }
         return result

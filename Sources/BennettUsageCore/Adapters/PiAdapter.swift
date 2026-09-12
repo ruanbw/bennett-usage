@@ -26,7 +26,7 @@ public struct PiAdapter: AgentSourceAdapter, @unchecked Sendable {
 
         var records: [UnifiedTokenRecord] = []
         let fileManager = FileManager.default
-        let enumerator = fileManager.enumerator(at: rootDirectory, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey])
+        let enumerator = fileManager.enumerator(at: rootDirectory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey])
 
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -40,7 +40,7 @@ public struct PiAdapter: AgentSourceAdapter, @unchecked Sendable {
             guard let handle = try? FileHandle(forReadingFrom: fileUrl) else { continue }
             defer { try? handle.close() }
 
-            let fileSize = (try? fileManager.attributesOfItem(atPath: filePath)[.size] as? Int64) ?? 0
+            let fileSize = Int64((try? fileUrl.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
             if fileSize <= lastOffset { continue }
 
             try handle.seek(toOffset: UInt64(lastOffset))

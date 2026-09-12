@@ -11,6 +11,8 @@ public final class PricingEngine: @unchecked Sendable {
     public static let currencyUserDefaultsKey = "bennett_preferred_currency"
 
     private var rules: [ModelPricing] = []
+    /// Longest-pattern-first; built once so `calculateCost` does not sort per record.
+    private var sortedRules: [ModelPricing] = []
     private let lock = NSLock()
     private var _usdToCnyRate: Double = 7.30
     private var _preferredCurrency: PreferredCurrency = .usd
@@ -39,6 +41,7 @@ public final class PricingEngine: @unchecked Sendable {
 
     public init() {
         self.rules = Self.defaultRules()
+        self.sortedRules = rules.sorted { $0.modelPattern.count > $1.modelPattern.count }
         let savedRate = UserDefaults.standard.double(forKey: Self.rateUserDefaultsKey)
         if savedRate > 0 {
             self._usdToCnyRate = savedRate
@@ -107,11 +110,7 @@ public final class PricingEngine: @unchecked Sendable {
     ) -> Double {
         lock.lock(); defer { lock.unlock() }
         let lower = model.lowercased()
-        guard let rule = rules
-            .filter({ matches(pattern: $0.modelPattern, string: lower) })
-            .sorted(by: { $0.modelPattern.count > $1.modelPattern.count })
-            .first
-        else {
+        guard let rule = sortedRules.first(where: { matches(pattern: $0.modelPattern, string: lower) }) else {
             return 0.0
         }
 

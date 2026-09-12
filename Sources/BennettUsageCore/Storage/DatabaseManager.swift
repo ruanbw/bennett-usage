@@ -58,6 +58,7 @@ public final class DatabaseManager: @unchecked Sendable {
             cost_usd REAL NOT NULL DEFAULT 0.0
         );
         CREATE INDEX IF NOT EXISTS idx_records_day_source ON unified_token_records(day_key, source_id);
+        CREATE INDEX IF NOT EXISTS idx_records_source ON unified_token_records(source_id COLLATE NOCASE);
         CREATE INDEX IF NOT EXISTS idx_records_timestamp ON unified_token_records(timestamp);
         CREATE INDEX IF NOT EXISTS idx_records_project ON unified_token_records(project_folder);
         CREATE INDEX IF NOT EXISTS idx_records_model ON unified_token_records(model);
@@ -261,6 +262,45 @@ public final class DatabaseManager: @unchecked Sendable {
         return result
     }
 
+    public func fetchDailyRollups(dayKey: String) throws -> [DailyRollup] {
+        lock.lock(); defer { lock.unlock() }
+        let sql = "SELECT day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd FROM daily_rollups WHERE day_key = ? ORDER BY source_id ASC;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 9, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare daily rollups day fetch statement: \(lastErrorMessage())"])
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, (dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        var result: [DailyRollup] = []
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_ROW {
+                let dayKey = String(cString: sqlite3_column_text(stmt, 0))
+                let sourceId = String(cString: sqlite3_column_text(stmt, 1))
+                let totalTokens = Int(sqlite3_column_int64(stmt, 2))
+                let inputTokens = Int(sqlite3_column_int64(stmt, 3))
+                let outputTokens = Int(sqlite3_column_int64(stmt, 4))
+                let cacheTokens = Int(sqlite3_column_int64(stmt, 5))
+                let costUSD = sqlite3_column_double(stmt, 6)
+                result.append(DailyRollup(
+                    dayKey: dayKey,
+                    sourceId: sourceId,
+                    totalTokens: totalTokens,
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens,
+                    cacheTokens: cacheTokens,
+                    costUSD: costUSD
+                ))
+            } else if step == SQLITE_DONE {
+                break
+            } else {
+                throw NSError(domain: "DatabaseManager", code: 10, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch daily rollups for day: \(lastErrorMessage())"])
+            }
+        }
+        return result
+    }
+
     public func fetchDailyRollups(startDate: String, endDate: String) throws -> [DailyRollup] {
         lock.lock(); defer { lock.unlock() }
         let sql = "SELECT day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd FROM daily_rollups WHERE day_key >= ? AND day_key <= ? ORDER BY day_key ASC;"
@@ -398,7 +438,7 @@ public final class DatabaseManager: @unchecked Sendable {
         var whereClauses = ["project_folder IS NOT NULL", "project_folder != ''"]
         var binds: [String] = []
         if let sourceId = sourceId, !sourceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            whereClauses.append("LOWER(source_id) = LOWER(?)")
+            whereClauses.append("source_id = ? COLLATE NOCASE")
             binds.append(sourceId.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         if let start = startDate {
@@ -460,7 +500,7 @@ public final class DatabaseManager: @unchecked Sendable {
         var binds: [Any] = []
 
         if let sourceId = sourceId, !sourceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            whereClauses.append("LOWER(source_id) = LOWER(?)")
+            whereClauses.append("source_id = ? COLLATE NOCASE")
             binds.append(sourceId.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         if let since = sinceTimestamp {
@@ -523,7 +563,7 @@ public final class DatabaseManager: @unchecked Sendable {
 
     public func fetchRecordStats(forSourceId sourceId: String) throws -> (count: Int, lastTimestamp: Date?) {
         lock.lock(); defer { lock.unlock() }
-        let sql = "SELECT COUNT(*), MAX(timestamp) FROM unified_token_records WHERE LOWER(source_id) = LOWER(?);"
+        let sql = "SELECT COUNT(*), MAX(timestamp) FROM unified_token_records WHERE source_id = ? COLLATE NOCASE;"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw NSError(domain: "DatabaseManager", code: 15, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare record stats statement: \(lastErrorMessage())"])
@@ -602,7 +642,7 @@ public final class DatabaseManager: @unchecked Sendable {
                 COALESCE(SUM(cache_write_tokens), 0),
                 COALESCE(SUM(cost_usd), 0.0)
             FROM unified_token_records
-            WHERE LOWER(source_id) = LOWER(?);
+            WHERE source_id = ? COLLATE NOCASE;
             """
         } else {
             sql = """
@@ -706,7 +746,7 @@ public final class DatabaseManager: @unchecked Sendable {
         }
 
         if filterApplied, let source = trimmedSource {
-            whereClauses.append("LOWER(source_id) = LOWER(?)")
+            whereClauses.append("source_id = ? COLLATE NOCASE")
             bindValues.append(source)
         }
 

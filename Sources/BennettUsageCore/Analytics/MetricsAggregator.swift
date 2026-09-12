@@ -250,10 +250,7 @@ public final class MetricsAggregator: Sendable {
         formatter.timeZone = TimeZone.current
         let todayKey = formatter.string(from: Date())
 
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone.current
-        let year = calendar.component(.year, from: Date())
-        let rollups = try database.fetchDailyRollups(forYear: year).filter { $0.dayKey == todayKey }
+        let rollups = try database.fetchDailyRollups(dayKey: todayKey)
 
         let totalTokens = rollups.reduce(0) { $0 + $1.totalTokens }
         let totalCost = rollups.reduce(0.0) { $0 + $1.costUSD }
@@ -475,18 +472,27 @@ public final class MetricsAggregator: Sendable {
             hourFormatter.timeZone = TimeZone.current
 
             let currentHour = calendar.date(bySettingHour: calendar.component(.hour, from: now), minute: 0, second: 0, of: now) ?? now
+
+            // Single pass: bucket each record into its hour slot instead of
+            // filtering the full record list 24 times.
+            var bucketTokens = [Int](repeating: 0, count: 24)
+            var bucketCosts = [Double](repeating: 0.0, count: 24)
+            for r in records {
+                let hoursAgo = calendar.dateComponents([.hour], from: r.timestamp, to: currentHour).hour ?? 24
+                let index = 23 - hoursAgo
+                guard index >= 0, index < 24 else { continue }
+                bucketTokens[index] += r.totalTokens
+                bucketCosts[index] += (r.rawCostUSD ?? 0.0)
+            }
+
             var trendPoints: [TrendPoint] = []
             for i in 0..<24 {
                 let bucketStart = calendar.date(byAdding: .hour, value: -(23 - i), to: currentHour) ?? currentHour
-                let bucketEnd = calendar.date(byAdding: .hour, value: 1, to: bucketStart) ?? bucketStart
-                let label = hourFormatter.string(from: bucketStart)
-
-                let bucketRecords = records.filter {
-                    $0.timestamp >= bucketStart && $0.timestamp < bucketEnd
-                }
-                let bTokens = bucketRecords.reduce(0) { $0 + $1.totalTokens }
-                let bCost = bucketRecords.reduce(0.0) { $0 + ($1.rawCostUSD ?? 0.0) }
-                trendPoints.append(TrendPoint(label: label, tokens: bTokens, costUSD: bCost))
+                trendPoints.append(TrendPoint(
+                    label: hourFormatter.string(from: bucketStart),
+                    tokens: bucketTokens[i],
+                    costUSD: bucketCosts[i]
+                ))
             }
 
             let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, sinceTimestamp: sinceTimestamp)) ?? []
@@ -540,18 +546,24 @@ public final class MetricsAggregator: Sendable {
             let projRankings = projTotals.map { (project: $0.key, totalTokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.totalTokens > $1.totalTokens }
 
+            // Single pass over records; every record in this range falls on
+            // today, so its calendar hour is the bucket index.
+            var bucketTokens = [Int](repeating: 0, count: 24)
+            var bucketCosts = [Double](repeating: 0.0, count: 24)
+            for r in records {
+                let hour = calendar.component(.hour, from: r.timestamp)
+                guard hour >= 0, hour < 24 else { continue }
+                bucketTokens[hour] += r.totalTokens
+                bucketCosts[hour] += (r.rawCostUSD ?? 0.0)
+            }
+
             var trendPoints: [TrendPoint] = []
             for hour in 0..<24 {
-                let bucketStart = calendar.date(byAdding: .hour, value: hour, to: startOfToday) ?? startOfToday
-                let bucketEnd = calendar.date(byAdding: .hour, value: hour + 1, to: startOfToday) ?? startOfToday
-                let label = String(format: "%02d:00", hour)
-
-                let bucketRecords = records.filter {
-                    $0.timestamp >= bucketStart && $0.timestamp < bucketEnd
-                }
-                let bTokens = bucketRecords.reduce(0) { $0 + $1.totalTokens }
-                let bCost = bucketRecords.reduce(0.0) { $0 + ($1.rawCostUSD ?? 0.0) }
-                trendPoints.append(TrendPoint(label: label, tokens: bTokens, costUSD: bCost))
+                trendPoints.append(TrendPoint(
+                    label: String(format: "%02d:00", hour),
+                    tokens: bucketTokens[hour],
+                    costUSD: bucketCosts[hour]
+                ))
             }
 
             let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, sinceTimestamp: sinceTimestamp)) ?? []

@@ -1,22 +1,35 @@
 import SwiftUI
 
+/// Shared summary state for the menu bar popover: the popover's hosting
+/// controller is built once and stays alive; publishing a new summary here
+/// refreshes the view in place instead of rebuilding the whole hierarchy.
+@MainActor
+public final class StatusSummaryModel: ObservableObject {
+    @Published public var summary: TodaySummary?
+    public init(summary: TodaySummary? = nil) {
+        self.summary = summary
+    }
+}
+
 public struct MenuBarPopoverView: View {
-    public let summary: TodaySummary?
+    @ObservedObject public var model: StatusSummaryModel
     public let onOpenDashboard: () -> Void
     public let onSyncNow: () -> Void
     public let onQuit: () -> Void
     public let onOpenSettings: (() -> Void)?
     @ObservedObject public var localization: LocalizationManager
 
+    public var summary: TodaySummary? { model.summary }
+
     public init(
-        summary: TodaySummary?,
+        model: StatusSummaryModel,
         localization: LocalizationManager = .shared,
         onOpenDashboard: @escaping () -> Void,
         onSyncNow: @escaping () -> Void,
         onQuit: @escaping () -> Void,
         onOpenSettings: (() -> Void)? = nil
     ) {
-        self.summary = summary
+        self.model = model
         self.localization = localization
         self.onOpenDashboard = onOpenDashboard
         self.onSyncNow = onSyncNow
@@ -107,12 +120,12 @@ public struct MenuBarPopoverView: View {
 
 #Preview {
     MenuBarPopoverView(
-        summary: TodaySummary(
+        model: StatusSummaryModel(summary: TodaySummary(
             totalTokens: 1_254_300,
             totalCostUSD: 3.42,
             toolTokens: ["claude": 800_000, "gemini": 454_300],
             toolCosts: ["claude": 2.10, "gemini": 1.32]
-        ),
+        )),
         onOpenDashboard: {},
         onSyncNow: {},
         onQuit: {}

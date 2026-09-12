@@ -44,13 +44,17 @@ public struct AntigravityAdapter: AgentSourceAdapter, @unchecked Sendable {
         from rootDirectory: URL,
         since cursor: SyncCursor?
     ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
-        var records: [UnifiedTokenRecord] = []
+        var previousOffsets: [String: Int64] = [:]
+        if case .fileOffsets(let dict) = cursor {
+            previousOffsets = dict
+        }
         var offsets: [String: Int64] = [:]
+        var records: [UnifiedTokenRecord] = []
 
         let fileManager = FileManager.default
         let contents = (try? fileManager.contentsOfDirectory(
             at: rootDirectory,
-            includingPropertiesForKeys: [.isRegularFileKey]
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
         )) ?? []
 
         for dbUrl in contents where dbUrl.pathExtension == "db" {
@@ -58,14 +62,26 @@ public struct AntigravityAdapter: AgentSourceAdapter, @unchecked Sendable {
             let size = (try? dbUrl.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
             offsets[dbUrl.path] = Int64(size)
 
+            // Skip conversation DBs whose main file is unchanged since the
+            // last sync. A non-empty -wal means recent steps may not be
+            // checkpointed into the main file yet — re-parse to be safe.
+            let lastOffset = previousOffsets[dbUrl.path] ?? 0
+            let walSize = ((try? fileManager.attributesOfItem(atPath: dbUrl.path + "-wal"))?[.size] as? Int64) ?? 0
+            if Int64(size) == lastOffset, walSize == 0 { continue }
+
             // READONLY can fail against a WAL database with a stale -shm and no
             // live writer (SQLite cannot recover the WAL without write access).
             // Retry with READWRITE — only SELECTs run; the sole "write" is the
             // WAL recovery any SQLite client performs on such databases.
             let parsed = parseConversationDB(at: dbUrl, openReadOnly: true)
                 ?? parseConversationDB(at: dbUrl, openReadOnly: false)
-            guard let parsed else { continue }
-            records.append(contentsOf: parsed)
+            // Record the offset only after a successful parse: a failed parse
+            // keeps the old offset so the next sync retries this file.
+            if let parsed {
+                records.append(contentsOf: parsed)
+            } else {
+                offsets[dbUrl.path] = lastOffset
+            }
         }
 
         return (records, .fileOffsets(offsets))

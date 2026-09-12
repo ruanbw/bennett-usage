@@ -34,13 +34,23 @@ final class HeatmapGridViewTests: XCTestCase {
     @MainActor
     func testHeatmapGridWeekLeadingPlaceholderAlignment() {
         // Days starting mid-week must be padded with nil placeholders so the
-        // same weekday always lands in the same row across the grid.
+        // same weekday always lands in the same row across the grid. Pinned to
+        // fixed dates: weekStart is the firstWeekday on/before 2026-01-01, and
+        // cells begin 3 days into that week — leading = 3 for any firstWeekday.
         let calendar = Calendar.current
-        let start = calendar.startOfDay(for: Date())
-        let cells = (0..<3).map { i in
-            HeatmapDayCell(
-                date: calendar.date(byAdding: .day, value: i, to: start)!,
-                dayKey: String(format: "2026-01-%02d", i + 1),
+        let jan1 = calendar.date(from: DateComponents(year: 2026, month: 1, day: 1))!
+        let back = ((calendar.component(.weekday, from: jan1) - calendar.firstWeekday) % 7 + 7) % 7
+        let weekStart = calendar.date(byAdding: .day, value: -back, to: jan1)!
+        let start = calendar.date(byAdding: .day, value: 3, to: weekStart)!
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+
+        let cells = (0..<3).map { i -> HeatmapDayCell in
+            let date = calendar.date(byAdding: .day, value: i, to: start)!
+            return HeatmapDayCell(
+                date: date,
+                dayKey: formatter.string(from: date),
                 totalTokens: i * 100,
                 costUSD: Double(i) * 0.01,
                 intensityLevel: i % 5,
@@ -52,10 +62,9 @@ final class HeatmapGridViewTests: XCTestCase {
         XCTAssertEqual(view.weeks.count, 1)
         let firstWeek = view.weeks[0]
         XCTAssertEqual(firstWeek.count, 7)
-        let expectedLeading = ((calendar.component(.weekday, from: start) - calendar.firstWeekday) % 7 + 7) % 7
-        XCTAssertTrue(firstWeek[..<expectedLeading].allSatisfy { $0 == nil })
-        XCTAssertEqual(firstWeek[expectedLeading]?.dayKey, "2026-01-01")
-        XCTAssertEqual(firstWeek[expectedLeading + 2]?.dayKey, "2026-01-03")
+        XCTAssertEqual(firstWeek[..<3].allSatisfy { $0 == nil }, true)
+        XCTAssertEqual(firstWeek[3]?.dayKey, formatter.string(from: start))
+        XCTAssertEqual(firstWeek[5]?.dayKey, formatter.string(from: calendar.date(byAdding: .day, value: 2, to: start)!))
     }
 
     @MainActor

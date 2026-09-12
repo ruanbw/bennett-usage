@@ -103,10 +103,11 @@ final class GeminiAdapterTests: XCTestCase {
         XCTAssertEqual(second.records.first(where: { $0.id == "gemini_sess-1_m9" })?.outputTokens, 20)
     }
 
-    func testFallbackIdsAreStableAcrossRunsForMessagesWithoutId() async throws {
-        // Two files, each with an id-less gemini message. Fallback ids must be
-        // derived per file so re-runs (and varying enumeration order) do not
-        // mint new ids and duplicate the rows.
+    func testUnchangedFilesSkippedAndFallbackIdsStableAfterAppend() async throws {
+        // Two files, each with an id-less gemini message. Unchanged files are
+        // skipped entirely on the next sync; appending re-parses the file and
+        // must keep minting stable offset-based fallback ids so earlier rows
+        // deduplicate instead of duplicating.
         _ = try writeSessionFile(name: "session-a.jsonl", lines: [
             #"{"sessionId":"sess-a","messages":[]}"#,
             #"{"timestamp":"2026-09-10T18:13:22.500Z","type":"gemini","tokens":{"input":10,"output":5}}"#,
@@ -122,10 +123,21 @@ final class GeminiAdapterTests: XCTestCase {
         XCTAssertEqual(first.records.count, 2)
 
         let second = try await adapter.fetchIncrementalRecords(from: geminiRoot, since: first.newCursor)
-        XCTAssertEqual(second.records.count, 2)
+        XCTAssertEqual(second.records.count, 0, "unchanged session files should be skipped")
+
+        // Append an id-less message to session-a: the file is re-parsed from
+        // the start (header metadata), so both fallback ids are re-emitted
+        // and must be stable across runs.
+        _ = try writeSessionFile(name: "session-a.jsonl", lines: [
+            #"{"sessionId":"sess-a","messages":[]}"#,
+            #"{"timestamp":"2026-09-10T18:13:22.500Z","type":"gemini","tokens":{"input":10,"output":5}}"#,
+            #"{"timestamp":"2026-09-10T18:15:22.500Z","type":"gemini","tokens":{"input":30,"output":7}}"#,
+        ])
+
+        let third = try await adapter.fetchIncrementalRecords(from: geminiRoot, since: second.newCursor)
         XCTAssertEqual(
-            Set(second.records.map(\.id)),
-            Set(first.records.map(\.id))
+            Set(third.records.map(\.id)),
+            ["gemini_sess-a_offset_1", "gemini_sess-a_offset_2"]
         )
     }
 

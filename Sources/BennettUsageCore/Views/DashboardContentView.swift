@@ -139,11 +139,6 @@ public struct DashboardContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .bennettUsageDataDidUpdate)) { _ in
             Task { await loadDataThrottled() }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            Task {
-                await loadData()
-            }
-        }
     }
 
     // MARK: - Header (Time Tabs on Left, Year Dropdown on Right)
