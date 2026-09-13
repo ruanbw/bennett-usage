@@ -73,6 +73,12 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
         var records: [UnifiedTokenRecord] = []
         var seenPaths = Set<String>()
 
+        let home = Self.homeDir(under: directory)
+        let resolvedDefault = Self.resolveDefaultModel(home: home)
+        let defaultModel = resolvedDefault?.model ?? "unknown"
+        let defaultProvider = resolvedDefault?.provider ?? "unknown"
+        let canDecompressZstd = Self.zstdExecutable() != nil
+
         let sessionsDir = Self.sessionsDir(under: directory)
         let fileManager = FileManager.default
         var transcriptSessionIds = Set<String>()
@@ -91,25 +97,27 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
             seenPaths.insert(path)
 
             let sid = fileUrl.deletingLastPathComponent().lastPathComponent
-            transcriptSessionIds.insert(sid)
+            let isZstd = name.hasSuffix(".jsonl.zstd")
+            if !isZstd || canDecompressZstd {
+                transcriptSessionIds.insert(sid)
+            }
 
             let fileSize = Int64(resourceValues?.fileSize ?? 0)
             if fileSize > 0, fileSize == (previousOffsets[path] ?? -1) { continue }
             if fileSize == 0 {
                 offsets[path] = 0
-                transcriptSessionIds.remove(sid)
                 continue
             }
             guard let jsonl = Self.decompressedContents(of: fileUrl) else {
-                // zstd CLI missing or corrupt frame: the projcache fallback
-                // below covers this session (it stays out of transcriptSessionIds).
-                transcriptSessionIds.remove(sid)
+                // Incomplete or in-flight frame: leave offset untouched to retry next sync;
+                // keep sid in transcriptSessionIds to avoid projcache duplicate deltas.
                 continue
             }
             let folderName = fileUrl.deletingLastPathComponent()
                 .deletingLastPathComponent().lastPathComponent
             let parsed = Self.parseTranscript(
-                jsonl, mungedFolder: folderName, sourceId: sourceId)
+                jsonl, mungedFolder: folderName, sourceId: sourceId,
+                defaultModel: defaultModel, defaultProvider: defaultProvider)
             records.append(contentsOf: parsed)
             offsets[path] = fileSize
             }
@@ -122,7 +130,8 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
         do {
             let fallback = try fetchProjcacheDeltas(
                 under: directory, previousOffsets: &offsets, seenPaths: &seenPaths,
-                excludingSessions: transcriptSessionIds)
+                excludingSessions: transcriptSessionIds,
+                defaultModel: defaultModel, defaultProvider: defaultProvider)
             records.append(contentsOf: fallback)
         } catch {
             // A malformed cache file must not fail the whole adapter pass.
@@ -231,7 +240,9 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
     static func parseTranscript(
         _ jsonl: Data,
         mungedFolder: String,
-        sourceId: String
+        sourceId: String,
+        defaultModel: String = "unknown",
+        defaultProvider: String = "unknown"
     ) -> [UnifiedTokenRecord] {
         var records: [UnifiedTokenRecord] = []
         var sessionId: String?
@@ -271,8 +282,8 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
 
             let message = data["message"] as? [String: Any]
             let source = message?["source"] as? [String: Any]
-            let model = (source?["model"] as? String) ?? "dsh"
-            let provider = (source?["provider"] as? String) ?? "dsh"
+            let model = (source?["model"] as? String) ?? defaultModel
+            let provider = (source?["provider"] as? String) ?? defaultProvider
 
             var timestamp = headerCreatedAt ?? Date()
             if let ms = (json["time"] as? NSNumber)?.doubleValue {
@@ -302,7 +313,9 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
         under directory: URL,
         previousOffsets: inout [String: Int64],
         seenPaths: inout Set<String>,
-        excludingSessions: Set<String> = []
+        excludingSessions: Set<String> = [],
+        defaultModel: String = "unknown",
+        defaultProvider: String = "unknown"
     ) throws -> [UnifiedTokenRecord] {
         var records: [UnifiedTokenRecord] = []
         let cacheDir = Self.homeDir(under: directory)
@@ -353,6 +366,19 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
                     createdAt = Date(timeIntervalSince1970: ms / 1000.0)
                 }
             }
+            var model = defaultModel
+            var provider = defaultProvider
+            if let modelSelection = rows["modelSelection"] as? [String: Any],
+               let mval = modelSelection["val"] as? [String: Any],
+               let lastUsed = mval["lastUsed"] as? [String: Any] {
+                if let m = lastUsed["model"] as? String, !m.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    model = m
+                }
+                if let p = lastUsed["provider"] as? String, !p.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    provider = p
+                }
+            }
+
             // Attribute fresh usage to when the cache file says it happened.
             let mtime = (try? fileUrl.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
             records.append(UnifiedTokenRecord(
@@ -361,8 +387,8 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
                 timestamp: max(createdAt, mtime),
                 sessionKey: sid,
                 projectFolder: project,
-                model: "dsh",
-                provider: "dsh",
+                model: model,
+                provider: provider,
                 inputTokens: max(0, deltaIn),
                 outputTokens: max(0, deltaOut),
                 cacheReadTokens: max(0, deltaRead),
@@ -373,6 +399,36 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
     }
 
     // MARK: - Helpers
+
+    /// Resolves `agent-default-model` from `<home>/settings.yaml` when available.
+    static func resolveDefaultModel(home: URL) -> (model: String, provider: String)? {
+        let settingsUrl = home.appendingPathComponent("settings.yaml")
+        guard let content = try? String(contentsOf: settingsUrl, encoding: .utf8) else { return nil }
+        var inAgentDefaultModel = false
+        var model: String?
+        var provider: String?
+        for line in content.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("agent-default-model:") {
+                inAgentDefaultModel = true
+                continue
+            }
+            if inAgentDefaultModel {
+                if !line.hasPrefix(" ") && !line.hasPrefix("\t") && trimmed.contains(":") {
+                    break
+                }
+                if trimmed.hasPrefix("model:") {
+                    model = trimmed.dropFirst("model:".count).trimmingCharacters(in: .whitespaces)
+                } else if trimmed.hasPrefix("provider:") {
+                    provider = trimmed.dropFirst("provider:".count).trimmingCharacters(in: .whitespaces)
+                }
+            }
+        }
+        if let model = model, !model.isEmpty {
+            return (model: model, provider: provider ?? "unknown")
+        }
+        return nil
+    }
 
     static func intValue(_ value: Any?) -> Int {
         if let i = value as? Int { return i }

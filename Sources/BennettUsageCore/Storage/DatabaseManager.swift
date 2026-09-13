@@ -211,6 +211,18 @@ public final class DatabaseManager: @unchecked Sendable {
         );
         """
         try execute(sql: sql)
+
+        // Self-heal: clean up legacy records where DSH source used "dsh" as model name or emitted duplicate projcache deltas
+        var dshCorruptCheck: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT 1 FROM unified_token_records WHERE source_id = 'dsh' AND (model = 'dsh' OR id LIKE 'dsh_%_cum_%') LIMIT 1;", -1, &dshCorruptCheck, nil) == SQLITE_OK {
+            if sqlite3_step(dshCorruptCheck) == SQLITE_ROW {
+                sqlite3_finalize(dshCorruptCheck)
+                dshCorruptCheck = nil
+                try? resetRecords(for: "dsh")
+            } else {
+                sqlite3_finalize(dshCorruptCheck)
+            }
+        }
     }
 
     private func execute(sql: String) throws {

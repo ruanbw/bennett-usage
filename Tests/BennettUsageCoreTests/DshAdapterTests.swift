@@ -73,6 +73,8 @@ final class DshAdapterTests: XCTestCase {
         XCTAssertEqual(first.records[0].cacheReadTokens, 5000)
         XCTAssertEqual(first.records[0].sessionKey, "session-xyz")
         XCTAssertEqual(first.records[0].projectFolder, "/Users/test/proj")
+        XCTAssertNotEqual(first.records[0].model, "dsh", "model must never be 'dsh'")
+        XCTAssertEqual(first.records[0].model, "unknown")
 
         // No growth -> no records.
         let second = try await adapter.fetchIncrementalRecords(from: tempDir, since: first.newCursor)
@@ -85,6 +87,91 @@ final class DshAdapterTests: XCTestCase {
         XCTAssertEqual(third.records[0].inputTokens, 500)
         XCTAssertEqual(third.records[0].outputTokens, 50)
         XCTAssertEqual(third.records[0].cacheReadTokens, 3000)
+        XCTAssertNotEqual(third.records[0].model, "dsh")
+    }
+
+    func testProjcacheExtractsModelFromModelSelection() async throws {
+        let cacheDir = tempDir.appendingPathComponent("storages/session_projcache/sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        let cacheFile = cacheDir.appendingPathComponent("session-ms.json")
+        let json = """
+        {
+          "version": 7,
+          "record": {
+            "identity": { "createdAt": 1789320969837, "cwd": "/Users/test/proj" },
+            "rows": {
+              "modelSelection": {
+                "val": {
+                  "lastUsed": {
+                    "provider": "cliprox",
+                    "model": "gemini-3.8-flash-high",
+                    "reasoningEffort": "high"
+                  }
+                }
+              },
+              "tokenUsage": {
+                "val": {
+                  "totals": {
+                    "uncachedInputTokens": 1000,
+                    "outputTokens": 200,
+                    "cacheReadTokens": 5000,
+                    "cacheWriteTokens": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        try json.write(to: cacheFile, atomically: true, encoding: .utf8)
+
+        let adapter = DshAdapter()
+        let result = try await adapter.fetchIncrementalRecords(from: tempDir, since: nil)
+        XCTAssertEqual(result.records.count, 1)
+        XCTAssertEqual(result.records[0].model, "gemini-3.8-flash-high")
+        XCTAssertEqual(result.records[0].provider, "cliprox")
+    }
+
+    func testProjcacheExtractsModelFromSettingsYamlFallback() async throws {
+        // Write settings.yaml in tempDir
+        let settingsYaml = """
+        agent-default-model:
+          provider: cliprox
+          model: gemini-3.8-flash-high
+          reasoningEffort: high
+        """
+        try settingsYaml.write(to: tempDir.appendingPathComponent("settings.yaml"), atomically: true, encoding: .utf8)
+
+        let cacheDir = tempDir.appendingPathComponent("storages/session_projcache/sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        let cacheFile = cacheDir.appendingPathComponent("session-settings.json")
+        let json = """
+        {
+          "version": 7,
+          "record": {
+            "identity": { "createdAt": 1789320969837, "cwd": "/Users/test/proj" },
+            "rows": {
+              "tokenUsage": {
+                "val": {
+                  "totals": {
+                    "uncachedInputTokens": 1000,
+                    "outputTokens": 200,
+                    "cacheReadTokens": 5000,
+                    "cacheWriteTokens": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        try json.write(to: cacheFile, atomically: true, encoding: .utf8)
+
+        let adapter = DshAdapter()
+        let result = try await adapter.fetchIncrementalRecords(from: tempDir, since: nil)
+        XCTAssertEqual(result.records.count, 1)
+        XCTAssertEqual(result.records[0].model, "gemini-3.8-flash-high")
+        XCTAssertEqual(result.records[0].provider, "cliprox")
     }
 
     func testDecodeMungedFolder() {

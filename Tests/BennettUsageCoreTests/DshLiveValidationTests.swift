@@ -17,5 +17,8 @@ final class DshLiveValidationTests: XCTestCase {
         // carries a real model name rather than the projcache "dsh" fallback.
         XCTAssertTrue(result.records.contains { $0.model != "dsh" },
                       "expected per-step transcript records with real model names")
+        // Ensure no record ever carries "dsh" as model name
+        XCTAssertFalse(result.records.contains { $0.model == "dsh" },
+                       "no record should ever have 'dsh' as its model name")
     }
 }

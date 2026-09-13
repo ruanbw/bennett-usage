@@ -155,7 +155,9 @@ public final class PricingEngine: @unchecked Sendable {
             ModelPricing(modelPattern: "kimi-k2*", inputPerMillion: 0.60, outputPerMillion: 2.50, cacheReadPerMillion: 0.06, cacheWritePerMillion: 0.60),
             ModelPricing(modelPattern: "kimi*", inputPerMillion: 0.60, outputPerMillion: 2.50, cacheReadPerMillion: 0.06, cacheWritePerMillion: 0.60),
             // Zhipu GLM Models
-            ModelPricing(modelPattern: "glm-*", inputPerMillion: 0.50, outputPerMillion: 1.50, cacheReadPerMillion: 0.05, cacheWritePerMillion: 0.50)
+            ModelPricing(modelPattern: "glm-*", inputPerMillion: 0.50, outputPerMillion: 1.50, cacheReadPerMillion: 0.05, cacheWritePerMillion: 0.50),
+            // Muse Models (OpenCode)
+            ModelPricing(modelPattern: "muse*", inputPerMillion: 0.20, outputPerMillion: 0.80, cacheReadPerMillion: 0.02, cacheWritePerMillion: 0.20)
         ]
     }
 

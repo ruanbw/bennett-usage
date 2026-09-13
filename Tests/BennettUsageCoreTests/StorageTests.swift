@@ -265,4 +265,32 @@ final class StorageTests: XCTestCase {
         let years = try db.fetchAvailableYears()
         XCTAssertEqual(years, [2026, 2025])
     }
+
+    func testDatabaseManagerSelfHealsDshCorruptRecords() throws {
+        let tempPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("db").path
+        defer { try? FileManager.default.removeItem(atPath: tempPath) }
+
+        let db1 = try DatabaseManager(path: tempPath)
+        let corruptRecord = UnifiedTokenRecord(
+            id: "dsh_corrupt_1",
+            sourceId: "dsh",
+            timestamp: Date(),
+            dayKey: "2026-09-14",
+            sessionKey: "s1",
+            projectFolder: "/proj",
+            model: "dsh",
+            provider: "dsh",
+            inputTokens: 100,
+            outputTokens: 50
+        )
+        try db1.insertRecords([corruptRecord])
+        let statsBefore = try db1.fetchRecordStats(forSourceId: "dsh")
+        XCTAssertEqual(statsBefore.count, 1)
+
+        // Reopen database: createTables triggers self-heal reset for "dsh"
+        let db2 = try DatabaseManager(path: tempPath)
+        let statsAfter = try db2.fetchRecordStats(forSourceId: "dsh")
+        XCTAssertEqual(statsAfter.count, 0, "Corrupt 'dsh' records should be reset on init")
+    }
 }
