@@ -93,18 +93,18 @@ public final class PricingEngine: @unchecked Sendable {
         UserDefaults.standard.set(currency.rawValue, forKey: Self.currencyUserDefaultsKey)
     }
 
+    /// Single-currency display honoring the preferred currency. Previously
+    /// this returned a dual "$x (¥y)" string regardless of the setting, so a
+    /// USD preference still showed RMB everywhere.
     public func spendString(_ costUSD: Double) -> String {
         // Single lock acquisition for both values; all formatting happens
-        // outside the lock. Output is character-for-character identical to
-        // the previous two-lock / four-format implementation.
+        // outside the lock.
         let (rate, currency) = spendSnapshot()
-        let usdString = String(format: "%.2f", costUSD)
-        let cnyString = String(format: "%.2f", costUSD * rate)
         switch currency {
         case .usd:
-            return "$" + usdString + " (¥" + cnyString + ")"
+            return "$" + String(format: "%.2f", costUSD)
         case .cny:
-            return "¥" + cnyString + " ($" + usdString + ")"
+            return "¥" + String(format: "%.2f", costUSD * rate)
         }
     }
 

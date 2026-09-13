@@ -167,6 +167,12 @@ public struct PiAdapter: AgentSourceAdapter, @unchecked Sendable {
     private func decodeProjectFolder(_ folderName: String) -> String? {
         guard folderName.hasPrefix("--") && folderName.hasSuffix("--") else { return nil }
         let trimmed = folderName.dropFirst(2).dropLast(2)
-        return "/" + trimmed.replacingOccurrences(of: "-", with: "/")
+        // The encoding turns every "/" into "-", so original "-" inside a
+        // component (e.g. "trove-rag", UUIDs) is ambiguous and a naive decode
+        // splits it. The per-line `cwd` already takes precedence; this
+        // fallback only runs when `cwd` is absent, so resolve greedily
+        // against the filesystem (longest existing hyphen-group wins) and
+        // keep the naive decode when nothing matches.
+        return DatabaseManager.canonicalProjectFolder("/" + trimmed.replacingOccurrences(of: "-", with: "/"))
     }
 }

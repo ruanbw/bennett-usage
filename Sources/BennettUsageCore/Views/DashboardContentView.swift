@@ -33,7 +33,7 @@ public struct DashboardContentView: View {
     @State private var isProjectsExpanded: Bool = false
     @State private var allTimeTotals: AllTimeTotals? = nil
     @State private var refreshTick = 0
-    @State private var lastDataUpdateLoad: Date = .distantPast
+    @State private var updateThrottle = TrailingThrottle(interval: 1.0)
     @State private var selectedHeatmapYear: Int = Calendar.current.component(.year, from: Date())
     @State private var annualSummary: (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String, activeDays: Int, totalDays: Int)? = nil
     @State private var annualTrendPoints: [TrendPoint] = []
@@ -577,7 +577,7 @@ public struct DashboardContentView: View {
             annualStatItem(
                 title: localization.localized(.annualSpend),
                 value: PricingEngine.shared.spendString(summary.annualCostUSD),
-                subvalue: summary.annualCostUSD > 0 ? "USD" : "-",
+                subvalue: summary.annualCostUSD > 0 ? (PricingEngine.shared.preferredCurrency == .cny ? "CNY" : "USD") : "-",
                 icon: "dollarsign.circle.fill",
                 color: .green
             )
@@ -858,11 +858,19 @@ public struct DashboardContentView: View {
 
     /// Data-update notifications can arrive in bursts while agents are active;
     /// each full `loadData` re-aggregates every record in range, so collapse
-    /// bursts into at most one reload per second.
+    /// bursts into at most one reload per second with a trailing edge: a
+    /// notification arriving inside the window schedules exactly one follow-up
+    /// instead of being dropped (dropping starved the UI under continuous
+    /// activity and made project/token counts look stale or jumpy).
     private func loadDataThrottled() async {
-        let now = Date()
-        guard now.timeIntervalSince(lastDataUpdateLoad) >= 1.0 else { return }
-        lastDataUpdateLoad = now
+        if updateThrottle.shouldRunImmediately() {
+            await loadData()
+            return
+        }
+        guard updateThrottle.shouldScheduleTrailer() else { return }
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        guard !Task.isCancelled else { return }
+        updateThrottle.trailerFired()
         await loadData()
     }
 

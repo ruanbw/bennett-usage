@@ -103,6 +103,7 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     // MenuBar Popover
     case estimatedCost
     case toolBreakdownToday
+    case noToolsActiveToday
     case syncNow
     case quit
     case openDashboardShortcut
@@ -357,6 +358,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     // MenuBar Popover
     .estimatedCost: "Estimated Cost",
     .toolBreakdownToday: "Tool Breakdown (Today)",
+    .noToolsActiveToday: "No tools active today",
     .syncNow: "Sync Now",
     .quit: "Quit",
     .openDashboardShortcut: "Open Dashboard (⌘D)",
@@ -489,6 +491,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     // MenuBar Popover
     .estimatedCost: "预估费用",
     .toolBreakdownToday: "工具分布 (今日)",
+    .noToolsActiveToday: "今日暂无工具活动",
     .syncNow: "立即同步",
     .quit: "退出",
     .openDashboardShortcut: "打开数据看板 (⌘D)",

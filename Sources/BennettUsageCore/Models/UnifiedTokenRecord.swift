@@ -6,7 +6,7 @@ public struct UnifiedTokenRecord: Identifiable, Sendable, Codable, Equatable {
     public let timestamp: Date
     public let dayKey: String
     public let sessionKey: String
-    public let projectFolder: String?
+    public var projectFolder: String?
     public let model: String
     public let provider: String?
     public let inputTokens: Int

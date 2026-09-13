@@ -169,6 +169,7 @@ public struct OmpAdapter: AgentSourceAdapter, @unchecked Sendable {
             guard let data = try? handle.readToEnd(), !data.isEmpty else { continue }
 
             let folderName = fileUrl.deletingLastPathComponent().lastPathComponent
+            let baseCount = records.count
             var currentOffset = lastOffset
             var searchRange = data.startIndex..<data.endIndex
 
@@ -280,6 +281,16 @@ public struct OmpAdapter: AgentSourceAdapter, @unchecked Sendable {
                     rawCostUSD: rawCost
                 )
                 records.append(record)
+            }
+
+            // Usage lines that precede the session header in the same file
+            // fall back to the directory name; once the header's cwd is known
+            // those early rows are rewritten so one session does not fork into
+            // a phantom project (e.g. "-tmp" alongside "/Users/x/tmp").
+            if let cwd = sessionCwd {
+                for i in baseCount..<records.count where records[i].projectFolder == folderName {
+                    records[i].projectFolder = cwd
+                }
             }
 
             offsets[filePath] = currentOffset

@@ -94,13 +94,13 @@ final class PricingEngineTests: XCTestCase {
         XCTAssertEqual(freshEngine.preferredCurrency, .cny)
         XCTAssertEqual(UserDefaults.standard.string(forKey: "bennett_preferred_currency"), "cny")
 
-        // Test spendString
-        // With .cny: "¥\(costUSD * rate) ($\(costUSD))"
-        XCTAssertEqual(freshEngine.spendString(10.0), "¥72.50 ($10.00)")
+        // Test spendString: single-currency honoring the preference.
+        // With .cny: "¥\(costUSD * rate)"
+        XCTAssertEqual(freshEngine.spendString(10.0), "¥72.50")
 
-        // With .usd: "$\(costUSD) (¥\(costUSD * rate))"
+        // With .usd: "$\(costUSD)"
         freshEngine.setPreferredCurrency(.usd)
-        XCTAssertEqual(freshEngine.spendString(10.0), "$10.00 (¥72.50)")
+        XCTAssertEqual(freshEngine.spendString(10.0), "$10.00")
     }
 
     func testDefaultRulesCoverage() {

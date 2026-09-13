@@ -15,6 +15,7 @@ public final class StatusItemController: NSObject {
     private let openDashboardAction: () -> Void
     private let openSettingsAction: () -> Void
     private let localization: LocalizationManager
+    private var refreshTask: Task<Void, Never>?
 
     public init(
         aggregator: MetricsAggregator,
@@ -108,26 +109,36 @@ public final class StatusItemController: NSObject {
             sizePopoverToContent()
             // Show immediately with the cached summary; refresh runs async.
             // Opening the popover is frequent and must not run a full-tree sync
-            // every click (U-01), so this path uses the throttled UI sync. Any
-            // actually-inserted rows arrive via the notification it posts.
+            // every click (U-01), so this path uses the throttled UI sync. The
+            // refresh below runs unconditionally after it, so a throttled pass
+            // still re-reads (a concurrent FSEvents sync may have inserted).
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             refreshData()
             Task {
                 _ = try? await syncCoordinator.syncForUI()
+                // `syncForUI` is throttled and only posts a notification when
+                // it actually inserts rows; always re-read afterwards so a
+                // throttled pass (or a concurrent FSEvents sync) still leaves
+                // the popover showing fresh data instead of the stale cache.
+                refreshData()
             }
         }
     }
 
     public func refreshData() {
-        Task {
-            if let summary = try? await aggregator.fetchTodaySummary() {
-                summaryModel.summary = summary
-                if let button = self.statusItem.button {
-                    button.title = TokenFormatter.formatStatusTitle(summary.totalTokens)
-                    button.toolTip = summary.totalTokens > 0
-                        ? "\(TokenFormatter.formatFull(summary.totalTokens)) tokens"
-                        : self.localization.localized(.statusItemAccessibility)
-                }
+        // Latest-wins: overlapping notifications used to race and a slow
+        // earlier fetch could overwrite a fresher summary. Cancel the
+        // in-flight read so only the newest request publishes.
+        refreshTask?.cancel()
+        refreshTask = Task {
+            guard let summary = try? await aggregator.fetchTodaySummary() else { return }
+            guard !Task.isCancelled else { return }
+            summaryModel.summary = summary
+            if let button = self.statusItem.button {
+                button.title = TokenFormatter.formatStatusTitle(summary.totalTokens)
+                button.toolTip = summary.totalTokens > 0
+                    ? "\(TokenFormatter.formatFull(summary.totalTokens)) tokens"
+                    : self.localization.localized(.statusItemAccessibility)
             }
         }
     }

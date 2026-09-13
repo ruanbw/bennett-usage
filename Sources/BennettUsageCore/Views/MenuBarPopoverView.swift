@@ -69,7 +69,7 @@ public struct MenuBarPopoverView: View {
                 Spacer()
                 VStack(alignment: .trailing) {
                     Text(localization.localized(.estimatedCost)).font(.caption).foregroundColor(.secondary)
-                    Text("$\(String(format: "%.2f", summary?.totalCostUSD ?? 0.0))")
+                    Text(PricingEngine.shared.spendString(summary?.totalCostUSD ?? 0.0))
                         .font(.title2).bold().foregroundColor(.green)
                 }
             }
@@ -80,12 +80,17 @@ public struct MenuBarPopoverView: View {
                 .font(.caption).bold().foregroundColor(.secondary)
 
             VStack(spacing: 6) {
-                let toolColors = ChartPalette.shared.colors(for: ["omp", "pi", "claude", "codex", "gemini"])
-                toolRow(name: "Oh My Pi", tokens: summary?.toolTokens["omp"] ?? 0, color: toolColors["omp"] ?? .gray)
-                toolRow(name: "Pi Agent", tokens: summary?.toolTokens["pi"] ?? 0, color: toolColors["pi"] ?? .gray)
-                toolRow(name: "Claude Code", tokens: summary?.toolTokens["claude"] ?? 0, color: toolColors["claude"] ?? .gray)
-                toolRow(name: "OpenAI Codex", tokens: summary?.toolTokens["codex"] ?? 0, color: toolColors["codex"] ?? .gray)
-                toolRow(name: "Gemini CLI", tokens: summary?.toolTokens["gemini"] ?? 0, color: toolColors["gemini"] ?? .gray)
+                let active = Self.activeTools(for: summary)
+                if active.isEmpty {
+                    Text(localization.localized(.noToolsActiveToday))
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                } else {
+                    let toolColors = ChartPalette.shared.colors(for: active.map(\.id))
+                    ForEach(active, id: \.id) { tool in
+                        toolRow(name: AgentFilterBarView.displayName(for: tool.id), tokens: tool.tokens, color: toolColors[tool.id] ?? .gray)
+                    }
+                }
             }
 
             Divider()
@@ -103,6 +108,19 @@ public struct MenuBarPopoverView: View {
         }
         .padding(14)
         .frame(width: 320)
+    }
+    /// Tools with activity today, sorted by tokens descending. Zero-token and
+    /// unknown tools are omitted so the popover never shows unused rows.
+    public struct ActiveTool: Sendable, Equatable {
+        public let id: String
+        public let tokens: Int
+    }
+    public static func activeTools(for summary: TodaySummary?) -> [ActiveTool] {
+        guard let summary else { return [] }
+        return summary.toolTokens
+            .filter { $0.value > 0 }
+            .map { ActiveTool(id: $0.key, tokens: $0.value) }
+            .sorted { $0.tokens > $1.tokens || ($0.tokens == $1.tokens && $0.id < $1.id) }
     }
 
     private func toolRow(name: String, tokens: Int, color: Color) -> some View {

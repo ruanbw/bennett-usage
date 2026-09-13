@@ -614,6 +614,51 @@ public final class DatabaseManager: @unchecked Sendable {
         }
         return years
     }
+    /// Canonical display key for a stored project folder. Historical rows
+    /// contain forked shapes of the same directory: trailing slashes
+    /// ("/a/b/") and Pi hyphen-decoding splits ("/a/trove/rag" for
+    /// "/a/trove-rag" — the session-folder encoding turns every "/" into "-",
+    /// so original hyphens are ambiguous). The trailing slash is trimmed,
+    /// then components are re-joined greedily: at each step the longest
+    /// hyphen-joined group that exists on disk wins. When nothing further
+    /// matches, the stored path is kept as-is, so one directory counts once
+    /// however it was recorded and unknown paths are never mangled.
+    public static func canonicalProjectFolder(_ path: String) -> String {
+        var trimmed = path
+        while trimmed.hasSuffix("/") && trimmed.count > 1 {
+            trimmed.removeLast()
+        }
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: trimmed) else { return trimmed }
+        // Only hyphen-split candidates are worth re-joining: otherwise the
+        // stored path is authoritative (e.g. a deleted directory).
+        let tokens = trimmed.split(separator: "/", omittingEmptySubsequences: true)
+        guard !tokens.isEmpty else { return trimmed }
+        var resolved = ""
+        var index = 0
+
+        while index < tokens.count {
+            var match: String?
+            var next = tokens.count
+            while next > index {
+                let group = tokens[index..<next].joined(separator: "-")
+                let candidate = resolved + "/" + group
+                if fm.fileExists(atPath: candidate) {
+                    match = candidate
+                    break
+                }
+                next -= 1
+            }
+            guard let found = match else { return trimmed }
+            resolved = found
+            // Advance past the tokens consumed by the match. The matched
+            // group re-joins (next - index) tokens with hyphens; recompute by
+            // shrinking `next` from the top would lose the count, so re-derive:
+            // the longest match wins, i.e. the first (largest next) that hit.
+            index = next
+        }
+        return resolved.isEmpty ? trimmed : resolved
+    }
 
     public func fetchProjectRankings(
         limit: Int = 10,
@@ -678,8 +723,23 @@ public final class DatabaseManager: @unchecked Sendable {
                 throw NSError(domain: "DatabaseManager", code: 14, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch project rankings: \(lastErrorMessage())"])
             }
         }
-        return result
+        // Merge canonical duplicates (trailing-slash / hyphen-split history)
+        // so counts stay stable across time ranges. The SQL LIMIT bounds the
+        // scan; merging only shrinks the list, then re-sorts and re-applies it.
+        var merged: [String: (tokens: Int, cost: Double)] = [:]
+        merged.reserveCapacity(result.count)
+        for row in result {
+            let key = Self.canonicalProjectFolder(row.project)
+            if let existing = merged[key] {
+                merged[key] = (existing.tokens + row.totalTokens, existing.cost + row.costUSD)
+            } else {
+                merged[key] = (row.totalTokens, row.costUSD)
+            }
+        }
+        return merged.map { (project: $0.key, totalTokens: $0.value.tokens, costUSD: $0.value.cost) }
+            .sorted { $0.totalTokens > $1.totalTokens }
     }
+
     public func fetchModelDistribution(
         limit: Int = 10,
         sourceId: String? = nil,
