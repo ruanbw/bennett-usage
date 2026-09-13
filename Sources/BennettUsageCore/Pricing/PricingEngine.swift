@@ -72,14 +72,27 @@ public final class PricingEngine: @unchecked Sendable {
     }
 
     public func spendString(_ costUSD: Double) -> String {
-        let rate = usdToCnyRate
-        let currency = preferredCurrency
+        // Single lock acquisition for both values; all formatting happens
+        // outside the lock. Output is character-for-character identical to
+        // the previous two-lock / four-format implementation.
+        let (rate, currency) = spendSnapshot()
+        let usdString = String(format: "%.2f", costUSD)
+        let cnyString = String(format: "%.2f", costUSD * rate)
         switch currency {
         case .usd:
-            return "$\(String(format: "%.2f", costUSD)) (¥\(String(format: "%.2f", costUSD * rate)))"
+            return "$" + usdString + " (¥" + cnyString + ")"
         case .cny:
-            return "¥\(String(format: "%.2f", costUSD * rate)) ($\(String(format: "%.2f", costUSD)))"
+            return "¥" + cnyString + " ($" + usdString + ")"
         }
+    }
+
+    /// Reads the exchange rate and preferred currency under a single lock
+    /// acquisition. Private helper; callers must not hold `lock` while doing
+    /// any formatting work.
+    private func spendSnapshot() -> (rate: Double, currency: PreferredCurrency) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (_usdToCnyRate, _preferredCurrency)
     }
 
     public static func defaultRules() -> [ModelPricing] {
