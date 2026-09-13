@@ -73,10 +73,6 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
         var records: [UnifiedTokenRecord] = []
         var seenPaths = Set<String>()
 
-        let home = Self.homeDir(under: directory)
-        let resolvedDefault = Self.resolveDefaultModel(home: home)
-        let defaultModel = resolvedDefault?.model ?? "unknown"
-        let defaultProvider = resolvedDefault?.provider ?? "unknown"
         let canDecompressZstd = Self.zstdExecutable() != nil
 
         let sessionsDir = Self.sessionsDir(under: directory)
@@ -116,8 +112,7 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
             let folderName = fileUrl.deletingLastPathComponent()
                 .deletingLastPathComponent().lastPathComponent
             let parsed = Self.parseTranscript(
-                jsonl, mungedFolder: folderName, sourceId: sourceId,
-                defaultModel: defaultModel, defaultProvider: defaultProvider)
+                jsonl, mungedFolder: folderName, sourceId: sourceId)
             records.append(contentsOf: parsed)
             offsets[path] = fileSize
             }
@@ -130,8 +125,7 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
         do {
             let fallback = try fetchProjcacheDeltas(
                 under: directory, previousOffsets: &offsets, seenPaths: &seenPaths,
-                excludingSessions: transcriptSessionIds,
-                defaultModel: defaultModel, defaultProvider: defaultProvider)
+                excludingSessions: transcriptSessionIds)
             records.append(contentsOf: fallback)
         } catch {
             // A malformed cache file must not fail the whole adapter pass.
@@ -240,9 +234,7 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
     static func parseTranscript(
         _ jsonl: Data,
         mungedFolder: String,
-        sourceId: String,
-        defaultModel: String = "unknown",
-        defaultProvider: String = "unknown"
+        sourceId: String
     ) -> [UnifiedTokenRecord] {
         var records: [UnifiedTokenRecord] = []
         var sessionId: String?
@@ -282,8 +274,8 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
 
             let message = data["message"] as? [String: Any]
             let source = message?["source"] as? [String: Any]
-            let model = (source?["model"] as? String) ?? defaultModel
-            let provider = (source?["provider"] as? String) ?? defaultProvider
+            let model = (source?["model"] as? String) ?? "unknown"
+            let provider = (source?["provider"] as? String) ?? "unknown"
 
             var timestamp = headerCreatedAt ?? Date()
             if let ms = (json["time"] as? NSNumber)?.doubleValue {
@@ -313,9 +305,7 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
         under directory: URL,
         previousOffsets: inout [String: Int64],
         seenPaths: inout Set<String>,
-        excludingSessions: Set<String> = [],
-        defaultModel: String = "unknown",
-        defaultProvider: String = "unknown"
+        excludingSessions: Set<String> = []
     ) throws -> [UnifiedTokenRecord] {
         var records: [UnifiedTokenRecord] = []
         let cacheDir = Self.homeDir(under: directory)
@@ -366,8 +356,8 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
                     createdAt = Date(timeIntervalSince1970: ms / 1000.0)
                 }
             }
-            var model = defaultModel
-            var provider = defaultProvider
+            var model = "unknown"
+            var provider = "unknown"
             if let modelSelection = rows["modelSelection"] as? [String: Any],
                let mval = modelSelection["val"] as? [String: Any],
                let lastUsed = mval["lastUsed"] as? [String: Any] {
@@ -399,36 +389,6 @@ public struct DshAdapter: AgentSourceAdapter, @unchecked Sendable {
     }
 
     // MARK: - Helpers
-
-    /// Resolves `agent-default-model` from `<home>/settings.yaml` when available.
-    static func resolveDefaultModel(home: URL) -> (model: String, provider: String)? {
-        let settingsUrl = home.appendingPathComponent("settings.yaml")
-        guard let content = try? String(contentsOf: settingsUrl, encoding: .utf8) else { return nil }
-        var inAgentDefaultModel = false
-        var model: String?
-        var provider: String?
-        for line in content.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("agent-default-model:") {
-                inAgentDefaultModel = true
-                continue
-            }
-            if inAgentDefaultModel {
-                if !line.hasPrefix(" ") && !line.hasPrefix("\t") && trimmed.contains(":") {
-                    break
-                }
-                if trimmed.hasPrefix("model:") {
-                    model = trimmed.dropFirst("model:".count).trimmingCharacters(in: .whitespaces)
-                } else if trimmed.hasPrefix("provider:") {
-                    provider = trimmed.dropFirst("provider:".count).trimmingCharacters(in: .whitespaces)
-                }
-            }
-        }
-        if let model = model, !model.isEmpty {
-            return (model: model, provider: provider ?? "unknown")
-        }
-        return nil
-    }
 
     static func intValue(_ value: Any?) -> Int {
         if let i = value as? Int { return i }

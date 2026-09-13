@@ -132,19 +132,10 @@ final class DshAdapterTests: XCTestCase {
         XCTAssertEqual(result.records[0].provider, "cliprox")
     }
 
-    func testProjcacheExtractsModelFromSettingsYamlFallback() async throws {
-        // Write settings.yaml in tempDir
-        let settingsYaml = """
-        agent-default-model:
-          provider: cliprox
-          model: gemini-3.8-flash-high
-          reasoningEffort: high
-        """
-        try settingsYaml.write(to: tempDir.appendingPathComponent("settings.yaml"), atomically: true, encoding: .utf8)
-
+    func testProjcacheWithoutModelFallsBackToUnknown() async throws {
         let cacheDir = tempDir.appendingPathComponent("storages/session_projcache/sessions", isDirectory: true)
         try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-        let cacheFile = cacheDir.appendingPathComponent("session-settings.json")
+        let cacheFile = cacheDir.appendingPathComponent("session-no-model.json")
         let json = """
         {
           "version": 7,
@@ -170,8 +161,9 @@ final class DshAdapterTests: XCTestCase {
         let adapter = DshAdapter()
         let result = try await adapter.fetchIncrementalRecords(from: tempDir, since: nil)
         XCTAssertEqual(result.records.count, 1)
-        XCTAssertEqual(result.records[0].model, "gemini-3.8-flash-high")
-        XCTAssertEqual(result.records[0].provider, "cliprox")
+        XCTAssertEqual(result.records[0].model, "unknown")
+        XCTAssertEqual(result.records[0].provider, "unknown")
+        XCTAssertNotEqual(result.records[0].model, "dsh")
     }
 
     func testDecodeMungedFolder() {
