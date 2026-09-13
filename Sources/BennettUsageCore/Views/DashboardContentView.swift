@@ -116,8 +116,14 @@ public struct DashboardContentView: View {
             }
             .padding(24)
         }
-        .task(id: "\(selectedRange)_\(selectedHeatmapYear)_\(selectedToolFilter ?? "all")_\(refreshTick)") {
-            await loadData()
+        .task(id: RefreshKey(scope: .period, range: selectedRange, year: nil, toolFilter: selectedToolFilter, tick: refreshTick)) {
+            await loadPeriodMetrics()
+        }
+        .task(id: RefreshKey(scope: .annual, range: nil, year: selectedHeatmapYear, toolFilter: selectedToolFilter, tick: refreshTick)) {
+            await loadAnnualSummaryData()
+        }
+        .task(id: RefreshKey(scope: .totals, range: nil, year: nil, toolFilter: selectedToolFilter, tick: refreshTick)) {
+            await loadAllTimeData()
         }
         .task {
             await autoRefreshLoop()
@@ -860,42 +866,46 @@ public struct DashboardContentView: View {
         await loadData()
     }
 
-    private func loadData() async {
-        let years = (try? await aggregator.fetchAvailableYears()) ?? []
-        if years != availableYears {
-            availableYears = years
-        }
-        if !years.isEmpty && !years.contains(selectedHeatmapYear) {
-            selectedHeatmapYear = years.first!
-        }
-        if Task.isCancelled { return }
-        let metrics = try? await aggregator.fetchPeriodMetrics(range: selectedRange, toolFilter: selectedToolFilter)
-        if Task.isCancelled { return }
-        if metrics != periodMetrics {
-            periodMetrics = metrics
-        }
-        let cells = (try? await aggregator.fetchAnnualHeatmap(year: selectedHeatmapYear, toolFilter: selectedToolFilter)) ?? []
-        if Task.isCancelled { return }
-        if cells != heatmapCells {
-            heatmapCells = cells
-        }
-        let summary = try? await aggregator.fetchAnnualSummary(year: selectedHeatmapYear, toolFilter: selectedToolFilter)
-        if Task.isCancelled { return }
-        // Tuples are not Equatable; compare field-wise before assigning so an
-        // unchanged year does not invalidate the whole heatmap section.
-        if summary?.annualTokens != annualSummary?.annualTokens
-            || summary?.annualCostUSD != annualSummary?.annualCostUSD
-            || summary?.mostActiveTool != annualSummary?.mostActiveTool
-            || summary?.activeDays != annualSummary?.activeDays
-            || summary?.totalDays != annualSummary?.totalDays {
-            annualSummary = summary
-        }
-        let annualMetrics = try? await aggregator.fetchPeriodMetrics(range: .year(selectedHeatmapYear), toolFilter: selectedToolFilter)
-        if Task.isCancelled { return }
-        let trendPoints = annualMetrics?.trendPoints ?? []
-        if trendPoints != annualTrendPoints {
-            annualTrendPoints = trendPoints
-        }
+    // MARK: - Data Loading
+    //
+    // The refresh work is split into three independent `.task(id:)` pipelines so
+    // that changing one dimension (range / heatmap year / tool filter) only
+    // re-runs the queries that actually depend on it (U-02 / U-41):
+    //
+    //   • period  → selectedRange,       selectedToolFilter, refreshTick
+    //   • annual  → selectedHeatmapYear, selectedToolFilter, refreshTick
+    //   • totals  →                      selectedToolFilter, refreshTick
+    //
+    // `agentNames` and the cached palettes are derived from *both* `periodMetrics`
+    // and `heatmapCells`, so the period and annual pipelines each call the shared,
+    // synchronous `refreshDerivedToolState()` once their own results are published.
+    // Every `@State` write lives on the main actor and that helper has no
+    // suspension point, so the two callers can never interleave half-way through
+    // an update; whichever call runs last always observes a fully-updated pair of
+    // inputs, so the final derived value is independent of completion order and
+    // there is no race on the assigned state.
+
+    /// Scope discriminator for the dimension-scoped refresh tasks. A structured
+    /// `Hashable` key (rather than a concatenated string) keeps each task's id
+    /// free of unrelated dimensions and avoids per-body string interpolation.
+    private enum RefreshScope: Hashable {
+        case period
+        case annual
+        case totals
+    }
+
+    private struct RefreshKey: Hashable {
+        let scope: RefreshScope
+        let range: TimeRangeOption?
+        let year: Int?
+        let toolFilter: String?
+        let tick: Int
+    }
+
+    /// Recompute the range/year-independent derived state from the *current*
+    /// `periodMetrics` and `heatmapCells`. Must stay synchronous (no `await`) so
+    /// no other refresh task can interleave with it.
+    private func refreshDerivedToolState() {
         let distributionTools = (periodMetrics?.toolDistribution ?? []).map(\.tool)
         let heatmapTools = Set(heatmapCells.flatMap { $0.toolBreakdown.keys })
         let allAgentNames = Array(Set(distributionTools).union(heatmapTools)).sorted()
@@ -910,11 +920,75 @@ public struct DashboardContentView: View {
         if modelColors != cachedModelColors {
             cachedModelColors = modelColors
         }
-        let totals = try? await aggregator.fetchAllTimeTotals(toolFilter: selectedToolFilter)
+    }
+
+    /// `selectedRange` / `selectedToolFilter` dependents.
+    private func loadPeriodMetrics() async {
+        let range = selectedRange
+        let toolFilter = selectedToolFilter
+        let metrics = try? await aggregator.fetchPeriodMetrics(range: range, toolFilter: toolFilter)
         if Task.isCancelled { return }
+        if metrics != periodMetrics {
+            periodMetrics = metrics
+        }
+        refreshDerivedToolState()
+    }
+
+    /// `selectedHeatmapYear` / `selectedToolFilter` dependents — the "annual
+    /// trio": heatmap cells, annual summary and annual trend.
+    private func loadAnnualSummaryData() async {
+        let year = selectedHeatmapYear
+        let toolFilter = selectedToolFilter
+        let cells = (try? await aggregator.fetchAnnualHeatmap(year: year, toolFilter: toolFilter)) ?? []
+        if Task.isCancelled { return }
+        let summary = try? await aggregator.fetchAnnualSummary(year: year, toolFilter: toolFilter)
+        if Task.isCancelled { return }
+        let annualMetrics = try? await aggregator.fetchPeriodMetrics(range: .year(year), toolFilter: toolFilter)
+        if Task.isCancelled { return }
+        if cells != heatmapCells {
+            heatmapCells = cells
+        }
+        // Tuples are not Equatable; compare field-wise before assigning so an
+        // unchanged year does not invalidate the whole heatmap section.
+        if summary?.annualTokens != annualSummary?.annualTokens
+            || summary?.annualCostUSD != annualSummary?.annualCostUSD
+            || summary?.mostActiveTool != annualSummary?.mostActiveTool
+            || summary?.activeDays != annualSummary?.activeDays
+            || summary?.totalDays != annualSummary?.totalDays {
+            annualSummary = summary
+        }
+        let trendPoints = annualMetrics?.trendPoints ?? []
+        if trendPoints != annualTrendPoints {
+            annualTrendPoints = trendPoints
+        }
+        refreshDerivedToolState()
+    }
+
+    /// `selectedToolFilter` dependents that are independent of both the selected
+    /// range and the heatmap year: the available-year list and all-time totals.
+    private func loadAllTimeData() async {
+        let toolFilter = selectedToolFilter
+        let years = (try? await aggregator.fetchAvailableYears()) ?? []
+        if Task.isCancelled { return }
+        let totals = try? await aggregator.fetchAllTimeTotals(toolFilter: toolFilter)
+        if Task.isCancelled { return }
+        if years != availableYears {
+            availableYears = years
+        }
+        if !years.isEmpty && !years.contains(selectedHeatmapYear) {
+            selectedHeatmapYear = years.first!
+        }
         if totals != allTimeTotals {
             allTimeTotals = totals
         }
+    }
+
+    /// Full refresh used by the throttled data-update notification path. Reuses
+    /// the three dimension-scoped pipelines so there is a single code path.
+    private func loadData() async {
+        await loadPeriodMetrics()
+        await loadAnnualSummaryData()
+        await loadAllTimeData()
     }
 
     private func autoRefreshLoop() async {
@@ -923,10 +997,39 @@ public struct DashboardContentView: View {
             if seconds > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
                 if Task.isCancelled { return }
+                // Skip the reload while the dashboard window is hidden,
+                // minimized or fully occluded: re-aggregating the range data and
+                // rebuilding the 365-cell heatmap for an off-screen window is
+                // wasted work that needlessly keeps the process busy.
+                guard dashboardWindowIsVisible() else { continue }
                 refreshTick += 1
             } else {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                // Manual mode. `bennett_auto_refresh_seconds` has no
+                // `register(defaults:)` default, so an unset key reads as 0 and
+                // lands here. The loop must not simply `return`: the owning
+                // `.task {}` only re-runs when the view appears, so exiting would
+                // ignore a later "enable auto-refresh" change until the window is
+                // reopened. Poll the setting at a low frequency instead of the
+                // previous 3 s spin so an idle process is no longer woken every
+                // 3 s.
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
             }
+        }
+    }
+
+    /// Whether a visible, non-minimized, non-occluded top-level dashboard window
+    /// is currently on screen. The dashboard window is the app's only regular
+    /// window that is titled and not a sheet: the status item's window is
+    /// untitled, the popover is a panel, and the settings sheet is attached to
+    /// the dashboard window (`isSheet == true`) and therefore excluded here.
+    private func dashboardWindowIsVisible() -> Bool {
+        guard !NSApp.isHidden else { return false }
+        return NSApp.windows.contains { window in
+            window.styleMask.contains(.titled)
+                && !window.isSheet
+                && window.isVisible
+                && !window.isMiniaturized
+                && window.occlusionState.contains(.visible)
         }
     }
 }
