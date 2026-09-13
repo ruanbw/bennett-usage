@@ -9,6 +9,11 @@ public struct PiAdapter: AgentSourceAdapter, @unchecked Sendable {
 
     public init() {}
 
+    /// ASCII bytes of the `"usage"` key. Every token-bearing JSONL line
+    /// contains it, so a cheap byte scan lets non-usage lines (reasoning,
+    /// tool calls, headers) skip the JSON parse + NSNumber bridging pass.
+    private static let usageKey = Data("\"usage\"".utf8)
+
     public func detectDefaultPath() -> URL? {
         let path = (defaultPath as NSString).expandingTildeInPath
         let url = URL(fileURLWithPath: path)
@@ -61,6 +66,10 @@ public struct PiAdapter: AgentSourceAdapter, @unchecked Sendable {
                 currentOffset += Int64(lineData.count + 1)
 
                 guard !lineData.isEmpty else { continue }
+                // Fast reject: a record is only produced when a `usage`
+                // object is present, so lines lacking the key can skip the
+                // expensive JSONSerialization + bridging pass entirely.
+                guard lineData.range(of: Self.usageKey) != nil else { continue }
                 guard let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
                     continue
                 }

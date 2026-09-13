@@ -10,6 +10,15 @@ public struct OmpAdapter: AgentSourceAdapter, @unchecked Sendable {
 
     public init() {}
 
+    /// ASCII bytes of the `"usage"` and `"session"` keys. A JSONL line can
+    /// only yield a token record when it carries a `usage` object, and only
+    /// `type:"session"` headers update the session context, so a cheap byte
+    /// scan lets every other line skip the JSON parse + NSNumber bridging
+    /// pass. (The `"session"` marker also matches the header, whose string
+    /// value is necessarily present verbatim.)
+    private static let usageKey = Data("\"usage\"".utf8)
+    private static let sessionKey = Data("\"session\"".utf8)
+
     public func detectDefaultPath() -> URL? {
         let sessionsPath = ("~/.omp/agent/sessions" as NSString).expandingTildeInPath
         if FileManager.default.fileExists(atPath: sessionsPath) {
@@ -169,6 +178,10 @@ public struct OmpAdapter: AgentSourceAdapter, @unchecked Sendable {
                 currentOffset += Int64(lineData.count + 1)
 
                 guard !lineData.isEmpty else { continue }
+                if lineData.range(of: Self.usageKey) == nil,
+                   lineData.range(of: Self.sessionKey) == nil {
+                    continue
+                }
                 guard let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
                     continue
                 }

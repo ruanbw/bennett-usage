@@ -10,9 +10,26 @@ public final class PricingEngine: @unchecked Sendable {
     public static let rateUserDefaultsKey = "bennett_usd_to_cny_rate"
     public static let currencyUserDefaultsKey = "bennett_preferred_currency"
 
-    private var rules: [ModelPricing] = []
+    /// A pricing pattern precompiled once at init. Avoids re-deriving the
+    /// prefix (and allocating a `String`) for every record during sync.
+    private struct CompiledRule {
+        /// Pattern with any trailing `*` stripped; compared against the
+        /// lowercased model name.
+        let prefix: String
+        /// `true` when the pattern ended in `*` (prefix match), otherwise the
+        /// pattern must equal the model name exactly.
+        let isPrefixMatch: Bool
+    }
+
     /// Longest-pattern-first; built once so `calculateCost` does not sort per record.
     private var sortedRules: [ModelPricing] = []
+    /// `sortedRules` with patterns precompiled, in the same order.
+    private var compiledRules: [CompiledRule] = []
+    /// Memoizes `model -> sortedRules index` (or `-1` for no match). Model
+    /// names repeat heavily within a sync, so this removes the lowercasing and
+    /// pattern scan from the steady-state hot path. Guarded by `lock`.
+    private var resolutionCache: [String: Int] = [:]
+    private static let resolutionCacheLimit = 512
     private let lock = NSLock()
     private var _usdToCnyRate: Double = 7.30
     private var _preferredCurrency: PreferredCurrency = .usd
@@ -40,8 +57,13 @@ public final class PricingEngine: @unchecked Sendable {
     }
 
     public init() {
-        self.rules = Self.defaultRules()
-        self.sortedRules = rules.sorted { $0.modelPattern.count > $1.modelPattern.count }
+        self.sortedRules = Self.defaultRules().sorted { $0.modelPattern.count > $1.modelPattern.count }
+        self.compiledRules = sortedRules.map { rule in
+            if rule.modelPattern.hasSuffix("*") {
+                return CompiledRule(prefix: String(rule.modelPattern.dropLast()), isPrefixMatch: true)
+            }
+            return CompiledRule(prefix: rule.modelPattern, isPrefixMatch: false)
+        }
         let savedRate = UserDefaults.standard.double(forKey: Self.rateUserDefaultsKey)
         if savedRate > 0 {
             self._usdToCnyRate = savedRate
@@ -121,11 +143,9 @@ public final class PricingEngine: @unchecked Sendable {
         cacheRead: Int = 0,
         cacheWrite: Int = 0
     ) -> Double {
-        lock.lock(); defer { lock.unlock() }
-        let lower = model.lowercased()
-        guard let rule = sortedRules.first(where: { matches(pattern: $0.modelPattern, string: lower) }) else {
-            return 0.0
-        }
+        let index = resolvedRuleIndex(for: model)
+        guard index >= 0 else { return 0.0 }
+        let rule = sortedRules[index]
 
         let inputCost = (Double(input) / 1_000_000.0) * rule.inputPerMillion
         let outputCost = (Double(output) / 1_000_000.0) * rule.outputPerMillion
@@ -135,11 +155,34 @@ public final class PricingEngine: @unchecked Sendable {
         return inputCost + outputCost + cacheReadCost + cacheWriteCost
     }
 
-    private func matches(pattern: String, string: String) -> Bool {
-        if pattern.hasSuffix("*") {
-            let prefix = String(pattern.dropLast())
-            return string.hasPrefix(prefix)
+    /// Index into `sortedRules` for `model`, or `-1` when nothing matches.
+    /// Model names repeat heavily during a sync, so the resolved index is
+    /// memoized; the underlying rules are immutable after `init`.
+    private func resolvedRuleIndex(for model: String) -> Int {
+        lock.lock()
+        if let cached = resolutionCache[model] {
+            lock.unlock()
+            return cached
         }
-        return pattern == string
+        lock.unlock()
+
+        let lower = model.lowercased()
+        var resolved = -1
+        for (index, compiled) in compiledRules.enumerated() {
+            let hit = compiled.isPrefixMatch
+                ? lower.hasPrefix(compiled.prefix)
+                : lower == compiled.prefix
+            if hit {
+                resolved = index
+                break
+            }
+        }
+
+        lock.lock()
+        if resolutionCache.count < Self.resolutionCacheLimit {
+            resolutionCache[model] = resolved
+        }
+        lock.unlock()
+        return resolved
     }
 }

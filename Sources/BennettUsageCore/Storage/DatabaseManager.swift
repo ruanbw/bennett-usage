@@ -25,6 +25,70 @@ public final class DatabaseManager: @unchecked Sendable {
     private var yearlyRollupsCache: (year: Int, revision: Int, rollups: [DailyRollup])?
     public let path: String
 
+    /// Identifies one `daily_rollups` row while a bulk insert accumulates its delta.
+    private struct RollupKey: Hashable {
+        let dayKey: String
+        let sourceId: String
+    }
+
+    /// Accumulated `daily_rollups` delta for one `RollupKey`.
+    private struct RollupDelta {
+        var totalTokens: Int64 = 0
+        var inputTokens: Int64 = 0
+        var outputTokens: Int64 = 0
+        var cacheTokens: Int64 = 0
+        var costUSD: Double = 0
+    }
+
+    /// Column list of `unified_token_records` that `insertRecords` writes; the
+    /// order must match `bindRecord`.
+    private static let insertColumnList = "(id, source_id, timestamp, day_key, session_key, project_folder, model, provider, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd)"
+    private static let insertColumnCount: Int32 = 14
+    /// Rows per multi-row INSERT: 14 columns × 50 rows = 700 bound parameters,
+    /// far below SQLite's parameter limit, and a batch needs only a handful of
+    /// statement shapes.
+    private static let insertChunkRows = 50
+    /// Primary-key probe used to learn which of a batch's records are new.
+    private static let recordExistsSQL = "SELECT 1 FROM unified_token_records WHERE id = ?;"
+    /// Memoized chunk SQL by row count. A batch reuses the same one or two
+    /// shapes for every chunk, so the string is joined once per shape instead of
+    /// once per chunk. Only touched while `lock` is held.
+    private var insertStatementSQL: [Int: String] = [:]
+
+    private func insertRecordsSQL(rowCount: Int) -> String {
+        if let memoized = insertStatementSQL[rowCount] { return memoized }
+        let boundRow = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        let values = Array(repeating: boundRow, count: rowCount).joined(separator: ", ")
+        let sql = "INSERT OR IGNORE INTO unified_token_records \(Self.insertColumnList) VALUES \(values);"
+        insertStatementSQL[rowCount] = sql
+        return sql
+    }
+
+    private static func bindRecord(_ stmt: OpaquePointer, baseParameter: Int32, _ r: UnifiedTokenRecord) {
+        sqlite3_bind_text(stmt, baseParameter + 1, (r.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, baseParameter + 2, (r.sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, baseParameter + 3, Int64(r.timestamp.timeIntervalSince1970 * 1000))
+        sqlite3_bind_text(stmt, baseParameter + 4, (r.dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, baseParameter + 5, (r.sessionKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        if let pf = r.projectFolder {
+            sqlite3_bind_text(stmt, baseParameter + 6, (pf as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, baseParameter + 6)
+        }
+        sqlite3_bind_text(stmt, baseParameter + 7, (r.model as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        if let prov = r.provider {
+            sqlite3_bind_text(stmt, baseParameter + 8, (prov as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, baseParameter + 8)
+        }
+        sqlite3_bind_int(stmt, baseParameter + 9, Int32(r.inputTokens))
+        sqlite3_bind_int(stmt, baseParameter + 10, Int32(r.outputTokens))
+        sqlite3_bind_int(stmt, baseParameter + 11, Int32(r.cacheReadTokens))
+        sqlite3_bind_int(stmt, baseParameter + 12, Int32(r.cacheWriteTokens))
+        sqlite3_bind_int(stmt, baseParameter + 13, Int32(r.totalTokens))
+        sqlite3_bind_double(stmt, baseParameter + 14, r.rawCostUSD ?? 0.0)
+    }
+
     public init(path: String) throws {
         var dbPointer: OpaquePointer?
         let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
@@ -187,79 +251,113 @@ public final class DatabaseManager: @unchecked Sendable {
         try execute(sql: "BEGIN TRANSACTION;")
         do {
             if !records.isEmpty {
-                let recordSql = """
-                INSERT OR IGNORE INTO unified_token_records (
-                    id, source_id, timestamp, day_key, session_key, project_folder,
-                    model, provider, input_tokens, output_tokens, cache_read_tokens,
-                    cache_write_tokens, total_tokens, cost_usd
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                """
-                var recordStmt: OpaquePointer?
-                guard sqlite3_prepare_v2(db, recordSql, -1, &recordStmt, nil) == SQLITE_OK else {
-                    throw NSError(domain: "DatabaseManager", code: 3, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare record statement: \(lastErrorMessage())"])
+                // Rollup deltas are accumulated per (day_key, source_id) and
+                // flushed as one upsert per key afterwards. A cold sync inserts
+                // tens of thousands of records that collapse to a few hundred
+                // (day, source) pairs, so upserting per record executed tens of
+                // thousands of redundant statement steps.
+                var rollupDeltas: [RollupKey: RollupDelta] = [:]
+                var index = 0
+                while index < records.count {
+                    let chunkCount = min(Self.insertChunkRows, records.count - index)
+
+                    // Ask which of the chunk's primary keys are already stored.
+                    // `INSERT OR IGNORE` would silently drop those, and the rollup
+                    // deltas below must cover only genuinely new rows. Probing
+                    // first also means a batch that is entirely duplicate — the
+                    // shape a re-sync of unchanged files produces — performs no
+                    // writes at all. Measured ~2x faster than stepping an
+                    // `INSERT OR IGNORE` per duplicate row at 46k rows, and
+                    // faster than reading the accepted rows back with `RETURNING`.
+                    let probe = try cachedStatement(
+                        sql: Self.recordExistsSQL,
+                        errorCode: 3,
+                        description: "record existence statement"
+                    )
+                    var freshRecords: [UnifiedTokenRecord] = []
+                    freshRecords.reserveCapacity(chunkCount)
+                    // A repeated id inside one batch must behave like the old
+                    // per-record `INSERT OR IGNORE`: only the first occurrence is
+                    // stored, so only it may contribute a rollup delta.
+                    var seenIds = Set<String>()
+                    seenIds.reserveCapacity(chunkCount)
+                    for offset in 0..<chunkCount {
+                        let record = records[index + offset]
+                        guard seenIds.insert(record.id).inserted else { continue }
+                        sqlite3_bind_text(probe, 1, (record.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                        let step = sqlite3_step(probe)
+                        if step == SQLITE_DONE {
+                            freshRecords.append(record)
+                        } else if step != SQLITE_ROW {
+                            throw NSError(domain: "DatabaseManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "Failed to look up record '\(record.id)': \(lastErrorMessage())"])
+                        }
+                        sqlite3_reset(probe)
+                    }
+
+                    if !freshRecords.isEmpty {
+                        // One multi-row statement per chunk instead of one
+                        // statement step per record (~1.25x on a cold 46k-record
+                        // sync). `freshRecords` holds only absent primary keys,
+                        // so `OR IGNORE` has nothing left to drop and the
+                        // accumulated deltas match the inserted rows exactly.
+                        let stmt = try cachedStatement(
+                            sql: insertRecordsSQL(rowCount: freshRecords.count),
+                            errorCode: 3,
+                            description: "record insert statement"
+                        )
+                        for (offset, record) in freshRecords.enumerated() {
+                            Self.bindRecord(stmt, baseParameter: Int32(offset) * Self.insertColumnCount, record)
+                        }
+                        guard sqlite3_step(stmt) == SQLITE_DONE else {
+                            throw NSError(domain: "DatabaseManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "Failed to insert records: \(lastErrorMessage())"])
+                        }
+                        insertedCount += Int(sqlite3_changes(db))
+
+                        // Same accumulation order per key as the previous
+                        // per-record `ON CONFLICT ... DO UPDATE SET x = x + excluded.x`.
+                        for record in freshRecords {
+                            let key = RollupKey(dayKey: record.dayKey, sourceId: record.sourceId)
+                            var delta = rollupDeltas[key] ?? RollupDelta()
+                            delta.totalTokens += Int64(record.totalTokens)
+                            delta.inputTokens += Int64(record.inputTokens)
+                            delta.outputTokens += Int64(record.outputTokens)
+                            delta.cacheTokens += Int64(record.cacheReadTokens + record.cacheWriteTokens)
+                            delta.costUSD += record.rawCostUSD ?? 0.0
+                            rollupDeltas[key] = delta
+                        }
+                    }
+                    index += chunkCount
                 }
-                defer { sqlite3_finalize(recordStmt) }
 
-                let rollupSql = """
-                INSERT INTO daily_rollups (day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(day_key, source_id) DO UPDATE SET
-                    total_tokens = total_tokens + excluded.total_tokens,
-                    input_tokens = input_tokens + excluded.input_tokens,
-                    output_tokens = output_tokens + excluded.output_tokens,
-                    cache_tokens = cache_tokens + excluded.cache_tokens,
-                    cost_usd = cost_usd + excluded.cost_usd;
-                """
-                var rollupStmt: OpaquePointer?
-                guard sqlite3_prepare_v2(db, rollupSql, -1, &rollupStmt, nil) == SQLITE_OK else {
-                    throw NSError(domain: "DatabaseManager", code: 4, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare rollup statement: \(lastErrorMessage())"])
-                }
-                defer { sqlite3_finalize(rollupStmt) }
-
-                for r in records {
-                    sqlite3_bind_text(recordStmt, 1, (r.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                    sqlite3_bind_text(recordStmt, 2, (r.sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                    sqlite3_bind_int64(recordStmt, 3, Int64(r.timestamp.timeIntervalSince1970 * 1000))
-                    sqlite3_bind_text(recordStmt, 4, (r.dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                    sqlite3_bind_text(recordStmt, 5, (r.sessionKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                    if let pf = r.projectFolder {
-                        sqlite3_bind_text(recordStmt, 6, (pf as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                    } else {
-                        sqlite3_bind_null(recordStmt, 6)
+                if !rollupDeltas.isEmpty {
+                    let rollupSql = """
+                    INSERT INTO daily_rollups (day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(day_key, source_id) DO UPDATE SET
+                        total_tokens = total_tokens + excluded.total_tokens,
+                        input_tokens = input_tokens + excluded.input_tokens,
+                        output_tokens = output_tokens + excluded.output_tokens,
+                        cache_tokens = cache_tokens + excluded.cache_tokens,
+                        cost_usd = cost_usd + excluded.cost_usd;
+                    """
+                    var rollupStmt: OpaquePointer?
+                    guard sqlite3_prepare_v2(db, rollupSql, -1, &rollupStmt, nil) == SQLITE_OK else {
+                        throw NSError(domain: "DatabaseManager", code: 4, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare rollup statement: \(lastErrorMessage())"])
                     }
-                    sqlite3_bind_text(recordStmt, 7, (r.model as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                    if let prov = r.provider {
-                        sqlite3_bind_text(recordStmt, 8, (prov as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                    } else {
-                        sqlite3_bind_null(recordStmt, 8)
-                    }
-                    sqlite3_bind_int(recordStmt, 9, Int32(r.inputTokens))
-                    sqlite3_bind_int(recordStmt, 10, Int32(r.outputTokens))
-                    sqlite3_bind_int(recordStmt, 11, Int32(r.cacheReadTokens))
-                    sqlite3_bind_int(recordStmt, 12, Int32(r.cacheWriteTokens))
-                    sqlite3_bind_int(recordStmt, 13, Int32(r.totalTokens))
-                    sqlite3_bind_double(recordStmt, 14, r.rawCostUSD ?? 0.0)
+                    defer { sqlite3_finalize(rollupStmt) }
 
-                    let recordStep = sqlite3_step(recordStmt)
-                    guard recordStep == SQLITE_DONE else {
-                        throw NSError(domain: "DatabaseManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "Failed to insert record '\(r.id)': \(lastErrorMessage())"])
-                    }
-                    let wasInserted = sqlite3_changes(db) > 0
-                    sqlite3_reset(recordStmt)
-
-                    if wasInserted {
-                        insertedCount += 1
-                        sqlite3_bind_text(rollupStmt, 1, (r.dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                        sqlite3_bind_text(rollupStmt, 2, (r.sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                        sqlite3_bind_int(rollupStmt, 3, Int32(r.totalTokens))
-                        sqlite3_bind_int(rollupStmt, 4, Int32(r.inputTokens))
-                        sqlite3_bind_int(rollupStmt, 5, Int32(r.outputTokens))
-                        sqlite3_bind_int(rollupStmt, 6, Int32(r.cacheReadTokens + r.cacheWriteTokens))
-                        sqlite3_bind_double(rollupStmt, 7, r.rawCostUSD ?? 0.0)
+                    for (key, delta) in rollupDeltas {
+                        sqlite3_bind_text(rollupStmt, 1, (key.dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                        sqlite3_bind_text(rollupStmt, 2, (key.sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                        sqlite3_bind_int64(rollupStmt, 3, delta.totalTokens)
+                        sqlite3_bind_int64(rollupStmt, 4, delta.inputTokens)
+                        sqlite3_bind_int64(rollupStmt, 5, delta.outputTokens)
+                        sqlite3_bind_int64(rollupStmt, 6, delta.cacheTokens)
+                        sqlite3_bind_double(rollupStmt, 7, delta.costUSD)
 
                         let rollupStep = sqlite3_step(rollupStmt)
                         guard rollupStep == SQLITE_DONE else {
-                            throw NSError(domain: "DatabaseManager", code: 8, userInfo: [NSLocalizedDescriptionKey: "Failed to upsert rollup for record '\(r.id)': \(lastErrorMessage())"])
+                            throw NSError(domain: "DatabaseManager", code: 8, userInfo: [NSLocalizedDescriptionKey: "Failed to upsert rollup for '\(key.dayKey)'/'\(key.sourceId)': \(lastErrorMessage())"])
                         }
                         sqlite3_reset(rollupStmt)
                     }
