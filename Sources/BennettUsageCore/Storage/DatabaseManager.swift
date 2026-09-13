@@ -11,6 +11,15 @@ public final class DatabaseManager: @unchecked Sendable {
     /// Prepared statements for hot, fixed-shape queries. All access is guarded by `lock`;
     /// entries are reset + cleared before each reuse and finalized in deinit.
     private var preparedStatements: [String: OpaquePointer] = [:]
+    /// Insertion order of the keys in `preparedStatements`. Used to evict the
+    /// oldest entry once the cache is at capacity. Call sites with optional
+    /// filters build SQL by string concatenation, so shapes are bounded but not
+    /// a single constant; without an eviction policy a long-lived process would
+    /// retain one handle per shape forever.
+    private var preparedStatementOrder: [String] = []
+    /// Upper bound on cached statements. Comfortably covers every SQL shape the
+    /// current call sites can produce while keeping handles/memory bounded.
+    private static let maxCachedStatements = 32
     /// Bumped on every mutation of `daily_rollups`; keys the yearly rollup memo below.
     private var rollupsRevision = 0
     private var yearlyRollupsCache: (year: Int, revision: Int, rollups: [DailyRollup])?
@@ -38,6 +47,7 @@ public final class DatabaseManager: @unchecked Sendable {
             sqlite3_finalize(stmt)
         }
         preparedStatements.removeAll()
+        preparedStatementOrder.removeAll()
         if let db = db {
             sqlite3_close(db)
         }
@@ -47,6 +57,21 @@ public final class DatabaseManager: @unchecked Sendable {
         try execute(sql: "PRAGMA journal_mode = WAL;")
         try execute(sql: "PRAGMA synchronous = NORMAL;")
         try execute(sql: "PRAGMA busy_timeout = 3000;")
+        // Query-time tuning (U-20). Defaults are cache_size=-2000 (~2 MB),
+        // mmap_size=0, temp_store=FILE; those make range scans re-read pages and
+        // spill GROUP BY / ORDER BY B-trees to disk on every refresh.
+        try execute(sql: "PRAGMA cache_size = -16000;")      // ~16 MB page cache
+        try execute(sql: "PRAGMA mmap_size = 268435456;")    // 256 MB memory-mapped I/O
+        try execute(sql: "PRAGMA temp_store = MEMORY;")      // keep temp B-trees in RAM
+        try execute(sql: "PRAGMA wal_autocheckpoint = 1000;")
+        // Cheap SQLite-recommended housekeeping; records optimal-index stats for
+        // statements executed on this connection. Never blocks.
+        try execute(sql: "PRAGMA optimize;")
+        // Non-blocking passive checkpoint: reclaims/truncates a WAL left behind by
+        // a previous process that was killed before it could checkpoint. `PASSIVE`
+        // (unlike `TRUNCATE`) never blocks and is safe on the open path; on a
+        // non-WAL database (e.g. `:memory:`) it is a no-op.
+        try execute(sql: "PRAGMA wal_checkpoint(PASSIVE);")
     }
 
     private func createTables() throws {
@@ -72,6 +97,18 @@ public final class DatabaseManager: @unchecked Sendable {
         CREATE INDEX IF NOT EXISTS idx_records_timestamp ON unified_token_records(timestamp);
         CREATE INDEX IF NOT EXISTS idx_records_project ON unified_token_records(project_folder);
         CREATE INDEX IF NOT EXISTS idx_records_model ON unified_token_records(model);
+        -- Covering indexes (U-05). The GROUP BY column leads so the index can be
+        -- scanned in group order, and the aggregate inputs (`total_tokens`,
+        -- `cost_usd`) plus the filtered `timestamp` are covered, so
+        -- fetchModelDistribution(sinceTimestamp:) / fetchProjectRankings(sinceTimestamp:)
+        -- become `SCAN ... USING COVERING INDEX` instead of a full table scan +
+        -- per-row table lookup. (A timestamp-leading variant was tried first and
+        -- was rejected by the planner: the ORDER BY on the aggregate still needs a
+        -- TEMP B-TREE either way, so there was no reason to give up the already
+        -- ordered single-column index.) Idempotent: existing databases pick these
+        -- up on the next open.
+        CREATE INDEX IF NOT EXISTS idx_records_model_covering ON unified_token_records(model, total_tokens, cost_usd, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_records_project_covering ON unified_token_records(project_folder, total_tokens, cost_usd, timestamp);
 
         CREATE TABLE IF NOT EXISTS sync_cursors (
             source_id TEXT PRIMARY KEY,
@@ -119,18 +156,34 @@ public final class DatabaseManager: @unchecked Sendable {
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let prepared = stmt else {
             throw NSError(domain: "DatabaseManager", code: errorCode, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare \(description): \(lastErrorMessage())"])
         }
+        // Bounded cache: evict the oldest shape before inserting a new one. All
+        // call sites run while holding `lock`, so no evicted statement is ever in
+        // flight across calls.
+        if preparedStatements.count >= Self.maxCachedStatements, let oldest = preparedStatementOrder.first {
+            preparedStatementOrder.removeFirst()
+            if let evicted = preparedStatements.removeValue(forKey: oldest) {
+                sqlite3_finalize(evicted)
+            }
+        }
         preparedStatements[sql] = prepared
+        preparedStatementOrder.append(sql)
         return prepared
     }
 
+    /// Inserts records with `INSERT OR IGNORE` and returns the number of rows
+    /// that were *actually* inserted into `unified_token_records` (duplicates
+    /// already present are not counted). Callers use this to suppress data-did-
+    /// change notifications when a sync re-parsed an unchanged file.
+    @discardableResult
     public func insertRecords(
         _ records: [UnifiedTokenRecord],
         updateCursorFor sourceId: String? = nil,
         cursor: SyncCursor? = nil
-    ) throws {
-        guard !records.isEmpty || cursor != nil else { return }
+    ) throws -> Int {
+        guard !records.isEmpty || cursor != nil else { return 0 }
         lock.lock(); defer { lock.unlock() }
 
+        var insertedCount = 0
         try execute(sql: "BEGIN TRANSACTION;")
         do {
             if !records.isEmpty {
@@ -195,6 +248,7 @@ public final class DatabaseManager: @unchecked Sendable {
                     sqlite3_reset(recordStmt)
 
                     if wasInserted {
+                        insertedCount += 1
                         sqlite3_bind_text(rollupStmt, 1, (r.dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
                         sqlite3_bind_text(rollupStmt, 2, (r.sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
                         sqlite3_bind_int(rollupStmt, 3, Int32(r.totalTokens))
@@ -240,11 +294,16 @@ public final class DatabaseManager: @unchecked Sendable {
             }
 
             try execute(sql: "COMMIT;")
-            if !records.isEmpty { rollupsRevision += 1 }
+            // Only a real insert changes `daily_rollups`. A batch that was fully
+            // deduped by `INSERT OR IGNORE` leaves the rollup table untouched, so
+            // bumping the revision here would needlessly invalidate
+            // `yearlyRollupsCache` and force a rollup refetch (U-12).
+            if insertedCount > 0 { rollupsRevision += 1 }
         } catch {
             try? execute(sql: "ROLLBACK;")
             throw error
         }
+        return insertedCount
     }
 
     public func fetchDailyRollups(forYear year: Int) throws -> [DailyRollup] {
@@ -252,11 +311,16 @@ public final class DatabaseManager: @unchecked Sendable {
         if let cached = yearlyRollupsCache, cached.year == year, cached.revision == rollupsRevision {
             return cached.rollups
         }
-        let pattern = "\(year)-%"
-        let sql = "SELECT day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd FROM daily_rollups WHERE day_key LIKE ? ORDER BY day_key ASC;"
+        // `day_key` is a fixed `yyyy-MM-dd` string (see `UnifiedTokenRecord`), so a
+        // half-open range is equivalent to the old `LIKE '<year>-%'` prefix match
+        // but can use the primary-key index instead of scanning the table (U-06).
+        let start = "\(year)-01-01"
+        let next = "\(year + 1)-01-01"
+        let sql = "SELECT day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd FROM daily_rollups WHERE day_key >= ? AND day_key < ? ORDER BY day_key ASC;"
         let stmt = try cachedStatement(sql: sql, errorCode: 9, description: "daily rollups fetch statement")
 
-        sqlite3_bind_text(stmt, 1, (pattern as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, (start as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, (next as NSString).utf8String, -1, SQLITE_TRANSIENT)
         var result: [DailyRollup] = []
         while true {
             let step = sqlite3_step(stmt)
@@ -548,11 +612,7 @@ public final class DatabaseManager: @unchecked Sendable {
         LIMIT ?;
         """
 
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "DatabaseManager", code: 25, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare model distribution statement: \(lastErrorMessage())"])
-        }
-        defer { sqlite3_finalize(stmt) }
+        let stmt = try cachedStatement(sql: sql, errorCode: 25, description: "model distribution statement")
 
         var bindIndex: Int32 = 1
         for val in binds {
@@ -586,11 +646,7 @@ public final class DatabaseManager: @unchecked Sendable {
     public func fetchRecordStats(forSourceId sourceId: String) throws -> (count: Int, lastTimestamp: Date?) {
         lock.lock(); defer { lock.unlock() }
         let sql = "SELECT COUNT(*), MAX(timestamp) FROM unified_token_records WHERE source_id = ? COLLATE NOCASE;"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "DatabaseManager", code: 15, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare record stats statement: \(lastErrorMessage())"])
-        }
-        defer { sqlite3_finalize(stmt) }
+        let stmt = try cachedStatement(sql: sql, errorCode: 15, description: "record stats statement")
 
         sqlite3_bind_text(stmt, 1, (sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
         let step = sqlite3_step(stmt)
@@ -988,8 +1044,12 @@ public final class DatabaseManager: @unchecked Sendable {
             whereClauses.append("timestamp >= ?")
             bindValues.append(sinceTimestamp)
         } else if let year = year {
-            whereClauses.append("day_key LIKE ?")
-            bindValues.append("\(year)-%")
+            // Half-open range instead of `LIKE '<year>-%'` so the predicate can use
+            // the `day_key` index (U-06); `day_key` is a zero-padded `yyyy-MM-dd`
+            // string, so ordering is lexical and the range is equivalent.
+            whereClauses.append("day_key >= ? AND day_key < ?")
+            bindValues.append("\(year)-01-01")
+            bindValues.append("\(year + 1)-01-01")
         } else if let startDate = startDate, let endDate = endDate {
             whereClauses.append("day_key >= ? AND day_key <= ?")
             bindValues.append(startDate)

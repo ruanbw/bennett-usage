@@ -38,6 +38,49 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(savedCursor, .rowId(1))
     }
 
+    /// U-12 contract: `insertRecords` must report rows *actually* inserted.
+    /// `INSERT OR IGNORE` dedupes by primary key, so re-parsing an unchanged
+    /// log file must return 0 — otherwise `SyncCoordinator` posts
+    /// `.bennettUsageDataDidUpdate` and the dashboard pays a full recompute for
+    /// nothing (regression covered by U-12).
+    func testInsertRecordsReturnsActualInsertedCount() throws {
+        let now = Date()
+
+        func makeRecord(id: String) -> UnifiedTokenRecord {
+            UnifiedTokenRecord(
+                id: id,
+                sourceId: "omp",
+                timestamp: now,
+                dayKey: "2026-09-11",
+                sessionKey: "sess_1",
+                projectFolder: "/tmp/project",
+                model: "claude-3-5-sonnet",
+                provider: "anthropic",
+                inputTokens: 100,
+                outputTokens: 50,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                rawCostUSD: 0.01
+            )
+        }
+
+        let first = makeRecord(id: "dedupe_1")
+        XCTAssertEqual(try db.insertRecords([first]), 1)
+
+        // Same primary key re-parsed: not a new row, so nothing to notify about.
+        XCTAssertEqual(try db.insertRecords([first]), 0)
+
+        // Mixed batch counts only the genuinely new row.
+        let second = makeRecord(id: "dedupe_2")
+        XCTAssertEqual(try db.insertRecords([first, second]), 1)
+
+        // The deduped rows were never double counted in records or rollups.
+        XCTAssertEqual(try db.fetchTotalRecordCount(), 2)
+        let rollups = try db.fetchDailyRollups(forYear: 2026)
+        XCTAssertEqual(rollups.count, 1)
+        XCTAssertEqual(rollups[0].totalTokens, 300)
+    }
+
     func testRollupUpsertAccumulation() throws {
         let now = Date()
         let record1 = UnifiedTokenRecord(
