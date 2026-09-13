@@ -1,10 +1,10 @@
 #!/bin/bash
 # Build the release .app bundle and wrap it in a drag-to-Applications DMG.
-# Usage: ./scripts/package-dmg.sh [version]   (default 1.0.0)
+# Usage: ./scripts/package-dmg.sh [version]   (default 1.1.0)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${1:-1.0.0}"
+VERSION="${1:-1.1.0}"
 APP_NAME="Bennett Usage"
 DIST="dist"
 ROOT="$DIST/dmg-root"

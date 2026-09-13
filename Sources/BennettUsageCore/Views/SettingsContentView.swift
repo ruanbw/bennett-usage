@@ -649,7 +649,7 @@ public struct SettingsContentView: View {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(localization.localized(.appName))
                                 .font(.title3.bold())
-                            Text("v1.0.0")
+                            Text("v\(BennettUsageCore.version)")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }

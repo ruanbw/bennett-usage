@@ -310,10 +310,10 @@ public final class MetricsAggregator: Sendable {
     public func fetchAgentHealthInfos() async throws -> [AgentHealthInfo] {
         var adapters = AdapterRegistry.shared.allAdapters()
         if adapters.isEmpty {
-            adapters = [PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter(), GeminiAdapter(), AntigravityAdapter()]
+            adapters = [PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter(), GeminiAdapter(), AntigravityAdapter(), OpenCodeAdapter(), RooCodeAdapter(), QwenCodeAdapter(), CopilotAdapter(), CursorAdapter(), TraeAdapter(), DshAdapter()]
         } else {
             let existingIds = Set(adapters.map { $0.sourceId.lowercased() })
-            let defaults: [AgentSourceAdapter] = [PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter(), GeminiAdapter(), AntigravityAdapter()]
+            let defaults: [AgentSourceAdapter] = [PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter(), GeminiAdapter(), AntigravityAdapter(), OpenCodeAdapter(), RooCodeAdapter(), QwenCodeAdapter(), CopilotAdapter(), CursorAdapter(), TraeAdapter(), DshAdapter()]
             for def in defaults {
                 if !existingIds.contains(def.sourceId.lowercased()) {
                     adapters.append(def)
@@ -324,7 +324,8 @@ public final class MetricsAggregator: Sendable {
         var healthInfos: [AgentHealthInfo] = []
         for adapter in adapters {
             let expandedPath = (adapter.defaultPath as NSString).expandingTildeInPath
-            let isInstalled = FileManager.default.fileExists(atPath: expandedPath)
+            let detectedUrl = adapter.detectDefaultPath()
+            let isInstalled = detectedUrl != nil || FileManager.default.fileExists(atPath: expandedPath)
             let stats = try database.fetchRecordStats(forSourceId: adapter.sourceId)
             healthInfos.append(AgentHealthInfo(
                 id: adapter.sourceId,

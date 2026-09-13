@@ -118,5 +118,69 @@ final class PricingEngineTests: XCTestCase {
         XCTAssertTrue(patterns.contains("deepseek-chat*"))
         XCTAssertTrue(patterns.contains("deepseek-coder*"))
         XCTAssertTrue(patterns.contains("deepseek-reasoner*"))
+        XCTAssertTrue(patterns.contains("deepseek-r1*"))
+        XCTAssertTrue(patterns.contains("gemini*"))
+        XCTAssertTrue(patterns.contains("qwen*"))
+    }
+
+    func testProviderPrefixMatching() {
+        let engine = PricingEngine()
+        // Provider prefix with slash
+        let costSlash = engine.calculateCost(
+            model: "anthropic/claude-3-5-sonnet",
+            input: 1_000_000,
+            output: 100_000,
+            cacheRead: 500_000,
+            cacheWrite: 200_000
+        )
+        XCTAssertGreaterThan(costSlash, 0.0)
+        XCTAssertEqual(costSlash, 5.40, accuracy: 0.001)
+
+        // Provider prefix with colon
+        let costColon = engine.calculateCost(
+            model: "anthropic:claude-3-5-sonnet",
+            input: 1_000_000,
+            output: 100_000,
+            cacheRead: 500_000,
+            cacheWrite: 200_000
+        )
+        XCTAssertGreaterThan(costColon, 0.0)
+        XCTAssertEqual(costColon, 5.40, accuracy: 0.001)
+    }
+
+    func testDeepSeekR1AndQwenPricing() {
+        let engine = PricingEngine()
+        // DeepSeek R1: input $0.55/M, output $2.19/M, cache read $0.14/M, cache write $0.55/M
+        let costR1 = engine.calculateCost(
+            model: "deepseek-r1",
+            input: 1_000_000,
+            output: 1_000_000,
+            cacheRead: 1_000_000,
+            cacheWrite: 1_000_000
+        )
+        XCTAssertGreaterThan(costR1, 0.0)
+        XCTAssertEqual(costR1, 3.43, accuracy: 0.001)
+
+        // Qwen base model: input $0.35/M, output $1.40/M, cache read $0.07/M, cache write $0.35/M
+        let costQwen = engine.calculateCost(
+            model: "qwen",
+            input: 1_000_000,
+            output: 1_000_000,
+            cacheRead: 1_000_000,
+            cacheWrite: 1_000_000
+        )
+        XCTAssertGreaterThan(costQwen, 0.0)
+        XCTAssertEqual(costQwen, 2.17, accuracy: 0.001)
+
+        // Qwen derivative
+        let costQwenCoder = engine.calculateCost(
+            model: "qwen2.5-coder-32b",
+            input: 1_000_000,
+            output: 1_000_000,
+            cacheRead: 1_000_000,
+            cacheWrite: 1_000_000
+        )
+        XCTAssertGreaterThan(costQwenCoder, 0.0)
+        XCTAssertEqual(costQwenCoder, 2.17, accuracy: 0.001)
     }
 }

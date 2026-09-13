@@ -120,11 +120,17 @@ public final class PricingEngine: @unchecked Sendable {
     public static func defaultRules() -> [ModelPricing] {
         return [
             // Claude Models
+            ModelPricing(modelPattern: "claude-opus-4*", inputPerMillion: 15.0, outputPerMillion: 75.0, cacheReadPerMillion: 1.50, cacheWritePerMillion: 18.75),
+            ModelPricing(modelPattern: "claude-sonnet-4*", inputPerMillion: 3.0, outputPerMillion: 15.0, cacheReadPerMillion: 0.30, cacheWritePerMillion: 3.75),
+            ModelPricing(modelPattern: "claude-haiku-4*", inputPerMillion: 0.80, outputPerMillion: 4.00, cacheReadPerMillion: 0.08, cacheWritePerMillion: 1.00),
             ModelPricing(modelPattern: "claude-3-7-sonnet*", inputPerMillion: 3.0, outputPerMillion: 15.0, cacheReadPerMillion: 0.30, cacheWritePerMillion: 3.75),
             ModelPricing(modelPattern: "claude-3-5-sonnet*", inputPerMillion: 3.0, outputPerMillion: 15.0, cacheReadPerMillion: 0.30, cacheWritePerMillion: 3.75),
             ModelPricing(modelPattern: "claude-3-5-haiku*", inputPerMillion: 0.80, outputPerMillion: 4.00, cacheReadPerMillion: 0.08, cacheWritePerMillion: 1.00),
             ModelPricing(modelPattern: "claude-3-opus*", inputPerMillion: 15.0, outputPerMillion: 75.0, cacheReadPerMillion: 1.50, cacheWritePerMillion: 18.75),
             // OpenAI Models
+            ModelPricing(modelPattern: "gpt-5*", inputPerMillion: 1.25, outputPerMillion: 10.00, cacheReadPerMillion: 0.125, cacheWritePerMillion: 1.25),
+            ModelPricing(modelPattern: "gpt-4.1*", inputPerMillion: 2.00, outputPerMillion: 8.00, cacheReadPerMillion: 0.50, cacheWritePerMillion: 2.00),
+            ModelPricing(modelPattern: "o4-mini*", inputPerMillion: 1.10, outputPerMillion: 4.40, cacheReadPerMillion: 0.275, cacheWritePerMillion: 1.10),
             ModelPricing(modelPattern: "gpt-4o*", inputPerMillion: 2.50, outputPerMillion: 10.00, cacheReadPerMillion: 1.25, cacheWritePerMillion: 2.50),
             ModelPricing(modelPattern: "gpt-4o-mini*", inputPerMillion: 0.15, outputPerMillion: 0.60, cacheReadPerMillion: 0.075, cacheWritePerMillion: 0.15),
             ModelPricing(modelPattern: "o1*", inputPerMillion: 15.0, outputPerMillion: 60.0, cacheReadPerMillion: 7.50, cacheWritePerMillion: 15.0),
@@ -132,7 +138,24 @@ public final class PricingEngine: @unchecked Sendable {
             // DeepSeek Models
             ModelPricing(modelPattern: "deepseek-chat*", inputPerMillion: 0.14, outputPerMillion: 0.28, cacheReadPerMillion: 0.014, cacheWritePerMillion: 0.14),
             ModelPricing(modelPattern: "deepseek-coder*", inputPerMillion: 0.14, outputPerMillion: 0.28, cacheReadPerMillion: 0.014, cacheWritePerMillion: 0.14),
-            ModelPricing(modelPattern: "deepseek-reasoner*", inputPerMillion: 0.55, outputPerMillion: 2.19, cacheReadPerMillion: 0.14, cacheWritePerMillion: 0.55)
+            ModelPricing(modelPattern: "deepseek-reasoner*", inputPerMillion: 0.55, outputPerMillion: 2.19, cacheReadPerMillion: 0.14, cacheWritePerMillion: 0.55),
+            ModelPricing(modelPattern: "deepseek-r1*", inputPerMillion: 0.55, outputPerMillion: 2.19, cacheReadPerMillion: 0.14, cacheWritePerMillion: 0.55),
+            ModelPricing(modelPattern: "deepseek-v3*", inputPerMillion: 0.27, outputPerMillion: 1.10, cacheReadPerMillion: 0.027, cacheWritePerMillion: 0.27),
+            // Google Gemini Models
+            ModelPricing(modelPattern: "gemini-2.5-pro*", inputPerMillion: 1.25, outputPerMillion: 10.00, cacheReadPerMillion: 0.125, cacheWritePerMillion: 1.25),
+            ModelPricing(modelPattern: "gemini-2.5-flash*", inputPerMillion: 0.30, outputPerMillion: 2.50, cacheReadPerMillion: 0.03, cacheWritePerMillion: 0.30),
+            ModelPricing(modelPattern: "gemini-3*", inputPerMillion: 2.00, outputPerMillion: 12.00, cacheReadPerMillion: 0.20, cacheWritePerMillion: 2.00),
+            ModelPricing(modelPattern: "gemini-*", inputPerMillion: 1.25, outputPerMillion: 10.00, cacheReadPerMillion: 0.125, cacheWritePerMillion: 1.25),
+            ModelPricing(modelPattern: "gemini*", inputPerMillion: 1.25, outputPerMillion: 10.00, cacheReadPerMillion: 0.125, cacheWritePerMillion: 1.25),
+            // Alibaba Qwen Models
+            ModelPricing(modelPattern: "qwen3*", inputPerMillion: 0.35, outputPerMillion: 1.40, cacheReadPerMillion: 0.07, cacheWritePerMillion: 0.35),
+            ModelPricing(modelPattern: "qwen-*", inputPerMillion: 0.35, outputPerMillion: 1.40, cacheReadPerMillion: 0.07, cacheWritePerMillion: 0.35),
+            ModelPricing(modelPattern: "qwen*", inputPerMillion: 0.35, outputPerMillion: 1.40, cacheReadPerMillion: 0.07, cacheWritePerMillion: 0.35),
+            // Moonshot Kimi Models
+            ModelPricing(modelPattern: "kimi-k2*", inputPerMillion: 0.60, outputPerMillion: 2.50, cacheReadPerMillion: 0.06, cacheWritePerMillion: 0.60),
+            ModelPricing(modelPattern: "kimi*", inputPerMillion: 0.60, outputPerMillion: 2.50, cacheReadPerMillion: 0.06, cacheWritePerMillion: 0.60),
+            // Zhipu GLM Models
+            ModelPricing(modelPattern: "glm-*", inputPerMillion: 0.50, outputPerMillion: 1.50, cacheReadPerMillion: 0.05, cacheWritePerMillion: 0.50)
         ]
     }
 
@@ -155,6 +178,18 @@ public final class PricingEngine: @unchecked Sendable {
         return inputCost + outputCost + cacheReadCost + cacheWriteCost
     }
 
+    private func matchCompiledRule(for candidate: String) -> Int {
+        for (index, compiled) in compiledRules.enumerated() {
+            let hit = compiled.isPrefixMatch
+                ? candidate.hasPrefix(compiled.prefix)
+                : candidate == compiled.prefix
+            if hit {
+                return index
+            }
+        }
+        return -1
+    }
+
     /// Index into `sortedRules` for `model`, or `-1` when nothing matches.
     /// Model names repeat heavily during a sync, so the resolved index is
     /// memoized; the underlying rules are immutable after `init`.
@@ -167,14 +202,17 @@ public final class PricingEngine: @unchecked Sendable {
         lock.unlock()
 
         let lower = model.lowercased()
-        var resolved = -1
-        for (index, compiled) in compiledRules.enumerated() {
-            let hit = compiled.isPrefixMatch
-                ? lower.hasPrefix(compiled.prefix)
-                : lower == compiled.prefix
-            if hit {
-                resolved = index
-                break
+        var resolved = matchCompiledRule(for: lower)
+
+        if resolved == -1 {
+            var candidate = lower
+            if candidate.contains("/") {
+                candidate = String(candidate.split(separator: "/").last ?? "")
+                resolved = matchCompiledRule(for: candidate)
+            }
+            if resolved == -1 && candidate.contains(":") {
+                candidate = String(candidate.split(separator: ":").last ?? "")
+                resolved = matchCompiledRule(for: candidate)
             }
         }
 

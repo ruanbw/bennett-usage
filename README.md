@@ -1,6 +1,6 @@
 # Bennett Usage
 
-macOS 菜单栏常驻的 AI coding 助手 Token 用量统计。Claude Code / OpenAI Codex / Gemini CLI / Oh My Pi / Pi Agent / Antigravity，一个菜单栏图标加一个 Dashboard，全部看清。
+macOS 菜单栏常驻的 AI coding 助手 Token 用量统计。Claude Code / OpenAI Codex / Gemini CLI / Qwen Code / OpenCode / Roo Code·Cline / DSH Harness / Oh My Pi / Pi Agent / Antigravity，一个菜单栏图标加一个 Dashboard，全部看清。Cursor / Copilot / Trae 显示安装状态（云端计费，需 API 才能取数）。
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -9,7 +9,7 @@ macOS 菜单栏常驻的 AI coding 助手 Token 用量统计。Claude Code / Ope
 - **菜单栏速览**：常驻显示今日 Token，点击弹出今日用量、预估费用、各工具分布，一键立即同步。
 - **Dashboard**：24 小时 / 今日 / 7 天 / 30 天 / 过去一年 / 按年查看；小时级 Token 趋势（按模型堆叠，柱状 / 折线可切）；工具消耗占比、模型消耗占比；年度热力图（日历 / 月趋势可切）；项目排行；缓存命中统计。
 - **设置**：通用（语言、自动刷新频率）、Agent 状态（是否已安装、立即重扫）、计价与汇率（USD / CNY、自定义汇率）、数据与存储（数据库位置、一键清空）、关于。
-- **6 个数据源**：本地解析各工具会话记录，无需 API Key，纯本地 SQLite 存储，FSEvents 文件监听自动同步。
+- **13 个数据源**：本地解析各工具会话记录，无需 API Key，纯本地 SQLite 存储，FSEvents 文件监听自动同步（Cursor / Copilot / Trae 为云端计费，仅检测安装状态）。
 - **中英双语**：简体中文 / English / 跟随系统。
 
 ![菜单栏弹窗](docs/screenshots/popover.png)
@@ -33,14 +33,21 @@ swift build -c release
 
 ## 数据来源
 
-| 工具 | 默认路径 |
-| --- | --- |
-| Claude Code | `~/.claude` |
-| OpenAI Codex | `~/.codex` |
-| Gemini CLI | `~/.gemini` |
-| Oh My Pi | `~/.omp/agent/sessions` |
-| Pi Agent | `~/.pi/agent/sessions` |
-| Antigravity | `~/.gemini/antigravity/conversations` |
+| 工具 | 默认路径 | 说明 |
+| --- | --- | --- |
+| Claude Code | `~/.claude/projects` | JSONL transcript，按 `message.id` 去重 |
+| OpenAI Codex | `~/.codex/sessions` | rollout JSONL 的 `token_count` 事件 |
+| Gemini CLI | `~/.gemini/tmp` | session JSONL |
+| Qwen Code | `~/.qwen/tmp`（`QWEN_HOME` 可改） | Gemini 分叉，同格式 |
+| OpenCode | `~/.local/share/opencode` | `opencode.db`，老版本走 `storage/message` |
+| Roo Code·Cline·Kilo | VSCode `globalStorage/*/tasks` | `api_conversation_history.json` |
+| DSH Harness | `~/.dsh/sessions`（`DSH_HOME` 可改） | `session.v3.jsonl.zstd`，无 zstd 时回退 projcache |
+| Oh My Pi | `~/.omp/agent/sessions` | 另支持 `~/.omp/stats.db` |
+| Pi Agent | `~/.pi/agent/sessions` | |
+| Antigravity | `~/.gemini/antigravity/conversations` | |
+| GitHub Copilot | `~/.copilot` | 仅检测安装，token 需 GitHub API |
+| Cursor | `~/Library/Application Support/Cursor` | 仅检测安装，token 需 Dashboard API |
+| Trae | `~/.trae` | 仅检测安装，云端计费 |
 
 数据库在 `~/Library/Application Support/BennettUsage/usage.db`，删掉即清零重算。
 

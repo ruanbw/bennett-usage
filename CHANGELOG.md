@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.1.0 — 2026-09-14
+
+数据源 6 → 13 个，之前占位的 Claude / Codex 转正。
+
+### 新增适配器
+
+- Claude Code：`~/.claude/projects` JSONL 真实解析，按 `message.id` 去重（流式扇出不重复计）
+- OpenAI Codex：`~/.codex/sessions` rollout 日志 `token_count` 事件增量解析
+- Qwen Code：`~/.qwen`（`QWEN_HOME` 可改），Gemini 同构
+- OpenCode：`opencode.db` SQLite，`storage/message` JSON 回退
+- Roo Code·Cline·Kilo：VSCode 系 `globalStorage/*/tasks` 历史
+- DSH Harness：`session.v3.jsonl.zstd` 逐 step 解析（`zstd` CLI），无 CLI 时回退 projcache 累计 delta
+- GitHub Copilot / Cursor / Trae：云端计费，仅检测安装状态（等 API 适配器）
+
+### 其他
+
+- 计价新增 Claude-4、GPT-5/4.1、o4-mini、Gemini-2.5/3、Qwen3、Kimi-K2、GLM、DeepSeek-V3/R1，支持 provider/model 前缀自动剥离
+- 修复 Codex rate-limit 广播事件导致的用量虚增、DSH 增量二次同步重复计费、Roo Code 嵌套 usage 解析与 Agent Health 多路径探测
+- 150 个测试全绿
+
 ## v1.0.0 — 2026-09-13
 
 第一个正式版本：macOS 菜单栏常驻，聚合 6 个 AI coding 助手的本地 Token 用量。

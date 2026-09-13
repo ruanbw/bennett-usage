@@ -189,7 +189,7 @@ final class MetricsAggregatorTests: XCTestCase {
         try db.insertRecords([r1])
 
         let healthInfos = try await aggregator.fetchAgentHealthInfos()
-        XCTAssertEqual(healthInfos.count, 6)
+        XCTAssertEqual(healthInfos.count, 13)
         let ids = Set(healthInfos.map { $0.id })
         XCTAssertTrue(ids.contains("pi"))
         XCTAssertTrue(ids.contains("omp"))
@@ -197,11 +197,55 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertTrue(ids.contains("codex"))
         XCTAssertTrue(ids.contains("gemini"))
         XCTAssertTrue(ids.contains("antigravity"))
+        XCTAssertTrue(ids.contains("opencode"))
+        XCTAssertTrue(ids.contains("roo"))
+        XCTAssertTrue(ids.contains("qwen"))
+        XCTAssertTrue(ids.contains("copilot"))
+        XCTAssertTrue(ids.contains("cursor"))
+        XCTAssertTrue(ids.contains("trae"))
+        XCTAssertTrue(ids.contains("dsh"))
 
         let claudeInfo = healthInfos.first(where: { $0.id == "claude" })
         XCTAssertNotNil(claudeInfo)
         XCTAssertEqual(claudeInfo?.recordCount, 1)
         XCTAssertNotNil(claudeInfo?.lastRecordTimestamp)
+    }
+
+    func testFetchAgentHealthInfosInstalledDetection() async throws {
+        struct MockDetectedAdapter: AgentSourceAdapter, @unchecked Sendable {
+            let sourceId = "mock-detected"
+            let displayName = "Mock Detected"
+            let brandColorHex = "#FF0000"
+            let sfSymbolIcon = "wrench"
+            let defaultPath = "/tmp/definitely-non-existent-path-\(UUID().uuidString)"
+            let detectedUrl: URL?
+
+            func detectDefaultPath() -> URL? {
+                detectedUrl
+            }
+
+            func fetchIncrementalRecords(
+                from directory: URL,
+                since cursor: SyncCursor?
+            ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+                ([], SyncCursor.timestamp(Date()))
+            }
+        }
+
+        // When detectDefaultPath() returns a URL, isInstalled is true even if defaultPath does not exist
+        let tempDir = FileManager.default.temporaryDirectory
+        let adapterWithDetected = MockDetectedAdapter(detectedUrl: tempDir)
+        let expandedWith = (adapterWithDetected.defaultPath as NSString).expandingTildeInPath
+        let detectedUrlWith = adapterWithDetected.detectDefaultPath()
+        let isInstalledWith = detectedUrlWith != nil || FileManager.default.fileExists(atPath: expandedWith)
+        XCTAssertTrue(isInstalledWith)
+
+        // When detectDefaultPath() returns nil and defaultPath does not exist, isInstalled is false
+        let adapterWithoutDetected = MockDetectedAdapter(detectedUrl: nil)
+        let expandedWithout = (adapterWithoutDetected.defaultPath as NSString).expandingTildeInPath
+        let detectedUrlWithout = adapterWithoutDetected.detectDefaultPath()
+        let isInstalledWithout = detectedUrlWithout != nil || FileManager.default.fileExists(atPath: expandedWithout)
+        XCTAssertFalse(isInstalledWithout)
     }
 
     func testFetchHeatmapWithToolFilter() async throws {

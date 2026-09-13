@@ -25,6 +25,14 @@ public struct AgentFilterBarView: View {
         case "claude": return "Claude Code"
         case "codex": return "OpenAI Codex"
         case "gemini": return "Gemini CLI"
+        case "antigravity": return "Antigravity"
+        case "opencode": return "OpenCode"
+        case "roo": return "Roo Code · Cline"
+        case "qwen": return "Qwen Code"
+        case "copilot": return "GitHub Copilot"
+        case "cursor": return "Cursor"
+        case "trae": return "Trae"
+        case "dsh": return "DSH Harness"
         default: return agent.capitalized
         }
     }
