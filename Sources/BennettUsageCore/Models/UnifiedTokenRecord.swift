@@ -16,16 +16,29 @@ public struct UnifiedTokenRecord: Identifiable, Sendable, Codable, Equatable {
     public var totalTokens: Int { inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens }
     public let rawCostUSD: Double?
 
-    /// Fixed-format machine-readable date; pinned to POSIX locale + Gregorian
-    /// calendar so non-Gregorian user locales cannot corrupt the year.
-    private static let dayKeyFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone.current
-        return formatter
-    }()
+    /// Fixed-format machine-readable date; pinned to Gregorian calendar so
+    /// non-Gregorian user locales cannot corrupt the year. Built from date
+    /// components with integer interpolation instead of a shared
+    /// DateFormatter: identical output ("yyyy-MM-dd" in the current time
+    /// zone) with no ICU setup, and no shared mutable formatter on the
+    /// per-record sync hot path (DateFormatter is not thread-safe).
+    /// `Calendar` is a value type, so each call works on a local copy of the
+    /// cached base calendar. Deliberately not `String(format:)`: the printf
+    /// parser costs ~12µs per call, several times a formatted conversion.
+    private static let gregorianCalendar = Calendar(identifier: .gregorian)
+
+    static func dayKey(for date: Date) -> String {
+        var calendar = Self.gregorianCalendar
+        calendar.timeZone = TimeZone.current
+        let comps = calendar.dateComponents([.year, .month, .day], from: date)
+        // Timestamps are real-world dates (year 1000...9999); the fallback
+        // branch keeps gigantic/negative years sane without slowing the hot path.
+        let y = comps.year ?? 0
+        let yearStr = y >= 1000 && y <= 9999 ? String(y) : String(format: "%04d", y)
+        let m = comps.month ?? 0
+        let d = comps.day ?? 0
+        return "\(yearStr)-\(m < 10 ? "0\(m)" : "\(m)")-\(d < 10 ? "0\(d)" : "\(d)")"
+    }
 
     public init(
         id: String,
@@ -48,7 +61,7 @@ public struct UnifiedTokenRecord: Identifiable, Sendable, Codable, Equatable {
         if let dayKey = dayKey {
             self.dayKey = dayKey
         } else {
-            self.dayKey = Self.dayKeyFormatter.string(from: timestamp)
+            self.dayKey = Self.dayKey(for: timestamp)
         }
         self.sessionKey = sessionKey
         self.projectFolder = projectFolder

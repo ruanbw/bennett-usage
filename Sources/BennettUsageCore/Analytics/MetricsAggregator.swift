@@ -189,6 +189,16 @@ public final class MetricsAggregator: Sendable {
         database.path
     }
 
+    /// Narrows rollups to one tool without per-row String allocations. Stored
+    /// sourceIds are lowercase slugs, so the filter is normalized once and
+    /// rows compare allocation-free and case-insensitively.
+    private func filteredByTool(_ rollups: [DailyRollup], toolFilter: String?) -> [DailyRollup] {
+        guard let tool = toolFilter?.trimmingCharacters(in: .whitespacesAndNewlines), !tool.isEmpty else {
+            return rollups
+        }
+        return rollups.filter { $0.sourceId.compare(tool, options: .caseInsensitive) == .orderedSame }
+    }
+
     public func fetchAllTimeTotals(toolFilter: String? = nil) async throws -> AllTimeTotals {
         try database.fetchAllTimeTotals(sourceId: toolFilter)
     }
@@ -206,11 +216,7 @@ public final class MetricsAggregator: Sendable {
     }
 
     public func fetchAnnualHeatmap(year: Int, toolFilter: String? = nil) async throws -> [HeatmapDayCell] {
-        var rollups = try database.fetchDailyRollups(forYear: year)
-        if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
-        }
+        let rollups = filteredByTool(try database.fetchDailyRollups(forYear: year), toolFilter: toolFilter)
         var rollupsByDay: [String: [DailyRollup]] = [:]
         for r in rollups {
             rollupsByDay[r.dayKey, default: []].append(r)
@@ -229,21 +235,19 @@ public final class MetricsAggregator: Sendable {
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? nextYearDate
         let endDate = min(nextYearDate, tomorrow)
 
-        let dayFormatter = DateFormatter()
-        dayFormatter.dateFormat = "yyyy-MM-dd"
-        dayFormatter.timeZone = TimeZone.current
-
         var days: [(Date, String, Int, Double, [String: Int])] = []
         var currentDate = startDate
         var maxTokens = 0
 
         while currentDate < endDate {
-            let dayKey = dayFormatter.string(from: currentDate)
+            let dayKey = UnifiedTokenRecord.dayKey(for: currentDate)
             let items = rollupsByDay[dayKey] ?? []
-            let dayTokens = items.reduce(0) { $0 + $1.totalTokens }
-            let dayCost = items.reduce(0.0) { $0 + $1.costUSD }
+            var dayTokens = 0
+            var dayCost = 0.0
             var breakdown: [String: Int] = [:]
             for item in items {
+                dayTokens += item.totalTokens
+                dayCost += item.costUSD
                 breakdown[item.sourceId, default: 0] += item.totalTokens
             }
 
@@ -275,19 +279,18 @@ public final class MetricsAggregator: Sendable {
     }
 
     public func fetchTodaySummary() async throws -> TodaySummary {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone.current
-        let todayKey = formatter.string(from: Date())
+        let todayKey = UnifiedTokenRecord.dayKey(for: Date())
 
         let rollups = try database.fetchDailyRollups(dayKey: todayKey)
 
-        let totalTokens = rollups.reduce(0) { $0 + $1.totalTokens }
-        let totalCost = rollups.reduce(0.0) { $0 + $1.costUSD }
+        var totalTokens = 0
+        var totalCost = 0.0
         var toolTokens: [String: Int] = [:]
         var toolCosts: [String: Double] = [:]
 
         for r in rollups {
+            totalTokens += r.totalTokens
+            totalCost += r.costUSD
             toolTokens[r.sourceId, default: 0] += r.totalTokens
             toolCosts[r.sourceId, default: 0.0] += r.costUSD
         }
@@ -336,16 +339,14 @@ public final class MetricsAggregator: Sendable {
     }
 
     public func fetchAnnualSummary(year: Int, toolFilter: String? = nil) async throws -> (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String, activeDays: Int, totalDays: Int) {
-        var rollups = try database.fetchDailyRollups(forYear: year)
-        if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
-        }
-        let annualTokens = rollups.reduce(0) { $0 + $1.totalTokens }
-        let annualCostUSD = rollups.reduce(0.0) { $0 + $1.costUSD }
+        let rollups = filteredByTool(try database.fetchDailyRollups(forYear: year), toolFilter: toolFilter)
+        var annualTokens = 0
+        var annualCostUSD = 0.0
         var toolTokens: [String: Int] = [:]
         var dayTokens: [String: Int] = [:]
         for r in rollups {
+            annualTokens += r.totalTokens
+            annualCostUSD += r.costUSD
             toolTokens[r.sourceId, default: 0] += r.totalTokens
             dayTokens[r.dayKey, default: 0] += r.totalTokens
         }
@@ -406,17 +407,9 @@ public final class MetricsAggregator: Sendable {
             return []
         }
 
-        let dayFormatter = DateFormatter()
-        dayFormatter.dateFormat = "yyyy-MM-dd"
-        dayFormatter.timeZone = TimeZone.current
-
-        let startKey = dayFormatter.string(from: startDate)
-        let endKey = dayFormatter.string(from: today)
-        var rollups = try database.fetchDailyRollups(startDate: startKey, endDate: endKey)
-        if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
-        }
+        let startKey = UnifiedTokenRecord.dayKey(for: startDate)
+        let endKey = UnifiedTokenRecord.dayKey(for: today)
+        let rollups = filteredByTool(try database.fetchDailyRollups(startDate: startKey, endDate: endKey), toolFilter: toolFilter)
 
         var rollupsByDay: [String: [DailyRollup]] = [:]
         for r in rollups {
@@ -428,12 +421,14 @@ public final class MetricsAggregator: Sendable {
         var maxTokens = 0
 
         while currentDate <= today {
-            let dayKey = dayFormatter.string(from: currentDate)
+            let dayKey = UnifiedTokenRecord.dayKey(for: currentDate)
             let items = rollupsByDay[dayKey] ?? []
-            let dayTokens = items.reduce(0) { $0 + $1.totalTokens }
-            let dayCost = items.reduce(0.0) { $0 + $1.costUSD }
+            var dayTokens = 0
+            var dayCost = 0.0
             var breakdown: [String: Int] = [:]
             for item in items {
+                dayTokens += item.totalTokens
+                dayCost += item.costUSD
                 breakdown[item.sourceId, default: 0] += item.totalTokens
             }
 
@@ -536,15 +531,15 @@ public final class MetricsAggregator: Sendable {
             let bucketModels = Self.modelBreakdowns(from: modelBuckets, bucketCount: 24) { 23 + $0 }
             let topModels = Self.topModels(across: bucketModels)
 
-            let hourFormatter = DateFormatter()
-            hourFormatter.dateFormat = "HH:00"
-            hourFormatter.timeZone = TimeZone.current
-
             var trendPoints: [TrendPoint] = []
             for i in 0..<24 {
                 let bucketStart = calendar.date(byAdding: .hour, value: -(23 - i), to: currentHour) ?? currentHour
+                // Same "HH:00" rendering as the per-call formatter (and the
+                // .today branch) without per-refresh ICU setup or printf.
+                let hour = calendar.component(.hour, from: bucketStart)
+                let hourStr = hour < 10 ? "0\(hour)" : "\(hour)"
                 trendPoints.append(TrendPoint(
-                    label: hourFormatter.string(from: bucketStart),
+                    label: "\(hourStr):00",
                     tokens: bucketTokens[i],
                     costUSD: bucketCosts[i],
                     modelTokens: Self.cappedModelTokens(bucketModels[i], top: topModels)
@@ -600,8 +595,9 @@ public final class MetricsAggregator: Sendable {
 
             var trendPoints: [TrendPoint] = []
             for hour in 0...currentHour {
+                let hourStr = hour < 10 ? "0\(hour)" : "\(hour)"
                 trendPoints.append(TrendPoint(
-                    label: String(format: "%02d:00", hour),
+                    label: "\(hourStr):00",
                     tokens: bucketTokens[hour],
                     costUSD: bucketCosts[hour],
                     modelTokens: Self.cappedModelTokens(bucketModels[hour], top: topModels)
@@ -631,17 +627,10 @@ public final class MetricsAggregator: Sendable {
                 return PeriodMetrics(totalTokens: 0, totalCostUSD: 0, mostActiveTool: "None", trendPoints: [], toolDistribution: [], projectRankings: [])
             }
 
-            let dayFormatter = DateFormatter()
-            dayFormatter.dateFormat = "yyyy-MM-dd"
-            dayFormatter.timeZone = TimeZone.current
-            let startKey = dayFormatter.string(from: startDate)
-            let endKey = dayFormatter.string(from: now)
+            let startKey = UnifiedTokenRecord.dayKey(for: startDate)
+            let endKey = UnifiedTokenRecord.dayKey(for: now)
 
-            var rollups = try database.fetchDailyRollups(startDate: startKey, endDate: endKey)
-            if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
-            }
+            let rollups = filteredByTool(try database.fetchDailyRollups(startDate: startKey, endDate: endKey), toolFilter: toolFilter)
             let totals = (try? database.fetchPeriodTotals(startDate: startKey, endDate: endKey, sourceId: toolFilter)) ?? DatabaseManager.PeriodTotals()
             let totalTokens = totals.totalTokens > 0 ? totals.totalTokens : rollups.reduce(0) { $0 + $1.totalTokens }
             let totalCost = totals.totalTokens > 0 ? totals.totalCostUSD : rollups.reduce(0.0) { $0 + $1.costUSD }
@@ -675,11 +664,15 @@ public final class MetricsAggregator: Sendable {
             var trendPoints: [TrendPoint] = []
             var cur = startDate
             while cur <= now {
-                let key = dayFormatter.string(from: cur)
+                let key = UnifiedTokenRecord.dayKey(for: cur)
                 let label = labelFormatter.string(from: cur)
                 let dayRollups = rollupsByDay[key] ?? []
-                let dTokens = dayRollups.reduce(0) { $0 + $1.totalTokens }
-                let dCost = dayRollups.reduce(0.0) { $0 + $1.costUSD }
+                var dTokens = 0
+                var dCost = 0.0
+                for r in dayRollups {
+                    dTokens += r.totalTokens
+                    dCost += r.costUSD
+                }
                 trendPoints.append(TrendPoint(label: label, tokens: dTokens, costUSD: dCost, modelTokens: Self.cappedModelTokens(modelsByDay[key] ?? [:], top: topModels)))
                 guard let next = calendar.date(byAdding: .day, value: 1, to: cur) else { break }
                 cur = next
@@ -705,17 +698,10 @@ public final class MetricsAggregator: Sendable {
             guard let startDate = calendar.date(byAdding: .year, value: -1, to: now) else {
                 return PeriodMetrics(totalTokens: 0, totalCostUSD: 0, mostActiveTool: "None", trendPoints: [], toolDistribution: [], projectRankings: [])
             }
-            let dayFormatter = DateFormatter()
-            dayFormatter.dateFormat = "yyyy-MM-dd"
-            dayFormatter.timeZone = TimeZone.current
-            let startKey = dayFormatter.string(from: startDate)
-            let endKey = dayFormatter.string(from: now)
+            let startKey = UnifiedTokenRecord.dayKey(for: startDate)
+            let endKey = UnifiedTokenRecord.dayKey(for: now)
 
-            var rollups = try database.fetchDailyRollups(startDate: startKey, endDate: endKey)
-            if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
-            }
+            let rollups = filteredByTool(try database.fetchDailyRollups(startDate: startKey, endDate: endKey), toolFilter: toolFilter)
             let totals = (try? database.fetchPeriodTotals(startDate: startKey, endDate: endKey, sourceId: toolFilter)) ?? DatabaseManager.PeriodTotals()
             let totalTokens = totals.totalTokens > 0 ? totals.totalTokens : rollups.reduce(0) { $0 + $1.totalTokens }
             let totalCost = totals.totalTokens > 0 ? totals.totalCostUSD : rollups.reduce(0.0) { $0 + $1.costUSD }
@@ -725,9 +711,15 @@ public final class MetricsAggregator: Sendable {
             let cacheWriteTokens = totals.cacheWriteTokens
 
             var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
+            // Single pass groups months up front; the 12-bucket loop below
+            // becomes O(1) lookups instead of re-scanning rollups per month.
+            var monthTotals: [String: (tokens: Int, costUSD: Double)] = [:]
             for r in rollups {
                 let cur = toolTotals[r.sourceId] ?? (0, 0.0)
                 toolTotals[r.sourceId] = (cur.tokens + r.totalTokens, cur.costUSD + r.costUSD)
+                let month = String(r.dayKey.prefix(7))
+                let mt = monthTotals[month] ?? (0, 0.0)
+                monthTotals[month] = (mt.tokens + r.totalTokens, mt.costUSD + r.costUSD)
             }
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
@@ -752,9 +744,8 @@ public final class MetricsAggregator: Sendable {
                 let prefix = String(format: "%04d-%02d", y, m)
                 let monthLabel = monthFormatter.string(from: monthDate)
 
-                let monthRollups = rollups.filter { $0.dayKey.hasPrefix(prefix) }
-                let mTokens = monthRollups.reduce(0) { $0 + $1.totalTokens }
-                let mCost = monthRollups.reduce(0.0) { $0 + $1.costUSD }
+                let mTokens = monthTotals[prefix]?.tokens ?? 0
+                let mCost = monthTotals[prefix]?.costUSD ?? 0.0
                 trendPoints.append(TrendPoint(label: monthLabel, tokens: mTokens, costUSD: mCost, modelTokens: Self.cappedModelTokens(modelsByMonth[prefix] ?? [:], top: topModels)))
             }
 
@@ -775,11 +766,7 @@ public final class MetricsAggregator: Sendable {
             )
 
         case .year(let year):
-            var rollups = try database.fetchDailyRollups(forYear: year)
-            if let tool = toolFilter, !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let filterLower = tool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                rollups = rollups.filter { $0.sourceId.lowercased() == filterLower }
-            }
+            let rollups = filteredByTool(try database.fetchDailyRollups(forYear: year), toolFilter: toolFilter)
             let totals = (try? database.fetchPeriodTotals(year: year, sourceId: toolFilter)) ?? DatabaseManager.PeriodTotals()
             let totalTokens = totals.totalTokens > 0 ? totals.totalTokens : rollups.reduce(0) { $0 + $1.totalTokens }
             let totalCost = totals.totalTokens > 0 ? totals.totalCostUSD : rollups.reduce(0.0) { $0 + $1.costUSD }
@@ -789,9 +776,15 @@ public final class MetricsAggregator: Sendable {
             let cacheWriteTokens = totals.cacheWriteTokens
 
             var toolTotals: [String: (tokens: Int, costUSD: Double)] = [:]
+            // Single pass groups months up front; the per-month loop below
+            // becomes O(1) lookups instead of re-scanning rollups per month.
+            var monthTotals: [String: (tokens: Int, costUSD: Double)] = [:]
             for r in rollups {
                 let cur = toolTotals[r.sourceId] ?? (0, 0.0)
                 toolTotals[r.sourceId] = (cur.tokens + r.totalTokens, cur.costUSD + r.costUSD)
+                let month = String(r.dayKey.prefix(7))
+                let mt = monthTotals[month] ?? (0, 0.0)
+                monthTotals[month] = (mt.tokens + r.totalTokens, mt.costUSD + r.costUSD)
             }
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
@@ -819,9 +812,8 @@ public final class MetricsAggregator: Sendable {
             var trendPoints: [TrendPoint] = []
             for m in 1...12 where m <= monthCount {
                 let prefix = String(format: "%04d-%02d", year, m)
-                let monthRollups = rollups.filter { $0.dayKey.hasPrefix(prefix) }
-                let mTokens = monthRollups.reduce(0) { $0 + $1.totalTokens }
-                let mCost = monthRollups.reduce(0.0) { $0 + $1.costUSD }
+                let mTokens = monthTotals[prefix]?.tokens ?? 0
+                let mCost = monthTotals[prefix]?.costUSD ?? 0.0
                 trendPoints.append(TrendPoint(label: monthNames[m - 1], tokens: mTokens, costUSD: mCost, modelTokens: Self.cappedModelTokens(modelsByMonth[prefix] ?? [:], top: topModels)))
             }
             let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, startDate: "\(year)-01-01", endDate: "\(year)-12-31")) ?? []
