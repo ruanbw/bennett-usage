@@ -9,8 +9,12 @@ public final class DashboardWindowManager: NSObject, NSWindowDelegate {
     private let presentation = DashboardPresentationState()
 
     public func show(aggregator: MetricsAggregator, syncCoordinator: SyncCoordinator, openSettings: Bool = false) {
+        // Throttled UI sync: opening the dashboard is frequent and must not pay
+        // for a full-tree walk every time (U-01). If rows are actually inserted,
+        // SyncCoordinator itself posts .bennettUsageDataDidUpdate, so no extra
+        // post is needed here (see note below).
         Task {
-            _ = try? await syncCoordinator.syncAll()
+            _ = try? await syncCoordinator.syncForUI()
         }
 
         if let window = window {
@@ -19,7 +23,11 @@ public final class DashboardWindowManager: NSObject, NSWindowDelegate {
             if openSettings {
                 presentation.isShowingSettings = true
             }
-            NotificationCenter.default.post(name: .bennettUsageDataDidUpdate, object: nil)
+            // No manual .bennettUsageDataDidUpdate here: SyncCoordinator already
+            // posts it on real inserts, and DashboardContentView observes it via
+            // `.onReceive` + `loadDataThrottled()`. Posting unconditionally also
+            // forced a ~194 ms recompute even when the throttled sync changed
+            // nothing (U-01/U-12).
             return
         }
         let view = DashboardView(aggregator: aggregator, presentation: presentation, showSettingsInitially: openSettings)

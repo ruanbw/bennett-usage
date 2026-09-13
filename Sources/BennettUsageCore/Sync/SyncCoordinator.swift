@@ -10,6 +10,10 @@ public actor SyncCoordinator {
     // full-tree walk per event.
     private var isSyncing = false
     private var needsResync = false
+    // Throttle state for the UI-triggered entry point (`syncForUI`). Opening the
+    // dashboard / popover fires a sync on every interaction, so a full pass is
+    // coalesced to at most one per `minInterval` (U-01).
+    private var lastUISyncAt: Date?
 
     public init(
         database: DatabaseManager,
@@ -35,6 +39,32 @@ public actor SyncCoordinator {
             total += try await syncAllOnce(changedPaths: changedPaths)
         } while needsResync
         return total
+    }
+
+    /// UI-triggered sync entry point.
+    ///
+    /// `syncAll(changedPaths: nil)` runs a full-tree enumeration + per-file
+    /// `stat` for every adapter (~0.5–1 s on one core). Invoking it on every
+    /// window open or status-item click is the U-01 regression, so those entry
+    /// points go through here and bursts are coalesced to at most one full pass
+    /// per `minInterval`.
+    ///
+    /// - Parameters:
+    ///   - minInterval: minimum seconds between two UI-triggered full passes.
+    ///   - force: bypasses the throttle for explicit user intent (e.g. a
+    ///     “Sync Now” button), which must never be swallowed.
+    @discardableResult
+    public func syncForUI(minInterval: TimeInterval = 5, force: Bool = false) async throws -> Int {
+        if !force, let last = lastUISyncAt, Date().timeIntervalSince(last) < minInterval {
+            return 0
+        }
+        // Cooperates with `syncAll`'s own coalescing: if a pass is already
+        // running, `syncAll` returns 0, sets `needsResync`, and the in-flight
+        // pass re-runs — so the data still ends up fresh. On throw we leave
+        // `lastUISyncAt` untouched so the next UI sync retries.
+        let result = try await syncAll()
+        lastUISyncAt = Date()
+        return result
     }
 
     private func syncAllOnce(changedPaths: [String]? = nil) async throws -> Int {
@@ -102,11 +132,21 @@ public actor SyncCoordinator {
                     return record
                 }
 
-                // No new records and an unchanged cursor: nothing to persist.
+                // Persist and count only the rows actually inserted (U-12).
+                // `INSERT OR IGNORE` drops re-parsed duplicates, so the parsed
+                // count would over-report and post a no-op refresh notification
+                // (a full ~194 ms dashboard recompute) even when nothing
+                // changed. No new records and an unchanged cursor → nothing to
+                // persist (inserted stays 0).
+                var inserted = 0
                 if !pricedRecords.isEmpty || finalCursor != cursor {
-                    try database.insertRecords(pricedRecords, updateCursorFor: adapter.sourceId, cursor: finalCursor)
+                    inserted = try database.insertRecords(
+                        pricedRecords,
+                        updateCursorFor: adapter.sourceId,
+                        cursor: finalCursor
+                    )
                 }
-                totalIngested += pricedRecords.count
+                totalIngested += inserted
             } catch {
                 print("Error syncing adapter \(adapter.sourceId): \(error)")
             }

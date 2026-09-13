@@ -106,10 +106,15 @@ public final class StatusItemController: NSObject {
             popover.performClose(nil)
         } else {
             sizePopoverToContent()
-            // Show immediately with the cached summary; sync + refresh run async.
+            // Show immediately with the cached summary; refresh runs async.
+            // Opening the popover is frequent and must not run a full-tree sync
+            // every click (U-01), so this path uses the throttled UI sync. Any
+            // actually-inserted rows arrive via the notification it posts.
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             refreshData()
-            forceSync()
+            Task {
+                _ = try? await syncCoordinator.syncForUI()
+            }
         }
     }
 
@@ -127,9 +132,12 @@ public final class StatusItemController: NSObject {
         }
     }
 
+    /// Explicit user-initiated sync (the popover’s “Sync Now” button).
+    /// `force: true` bypasses the UI throttle so a deliberate refresh is never
+    /// swallowed, then the summary is refreshed.
     public func forceSync() {
         Task {
-            _ = try? await syncCoordinator.syncAll()
+            _ = try? await syncCoordinator.syncForUI(force: true)
             refreshData()
         }
     }
