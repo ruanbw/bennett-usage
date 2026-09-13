@@ -64,3 +64,6 @@ Icon
 
 # Tool state
 .superpowers/
+
+# Release packaging output (DMG built by scripts/package-dmg.sh)
+dist/
