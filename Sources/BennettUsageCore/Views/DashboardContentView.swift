@@ -1097,6 +1097,15 @@ fileprivate func updateHoveredDonut(
     setHovered(items.last?.name)
 }
 
+/// One trend bucket with its model rows pre-sorted. Lets `TrendChartCard`
+/// evaluate its O(P*M) aggregations once per body instead of re-running them
+/// at every use site (legend, scales, bar/line paths, tooltip).
+private struct TrendBucket: Identifiable {
+    let point: TrendPoint
+    let rows: [(model: String, tokens: Int)]
+    var id: String { point.id }
+}
+
 private struct TrendChartCard: View {
     let trendPoints: [TrendPoint]
     let trendTitle: String
@@ -1130,18 +1139,25 @@ private struct TrendChartCard: View {
 
             if trendPoints.contains(where: { $0.tokens > 0 }) {
                 let visibleLabels = visibleXAxisLabels(for: trendPoints)
+                let hasBreakdown = hasModelBreakdown
+                let modelNames = hasBreakdown ? activeModelNames() : []
+                let modelRange = modelNames.map { modelColors[$0] ?? .gray }
+                // Evaluated once per body: previously activeModelNames() ran up
+                // to 4x per body and breakdown(for:) re-sorted every bucket at
+                // each use site.
+                let buckets = trendPoints.map { TrendBucket(point: $0, rows: breakdown(for: $0)) }
                 Chart {
-                    if hasModelBreakdown {
+                    if hasBreakdown {
                         if trendChartType == .bar {
-                            ForEach(trendPoints) { item in
-                                ForEach(breakdown(for: item), id: \.model) { row in
+                            ForEach(buckets) { bucket in
+                                ForEach(bucket.rows, id: \.model) { row in
                                     BarMark(
-                                        x: .value("Period", item.label),
+                                        x: .value("Period", bucket.point.label),
                                         y: .value("Tokens", row.tokens)
                                     )
                                     .foregroundStyle(by: .value("Model", row.model))
                                     .cornerRadius(2)
-                                    .opacity(hoveredTrendPeriod == nil || hoveredTrendPeriod == item.label ? 1.0 : 0.35)
+                                    .opacity(hoveredTrendPeriod == nil || hoveredTrendPeriod == bucket.point.label ? 1.0 : 0.35)
                                 }
                             }
                         } else {
@@ -1152,7 +1168,7 @@ private struct TrendChartCard: View {
                             // `by:` is what gives each model its own series —
                             // a constant `foregroundStyle` puts every model on
                             // one polyline that jumps across the whole chart.
-                            ForEach(activeModelNames(), id: \.self) { model in
+                            ForEach(modelNames, id: \.self) { model in
                                 ForEach(trendPoints) { item in
                                     LineMark(
                                         x: .value("Period", item.label),
@@ -1163,11 +1179,11 @@ private struct TrendChartCard: View {
                                     .lineStyle(StrokeStyle(lineWidth: 2))
                                 }
                             }
-                            ForEach(trendPoints) { item in
-                                if hoveredTrendPeriod == item.label {
-                                    ForEach(breakdown(for: item), id: \.model) { row in
+                            ForEach(buckets) { bucket in
+                                if hoveredTrendPeriod == bucket.point.label {
+                                    ForEach(bucket.rows, id: \.model) { row in
                                         PointMark(
-                                            x: .value("Period", item.label),
+                                            x: .value("Period", bucket.point.label),
                                             y: .value("Tokens", row.tokens)
                                         )
                                         .foregroundStyle(modelColors[row.model] ?? .gray)
@@ -1270,8 +1286,9 @@ private struct TrendChartCard: View {
 
                             if let loc = trendHoverLocation,
                                let hovered = hoveredTrendPeriod,
-                               let point = trendPoints.first(where: { $0.label == hovered }) {
-                                let rows = hasModelBreakdown ? Array(breakdown(for: point).prefix(6)) : []
+                               let bucket = buckets.first(where: { $0.point.label == hovered }) {
+                                let point = bucket.point
+                                let rows = hasBreakdown ? Array(bucket.rows.prefix(6)) : []
                                 let tooltipSize = CGSize(width: rows.isEmpty ? 140 : 190, height: 60 + CGFloat(rows.count) * 15)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(point.label)
@@ -1314,7 +1331,7 @@ private struct TrendChartCard: View {
                 // The custom legend below the chart replaces Swift Charts'
                 // auto-generated one; leaving both rendered duplicated rows.
                 .chartLegend(.hidden)
-                .chartForegroundStyleScale(domain: activeModelNames(), range: activeModelNames().map { modelColors[$0] ?? .gray })
+                .chartForegroundStyleScale(domain: modelNames, range: modelRange)
                 .chartXAxis {
                     AxisMarks(values: visibleLabels) { value in
                         AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
@@ -1349,11 +1366,10 @@ private struct TrendChartCard: View {
                         }
                     }
                 }
-                if hasModelBreakdown {
-                    let legendModels = activeModelNames()
-                    if !legendModels.isEmpty {
+                if hasBreakdown {
+                    if !modelNames.isEmpty {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 6)], alignment: .leading, spacing: 6) {
-                            ForEach(legendModels, id: \.self) { model in
+                            ForEach(modelNames, id: \.self) { model in
                                 HStack(spacing: 6) {
                                     Circle().fill(modelColors[model] ?? .gray).frame(width: 8, height: 8)
                                     Text(model)
