@@ -14,8 +14,9 @@ public struct UnifiedTokenRecord: Identifiable, Sendable, Codable, Equatable {
     public let cacheReadTokens: Int
     public let cacheWriteTokens: Int
     public var totalTokens: Int { inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens }
-    public let rawCostUSD: Double?
-
+    /// Mutable so the sync coordinator can attach pricing in place instead of
+    /// rebuilding every unpriced record (all of its Strings) field by field.
+    public var rawCostUSD: Double?
     /// Fixed-format machine-readable date; pinned to Gregorian calendar so
     /// non-Gregorian user locales cannot corrupt the year. Built from date
     /// components with integer interpolation instead of a shared

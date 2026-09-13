@@ -50,6 +50,25 @@ public final class DatabaseManager: @unchecked Sendable {
     private static let insertChunkRows = 50
     /// Primary-key probe used to learn which of a batch's records are new.
     private static let recordExistsSQL = "SELECT 1 FROM unified_token_records WHERE id = ?;"
+    /// Constant-shape upserts routed through `cachedStatement` instead of
+    /// prepare/finalize on every `insertRecords` call.
+    private static let rollupUpsertSQL = """
+    INSERT INTO daily_rollups (day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(day_key, source_id) DO UPDATE SET
+        total_tokens = total_tokens + excluded.total_tokens,
+        input_tokens = input_tokens + excluded.input_tokens,
+        output_tokens = output_tokens + excluded.output_tokens,
+        cache_tokens = cache_tokens + excluded.cache_tokens,
+        cost_usd = cost_usd + excluded.cost_usd;
+    """
+    private static let cursorUpsertSQL = """
+    INSERT INTO sync_cursors (source_id, cursor_payload, last_synced_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(source_id) DO UPDATE SET
+        cursor_payload = excluded.cursor_payload,
+        last_synced_at = excluded.last_synced_at;
+    """
     /// Memoized chunk SQL by row count. A batch reuses the same one or two
     /// shapes for every chunk, so the string is joined once per shape instead of
     /// once per chunk. Only touched while `lock` is held.
@@ -245,6 +264,14 @@ public final class DatabaseManager: @unchecked Sendable {
         cursor: SyncCursor? = nil
     ) throws -> Int {
         guard !records.isEmpty || cursor != nil else { return 0 }
+        // Codec + clock work happens before the global lock: the critical
+        // section below should only cover SQLite stepping.
+        let encodedCursor: Data? = if sourceId != nil, let cursor {
+            try JSONEncoder().encode(cursor)
+        } else {
+            nil
+        }
+        let nowMillis = Int64(Date().timeIntervalSince1970 * 1000)
         lock.lock(); defer { lock.unlock() }
 
         var insertedCount = 0
@@ -330,21 +357,11 @@ public final class DatabaseManager: @unchecked Sendable {
                 }
 
                 if !rollupDeltas.isEmpty {
-                    let rollupSql = """
-                    INSERT INTO daily_rollups (day_key, source_id, total_tokens, input_tokens, output_tokens, cache_tokens, cost_usd)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(day_key, source_id) DO UPDATE SET
-                        total_tokens = total_tokens + excluded.total_tokens,
-                        input_tokens = input_tokens + excluded.input_tokens,
-                        output_tokens = output_tokens + excluded.output_tokens,
-                        cache_tokens = cache_tokens + excluded.cache_tokens,
-                        cost_usd = cost_usd + excluded.cost_usd;
-                    """
-                    var rollupStmt: OpaquePointer?
-                    guard sqlite3_prepare_v2(db, rollupSql, -1, &rollupStmt, nil) == SQLITE_OK else {
-                        throw NSError(domain: "DatabaseManager", code: 4, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare rollup statement: \(lastErrorMessage())"])
-                    }
-                    defer { sqlite3_finalize(rollupStmt) }
+                    let rollupStmt = try cachedStatement(
+                        sql: Self.rollupUpsertSQL,
+                        errorCode: 4,
+                        description: "rollup upsert statement"
+                    )
 
                     for (key, delta) in rollupDeltas {
                         sqlite3_bind_text(rollupStmt, 1, (key.dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
@@ -364,26 +381,18 @@ public final class DatabaseManager: @unchecked Sendable {
                 }
             }
 
-            if let sourceId = sourceId, let cursor = cursor {
-                let cursorData = try JSONEncoder().encode(cursor)
-                let cursorSql = """
-                INSERT INTO sync_cursors (source_id, cursor_payload, last_synced_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(source_id) DO UPDATE SET
-                    cursor_payload = excluded.cursor_payload,
-                    last_synced_at = excluded.last_synced_at;
-                """
-                var cursorStmt: OpaquePointer?
-                guard sqlite3_prepare_v2(db, cursorSql, -1, &cursorStmt, nil) == SQLITE_OK else {
-                    throw NSError(domain: "DatabaseManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare cursor statement: \(lastErrorMessage())"])
-                }
-                defer { sqlite3_finalize(cursorStmt) }
+            if let sourceId = sourceId, let cursorData = encodedCursor {
+                let cursorStmt = try cachedStatement(
+                    sql: Self.cursorUpsertSQL,
+                    errorCode: 5,
+                    description: "cursor upsert statement"
+                )
 
                 sqlite3_bind_text(cursorStmt, 1, (sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 _ = cursorData.withUnsafeBytes { rawBuffer in
                     sqlite3_bind_blob(cursorStmt, 2, rawBuffer.baseAddress, Int32(rawBuffer.count), SQLITE_TRANSIENT)
                 }
-                sqlite3_bind_int64(cursorStmt, 3, Int64(Date().timeIntervalSince1970 * 1000))
+                sqlite3_bind_int64(cursorStmt, 3, nowMillis)
 
                 let cursorStep = sqlite3_step(cursorStmt)
                 guard cursorStep == SQLITE_DONE else {

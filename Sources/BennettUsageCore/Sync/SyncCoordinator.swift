@@ -68,7 +68,8 @@ public actor SyncCoordinator {
     }
 
     private func syncAllOnce(changedPaths: [String]? = nil) async throws -> Int {
-        var totalIngested = 0
+        // Phase 1 (actor, cheap): eligibility is a few path-prefix checks.
+        var eligible: [(adapter: any AgentSourceAdapter, path: URL)] = []
         for adapter in registry.allAdapters() {
             guard let path = dataRoot(for: adapter) else { continue }
             // Event-driven sync: skip adapters whose watched tree contains
@@ -77,12 +78,50 @@ public actor SyncCoordinator {
                !Self.isPathAffected(root: path.path, changedPaths: changedPaths) {
                 continue
             }
-            do {
-                let cursor = try database.fetchCursor(for: adapter.sourceId)
-                let (records, newCursor) = try await Self.fetchOffActor(adapter, from: path, since: cursor)
+            eligible.append((adapter, path))
+        }
 
+        // Phase 2 (concurrent): cursor reads + the heavy fetch per adapter.
+        // `DatabaseManager` is lock-guarded and `fetchOffActor` is nonisolated,
+        // so per-adapter enumeration + parse latencies overlap instead of
+        // adding up. Only Sendable locals cross into the group, never `self`.
+        struct Fetched: Sendable {
+            let adapter: any AgentSourceAdapter
+            let path: URL
+            let cursor: SyncCursor?
+            let records: [UnifiedTokenRecord]
+            let newCursor: SyncCursor
+        }
+        let database = self.database
+        var fetched: [Fetched?] = Array(repeating: nil, count: eligible.count)
+        await withTaskGroup(of: (Int, Fetched?).self) { group in
+            for (index, item) in eligible.enumerated() {
+                group.addTask {
+                    do {
+                        let cursor = try database.fetchCursor(for: item.adapter.sourceId)
+                        let (records, newCursor) = try await Self.fetchOffActor(item.adapter, from: item.path, since: cursor)
+                        return (index, Fetched(adapter: item.adapter, path: item.path, cursor: cursor, records: records, newCursor: newCursor))
+                    } catch {
+                        print("Error syncing adapter \(item.adapter.sourceId): \(error)")
+                        return (index, nil)
+                    }
+                }
+            }
+            for await (index, result) in group {
+                fetched[index] = result
+            }
+        }
+
+        // Phase 3 (actor, serial, registry order): cutover handling, pricing,
+        // persistence. Cursor writes stay ordered and deterministic.
+        var totalIngested = 0
+        for slot in fetched {
+            guard let fetch = slot else { continue }
+            let adapter = fetch.adapter
+            do {
+                let cursor = fetch.cursor
                 let isCutover: Bool
-                switch (cursor, newCursor) {
+                switch (cursor, fetch.newCursor) {
                 case (.rowId, .fileOffsets):
                     isCutover = true
                 case (.fileOffsets, .rowId):
@@ -95,41 +134,26 @@ public actor SyncCoordinator {
                 let finalCursor: SyncCursor
                 if isCutover {
                     try database.resetRecords(for: adapter.sourceId)
-                    let (freshRecords, freshCursor) = try await Self.fetchOffActor(adapter, from: path, since: nil)
+                    let (freshRecords, freshCursor) = try await Self.fetchOffActor(adapter, from: fetch.path, since: nil)
                     finalRecords = freshRecords
                     finalCursor = freshCursor
                 } else {
-                    finalRecords = records
-                    finalCursor = newCursor
+                    finalRecords = fetch.records
+                    finalCursor = fetch.newCursor
                 }
 
-                // Attach pricing if missing
-                let pricedRecords = finalRecords.map { record -> UnifiedTokenRecord in
-                    if record.rawCostUSD == nil || record.rawCostUSD == 0.0 {
-                        let cost = pricingEngine.calculateCost(
-                            model: record.model,
-                            input: record.inputTokens,
-                            output: record.outputTokens,
-                            cacheRead: record.cacheReadTokens,
-                            cacheWrite: record.cacheWriteTokens
-                        )
-                        return UnifiedTokenRecord(
-                            id: record.id,
-                            sourceId: record.sourceId,
-                            timestamp: record.timestamp,
-                            dayKey: record.dayKey,
-                            sessionKey: record.sessionKey,
-                            projectFolder: record.projectFolder,
-                            model: record.model,
-                            provider: record.provider,
-                            inputTokens: record.inputTokens,
-                            outputTokens: record.outputTokens,
-                            cacheReadTokens: record.cacheReadTokens,
-                            cacheWriteTokens: record.cacheWriteTokens,
-                            rawCostUSD: cost
-                        )
-                    }
-                    return record
+                // Attach pricing if missing, in place: rebuilding every
+                // unpriced record copies all of its Strings field by field.
+                var pricedRecords = finalRecords
+                for i in pricedRecords.indices {
+                    guard pricedRecords[i].rawCostUSD == nil || pricedRecords[i].rawCostUSD == 0.0 else { continue }
+                    pricedRecords[i].rawCostUSD = pricingEngine.calculateCost(
+                        model: pricedRecords[i].model,
+                        input: pricedRecords[i].inputTokens,
+                        output: pricedRecords[i].outputTokens,
+                        cacheRead: pricedRecords[i].cacheReadTokens,
+                        cacheWrite: pricedRecords[i].cacheWriteTokens
+                    )
                 }
 
                 // Persist and count only the rows actually inserted (U-12).
