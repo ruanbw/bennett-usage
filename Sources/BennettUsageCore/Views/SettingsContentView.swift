@@ -113,13 +113,6 @@ public struct SettingsContentView: View {
         self._selectedCategory = State(initialValue: initialCategory)
     }
 
-    private var selectedLanguageBinding: Binding<AppLanguage> {
-        Binding(
-            get: { localization.selectedLanguage },
-            set: { newLang in localization.setLanguage(newLang) }
-        )
-    }
-
     private var resolvedDbPath: String {
         if let dbPath = aggregator?.databasePath, !dbPath.isEmpty {
             return dbPath
@@ -327,13 +320,14 @@ public struct SettingsContentView: View {
                             .foregroundColor(.secondary)
                     }
                     Spacer()
-                    Picker("", selection: selectedLanguageBinding) {
-                        ForEach(localization.availableLanguages) { lang in
-                            Text(displayName(for: lang)).tag(lang)
-                        }
+                    trailingMenuPicker(
+                        displayName(for: localization.selectedLanguage),
+                        options: localization.availableLanguages.map(displayName(for:))
+                    ) { index in
+                        let languages = localization.availableLanguages
+                        guard languages.indices.contains(index) else { return }
+                        localization.setLanguage(languages[index])
                     }
-                    .pickerStyle(.menu)
-                    .frame(width: 180)
                 }
                 .padding(.vertical, 4)
 
@@ -350,14 +344,17 @@ public struct SettingsContentView: View {
                             .foregroundColor(.secondary)
                     }
                     Spacer()
-                    Picker("", selection: $autoRefreshSeconds) {
-                        Text(localization.localized(.autoRefreshOff)).tag(0)
-                        Text(String(format: localization.localized(.autoRefreshSeconds), 10)).tag(10)
-                        Text(String(format: localization.localized(.autoRefreshSeconds), 30)).tag(30)
-                        Text(String(format: localization.localized(.autoRefreshSeconds), 60)).tag(60)
+                    trailingMenuPicker(
+                        autoRefreshSubtitle,
+                        options: [
+                            localization.localized(.autoRefreshOff),
+                            String(format: localization.localized(.autoRefreshSeconds), 10),
+                            String(format: localization.localized(.autoRefreshSeconds), 30),
+                            String(format: localization.localized(.autoRefreshSeconds), 60)
+                        ]
+                    ) { index in
+                        autoRefreshSeconds = [0, 10, 30, 60][index]
                     }
-                    .pickerStyle(.menu)
-                    .frame(width: 180)
                 }
                 .padding(.vertical, 4)
             }
@@ -736,6 +733,18 @@ public struct SettingsContentView: View {
         }
     }
 
+    /// A right-aligned selection control matching the settings card styling.
+    /// SwiftUI's own `Menu`/`.pickerStyle(.menu)` bridges to a native popup that
+    /// centers its value and ignores custom label layout; this control keeps the
+    /// value flush with the card's trailing edge and draws its own chrome.
+    private func trailingMenuPicker(
+        _ title: String,
+        options: [String],
+        onSelect: @escaping (Int) -> Void
+    ) -> some View {
+        SettingsMenuControlView(title: title, options: options, onSelect: onSelect)
+    }
+
     // MARK: - Helpers
     private func displayName(for lang: AppLanguage) -> String {
         if lang.code == AppLanguage.system.code {
@@ -792,4 +801,192 @@ public struct SettingsContentView: View {
 #Preview {
     SettingsContentView(aggregator: nil)
         .frame(width: 750, height: 510)
+}
+
+// MARK: - Right-aligned settings dropdown
+
+/// AppKit-backed selection control used for the settings dropdowns.
+///
+/// SwiftUI's `Menu` and `.pickerStyle(.menu)` both bridge to a native popup
+/// button that centers the selected value and discards custom label layout,
+/// which left the value detached from the card's trailing edge. This control
+/// draws its own rounded chrome, keeps the value flush-left inside itself (so it
+/// ends flush with the card), and pops a native `NSMenu` that carries a checkmark
+/// on the current selection.
+@MainActor
+final class SettingsMenuControl: NSView {
+    /// Stable identifier used by tests to locate the control in the view tree.
+    static let accessibilityID = "settings.menu.control"
+    static let valueLabelID = "settings.menu.value"
+
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let chevronView = NSImageView()
+    private var currentTitle: String
+    private var options: [String]
+    private var onSelect: (Int) -> Void
+    private var isHovered = false
+
+    private let minWidth: CGFloat = 140
+    private let maxWidth: CGFloat = 260
+
+    init(title: String, options: [String], onSelect: @escaping (Int) -> Void) {
+        self.currentTitle = title
+        self.options = options
+        self.onSelect = onSelect
+        super.init(frame: .zero)
+        setAccessibilityIdentifier(Self.accessibilityID)
+
+        titleLabel.font = .systemFont(ofSize: NSFont.systemFontSize)
+        titleLabel.textColor = .labelColor
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.usesSingleLineMode = true
+        titleLabel.identifier = NSUserInterfaceItemIdentifier(Self.valueLabelID)
+        addSubview(titleLabel)
+
+        chevronView.image = NSImage(
+            systemSymbolName: "chevron.up.chevron.down",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(.init(pointSize: 9, weight: .bold))
+        chevronView.contentTintColor = .secondaryLabelColor
+        addSubview(chevronView)
+
+        titleLabel.stringValue = title
+        toolTip = title
+
+        for subview in [titleLabel, chevronView] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+        }
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            titleLabel.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -8),
+            chevronView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            chevronView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            chevronView.widthAnchor.constraint(equalToConstant: 11),
+            chevronView.heightAnchor.constraint(equalToConstant: 11)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var intrinsicContentSize: NSSize { preferredSize() }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7)
+        let fill: NSColor = isHovered ? .selectedContentBackgroundColor.withAlphaComponent(0.14) : .controlBackgroundColor
+        fill.setFill()
+        path.fill()
+        NSColor.separatorColor.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+
+    private func preferredSize() -> NSSize {
+        let textWidth = ceil(titleLabel.intrinsicContentSize.width)
+        let width = min(maxWidth, max(minWidth, textWidth + 46))
+        return NSSize(width: width, height: 26)
+    }
+
+    override func mouseDown(with event: NSEvent) { presentMenu() }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override var canBecomeKeyView: Bool { true }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        switch event.charactersIgnoringModifiers {
+        case " ", "\r", "\u{3}": presentMenu()
+        default: super.keyDown(with: event)
+        }
+    }
+
+    func update(title: String, options: [String], onSelect: @escaping (Int) -> Void) {
+        self.options = options
+        self.onSelect = onSelect
+        guard title != currentTitle else { return }
+        currentTitle = title
+        titleLabel.stringValue = title
+        toolTip = title
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
+
+    private func presentMenu() {
+        let menu = NSMenu()
+        menu.font = .systemFont(ofSize: NSFont.systemFontSize)
+        let selected = options.firstIndex(of: currentTitle)
+        for (index, option) in options.enumerated() {
+            let item = NSMenuItem(title: option, action: #selector(selectItem(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            item.state = index == selected ? .on : .off
+            menu.addItem(item)
+        }
+        menu.popUp(
+            positioning: menu.items.first,
+            at: NSPoint(x: 0, y: bounds.height + 4),
+            in: self
+        )
+    }
+
+    @objc private func selectItem(_ sender: NSMenuItem) {
+        guard options.indices.contains(sender.tag) else { return }
+        currentTitle = options[sender.tag]
+        titleLabel.stringValue = currentTitle
+        toolTip = currentTitle
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+        onSelect(sender.tag)
+    }
+
+    /// Test hook: applies a selection as if the corresponding menu item was
+    /// chosen, without presenting the menu.
+    func performSelectionForTesting(at index: Int) {
+        guard options.indices.contains(index) else { return }
+        let item = NSMenuItem(title: options[index], action: nil, keyEquivalent: "")
+        item.tag = index
+        selectItem(item)
+    }
+}
+
+struct SettingsMenuControlView: NSViewRepresentable {
+    let title: String
+    let options: [String]
+    let onSelect: (Int) -> Void
+
+    func makeNSView(context: Context) -> SettingsMenuControl {
+        SettingsMenuControl(title: title, options: options, onSelect: onSelect)
+    }
+
+    func updateNSView(_ control: SettingsMenuControl, context: Context) {
+        control.update(title: title, options: options, onSelect: onSelect)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: SettingsMenuControl, context: Context) -> CGSize? {
+        nsView.intrinsicContentSize
+    }
 }

@@ -166,6 +166,83 @@ final class SettingsSheetViewTests: XCTestCase {
         PricingEngine.shared.setPreferredCurrency(initialCurrency)
     }
 
+    @MainActor
+    private func hostedGeneralPane(localization: LocalizationManager) -> NSHostingView<AnyView> {
+        let sheetWidth: CGFloat = 750
+        let sheetHeight: CGFloat = 510
+        let root = AnyView(SettingsContentView(
+            aggregator: aggregator,
+            localization: localization,
+            onDismiss: {}
+        ).frame(width: sheetWidth, height: sheetHeight))
+        let hosting = NSHostingView(rootView: root)
+        hosting.frame = NSRect(x: 0, y: 0, width: sheetWidth, height: sheetHeight)
+        hosting.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        hosting.layoutSubtreeIfNeeded()
+        return hosting
+    }
+
+    @MainActor
+    private func menuControls(in view: NSView) -> [SettingsMenuControl] {
+        var found: [SettingsMenuControl] = []
+        if let control = view as? SettingsMenuControl { found.append(control) }
+        for sub in view.subviews { found.append(contentsOf: menuControls(in: sub)) }
+        return found
+    }
+
+    @MainActor
+    private func valueLabel(in control: SettingsMenuControl) -> NSView? {
+        for sub in control.subviews where sub.identifier?.rawValue == "settings.menu.value" {
+            return sub
+        }
+        return nil
+    }
+
+    @MainActor
+    func testSettingsDropdownsAreRightAlignedWithCardEdge() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+        let hosting = hostedGeneralPane(localization: manager)
+
+        let controls = menuControls(in: hosting)
+        XCTAssertEqual(controls.count, 2, "general pane should expose two dropdowns")
+
+        // The card's trailing content edge: sheet width minus the detail pane's
+        // 24pt padding and the card's 16pt padding.
+        let expectedTrailingEdge: CGFloat = 750 - 40
+        for control in controls {
+            let frame = control.convert(control.bounds, to: nil)
+            XCTAssertEqual(frame.maxX, expectedTrailingEdge, accuracy: 1.0,
+                           "dropdown must sit flush with the card's trailing edge")
+            XCTAssertGreaterThan(frame.width, 0)
+            if let label = valueLabel(in: control) {
+                let labelFrame = label.convert(label.bounds, to: control)
+                XCTAssertLessThan(labelFrame.maxX, frame.width,
+                                  "value text must not run past the control")
+                XCTAssertGreaterThan(labelFrame.minX, 0)
+            }
+        }
+    }
+
+    @MainActor
+    func testLanguageDropdownSelectionUpdatesLocalization() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+        manager.setLanguage(.system)
+        let hosting = hostedGeneralPane(localization: manager)
+
+        let controls = menuControls(in: hosting)
+        XCTAssertEqual(controls.count, 2)
+        guard let languageControl = controls.first else {
+            return XCTFail("language dropdown not found")
+        }
+
+        XCTAssertEqual(manager.selectedLanguage, .system)
+        // Selecting English (last option) must drive the localization manager.
+        let englishIndex = manager.availableLanguages.firstIndex(of: .en)!
+        languageControl.performSelectionForTesting(at: englishIndex)
+        XCTAssertEqual(manager.selectedLanguage, .en)
+    }
+
     func testAggregatorStorageMaintenanceMethods() async throws {
         let record = UnifiedTokenRecord(
             id: "rec_maintenance_1",
