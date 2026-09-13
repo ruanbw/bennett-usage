@@ -23,6 +23,17 @@ public struct GeminiAdapter: AgentSourceAdapter, @unchecked Sendable {
 
     public init() {}
 
+    /// ASCII bytes of the keys that can make a JSONL line worth parsing. A
+    /// line can only yield a token record when it carries a `tokens` object
+    /// (or a `messages` snapshot of them), and only lines carrying
+    /// `sessionId`/`directories` update the session context, so a cheap byte
+    /// scan lets metadata markers (`$rewindTo`/`$set`) and tool-call lines
+    /// skip the JSONSerialization + bridging pass entirely.
+    private static let tokensKey = Data("\"tokens\"".utf8)
+    private static let messagesKey = Data("\"messages\"".utf8)
+    private static let sessionIdKey = Data("\"sessionId\"".utf8)
+    private static let directoriesKey = Data("\"directories\"".utf8)
+
     public func detectDefaultPath() -> URL? {
         let path = (defaultPath as NSString).expandingTildeInPath
         let url = URL(fileURLWithPath: path)
@@ -55,18 +66,21 @@ public struct GeminiAdapter: AgentSourceAdapter, @unchecked Sendable {
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let fallbackIso = ISO8601DateFormatter()
-
         var seenPaths = Set<String>()
         while let fileUrl = enumerator?.nextObject() as? URL {
             let fileName = fileUrl.lastPathComponent
             guard fileName.hasPrefix("session-"),
-                  fileUrl.pathExtension == "jsonl" || fileUrl.pathExtension == "json",
-                  (try? fileUrl.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+                  fileUrl.pathExtension == "jsonl" || fileUrl.pathExtension == "json"
             else { continue }
 
             let path = fileUrl.path
             seenPaths.insert(path)
-            let fileSize = Int64((try? fileUrl.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            // One resourceValues call serves both the regular-file check and
+            // the size fast path (the enumerator prefetched the same keys,
+            // so this is cache-served, not a fresh stat per key).
+            let resourceValues = try? fileUrl.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard resourceValues?.isRegularFile == true else { continue }
+            let fileSize = Int64(resourceValues?.fileSize ?? 0)
 
             // Skip session files unchanged since the last sync: their records
             // are already in the database (content-addressed ids dedupe).
@@ -253,8 +267,16 @@ public struct GeminiAdapter: AgentSourceAdapter, @unchecked Sendable {
             searchRange = data.index(after: newlineIndex)..<data.endIndex
             defer { lineIndex += 1 }
 
-            guard !lineData.isEmpty,
-                  let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any]
+            guard !lineData.isEmpty else { continue }
+            // Fast reject: a line can only change the output when it carries
+            // token data, a message snapshot, or session context. Markers and
+            // tool-call lines skip the JSON parse + bridging pass entirely.
+            guard lineData.range(of: Self.tokensKey) != nil
+                || lineData.range(of: Self.messagesKey) != nil
+                || lineData.range(of: Self.sessionIdKey) != nil
+                || lineData.range(of: Self.directoriesKey) != nil
+            else { continue }
+            guard let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any]
             else { continue }
 
             if json["$rewindTo"] != nil || json["$set"] != nil { continue }
