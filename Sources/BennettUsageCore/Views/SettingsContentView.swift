@@ -785,16 +785,28 @@ public struct SettingsContentView: View {
         await updateStorageStatus()
     }
 
-    private func formatNumber(_ number: Int) -> String {
+    // `NumberFormatter` / `RelativeDateTimeFormatter` are comparatively expensive
+    // to construct, so a single shared instance is reused per formatter instead
+    // of building one on every row render. Both call sites are SwiftUI view code
+    // and the format options match the previous per-call instances exactly.
+    private static let decimalNumberFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: number)) ?? "\(number)"
+        return formatter
+    }()
+
+    private static let shortRelativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+
+    private func formatNumber(_ number: Int) -> String {
+        return Self.decimalNumberFormatter.string(from: NSNumber(value: number)) ?? "\(number)"
     }
 
     private func relativeTimestamp(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return Self.shortRelativeDateFormatter.localizedString(for: date, relativeTo: Date())
     }
 }
 

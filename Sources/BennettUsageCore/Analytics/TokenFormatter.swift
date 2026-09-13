@@ -39,8 +39,21 @@ public enum TokenFormatter {
         }
     }
 
+    /// Exact powers of ten for the small exponents used by `formatValue` /
+    /// `roundsUpToThousand` (currently only 1 and 2). Avoids a `pow` call on
+    /// the per-row view hot path. Falls back to `pow` for unexpected exponents
+    /// so behaviour is unchanged for any input.
+    private static let pow10Table: [Double] = [1, 10, 100, 1_000, 10_000, 100_000]
+
+    private static func powerOfTen(_ exponent: Int) -> Double {
+        guard exponent >= 0, exponent < pow10Table.count else {
+            return pow(10.0, Double(exponent))
+        }
+        return pow10Table[exponent]
+    }
+
     private static func formatValue(_ value: Double, maxDecimals: Int) -> String {
-        let factor = pow(10.0, Double(maxDecimals))
+        let factor = powerOfTen(maxDecimals)
         let rounded = (value * factor).rounded(.toNearestOrAwayFromZero) / factor
         let str: String
         if maxDecimals == 2 {
@@ -64,7 +77,7 @@ public enum TokenFormatter {
 
     /// Returns true when the display-rounded value would read as 1000 of the current unit.
     private static func roundsUpToThousand(_ value: Double, maxDecimals: Int) -> Bool {
-        let factor = pow(10.0, Double(maxDecimals))
+        let factor = powerOfTen(maxDecimals)
         return (value * factor).rounded(.toNearestOrAwayFromZero) >= 1000 * factor
     }
 
