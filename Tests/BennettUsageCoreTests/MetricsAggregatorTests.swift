@@ -180,6 +180,61 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertEqual(piMetrics.toolDistribution.first?.tool, "pi")
     }
 
+    func testFetchActiveToolsScopesToRange() async throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = Date()
+        let tenDaysAgo = calendar.date(byAdding: .day, value: -10, to: now)!
+        let oldDate = Date(timeIntervalSince1970: 1_583_000_000) // 2020-03-02 UTC
+
+        // Used today.
+        let claudeToday = UnifiedTokenRecord(
+            id: "at_1", sourceId: "claude", timestamp: now, dayKey: UnifiedTokenRecord.dayKey(for: now),
+            sessionKey: "s1", projectFolder: nil, model: "m", provider: nil,
+            inputTokens: 100, outputTokens: 100, rawCostUSD: 0.01
+        )
+        // Used inside the 30-day window but not today.
+        let clineTenDaysAgo = UnifiedTokenRecord(
+            id: "at_2", sourceId: "cline", timestamp: tenDaysAgo, dayKey: UnifiedTokenRecord.dayKey(for: tenDaysAgo),
+            sessionKey: "s2", projectFolder: nil, model: "m", provider: nil,
+            inputTokens: 200, outputTokens: 200, rawCostUSD: 0.02
+        )
+        // Only present in an old year.
+        let piOld = UnifiedTokenRecord(
+            id: "at_3", sourceId: "pi", timestamp: oldDate, dayKey: UnifiedTokenRecord.dayKey(for: oldDate),
+            sessionKey: "s3", projectFolder: nil, model: "m", provider: nil,
+            inputTokens: 300, outputTokens: 300, rawCostUSD: 0.03
+        )
+        // A record without usage does not make an agent a filter option.
+        let traeToday = UnifiedTokenRecord(
+            id: "at_4", sourceId: "trae", timestamp: now, dayKey: UnifiedTokenRecord.dayKey(for: now),
+            sessionKey: "s4", projectFolder: nil, model: "m", provider: nil,
+            inputTokens: 0, outputTokens: 0, rawCostUSD: 0.0
+        )
+        try db.insertRecords([claudeToday, clineTenDaysAgo, piOld, traeToday])
+
+        // Today: only the agent used today — 10 days ago and the old year are out.
+        let today = try await aggregator.fetchActiveTools(range: .today)
+        let last24Hours = try await aggregator.fetchActiveTools(range: .last24Hours)
+        let last7Days = try await aggregator.fetchActiveTools(range: .last7Days)
+        let last30Days = try await aggregator.fetchActiveTools(range: .last30Days)
+        let pastYear = try await aggregator.fetchActiveTools(range: .pastYear)
+        let year2020 = try await aggregator.fetchActiveTools(range: .year(2020))
+
+        XCTAssertEqual(today, ["claude"])
+        XCTAssertEqual(last24Hours, ["claude"])
+        XCTAssertEqual(last7Days, ["claude"])
+        // Wider ranges pick up the agent that was idle today.
+        XCTAssertEqual(last30Days, ["claude", "cline"])
+        XCTAssertEqual(pastYear, ["claude", "cline"])
+        XCTAssertEqual(year2020, ["pi"])
+
+        // The active filter never narrows the reported set: the filter bar needs
+        // the whole range, not just the selected agent.
+        let filtered = try await aggregator.fetchPeriodMetrics(range: .last30Days, toolFilter: "cline")
+        XCTAssertEqual(filtered.toolDistribution.map(\.tool), ["cline"])
+        XCTAssertEqual(last30Days, ["claude", "cline"])
+    }
+
     func testFetchAgentHealthInfos() async throws {
         let r1 = UnifiedTokenRecord(
             id: "ah_1", sourceId: "claude", timestamp: Date(), dayKey: "2026-09-11",

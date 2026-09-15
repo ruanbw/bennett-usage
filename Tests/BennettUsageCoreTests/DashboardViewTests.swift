@@ -87,6 +87,38 @@ final class DashboardViewTests: XCTestCase {
         XCTAssertNotNil(view.body)
     }
 
+    @MainActor
+    func testAgentFilterOptionsFollowTheSelectedRange() {
+        // Options are exactly the agents with usage in the range, so an agent
+        // that was idle in it (e.g. Cline on a day it never ran) is not offered.
+        XCTAssertEqual(
+            DashboardContentView.agentFilterOptions(activeAgents: ["claude", "codex"], selectedAgent: nil),
+            ["claude", "codex"]
+        )
+        // A range with no recorded usage offers nothing but "All Agents".
+        XCTAssertEqual(DashboardContentView.agentFilterOptions(activeAgents: [], selectedAgent: nil), [])
+
+        // An active filter stays listed even when the newly selected range has no
+        // usage for it: hiding it would leave an invisible filter in force.
+        XCTAssertEqual(
+            DashboardContentView.agentFilterOptions(activeAgents: ["claude"], selectedAgent: "cline"),
+            ["claude", "cline"]
+        )
+        XCTAssertEqual(
+            DashboardContentView.agentFilterOptions(activeAgents: [], selectedAgent: "cline"),
+            ["cline"]
+        )
+        // Matching is case-insensitive, so the selected agent never duplicates.
+        XCTAssertEqual(
+            DashboardContentView.agentFilterOptions(activeAgents: ["cline"], selectedAgent: "Cline"),
+            ["cline"]
+        )
+        XCTAssertEqual(
+            DashboardContentView.agentFilterOptions(activeAgents: ["claude"], selectedAgent: ""),
+            ["claude"]
+        )
+    }
+
     func testNavigationItemCases() {
         let items = NavigationItem.allCases
         XCTAssertEqual(items.count, 2)

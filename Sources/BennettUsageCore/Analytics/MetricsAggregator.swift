@@ -392,6 +392,62 @@ public final class MetricsAggregator: Sendable {
             .sorted { $0.tokens > $1.tokens }
     }
 
+    /// Every tool that recorded at least one token inside `range`, ignoring any
+    /// tool filter and sorted by id. The dashboard's agent switcher offers
+    /// exactly these, so an agent that was idle in the selected range (e.g.
+    /// Cline on a day it was never launched) is not listed as a filter option.
+    ///
+    /// Mirrors the boundaries used by `fetchPeriodMetrics`: sub-day ranges read
+    /// records directly, day-and-longer ranges read the rollup table.
+    public func fetchActiveTools(range: TimeRangeOption) async throws -> [String] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
+        let now = Date()
+
+        switch range {
+        case .last24Hours:
+            let since = now.addingTimeInterval(-24 * 3600)
+            let sinceTimestamp = Int64(since.timeIntervalSince1970 * 1000)
+            return try activeTools(sinceTimestamp: sinceTimestamp)
+
+        case .today:
+            let sinceTimestamp = Int64(calendar.startOfDay(for: now).timeIntervalSince1970 * 1000)
+            return try activeTools(sinceTimestamp: sinceTimestamp)
+
+        case .last7Days, .last30Days:
+            let daysCount = (range == .last7Days) ? 7 : 30
+            guard let startDate = calendar.date(byAdding: .day, value: -(daysCount - 1), to: now) else { return [] }
+            return try activeTools(inRollups: database.fetchDailyRollups(
+                startDate: UnifiedTokenRecord.dayKey(for: startDate),
+                endDate: UnifiedTokenRecord.dayKey(for: now)
+            ))
+
+        case .pastYear:
+            guard let startDate = calendar.date(byAdding: .year, value: -1, to: now) else { return [] }
+            return try activeTools(inRollups: database.fetchDailyRollups(
+                startDate: UnifiedTokenRecord.dayKey(for: startDate),
+                endDate: UnifiedTokenRecord.dayKey(for: now)
+            ))
+
+        case .year(let year):
+            return try activeTools(inRollups: database.fetchDailyRollups(forYear: year))
+        }
+    }
+
+    private func activeTools(sinceTimestamp: Int64) throws -> [String] {
+        try database.fetchToolDistribution(sinceTimestamp: sinceTimestamp)
+            .filter { $0.tokens > 0 }
+            .map(\.tool)
+            .sorted()
+    }
+
+    /// Zero-token rollups (a tool whose records carried no usage) do not count
+    /// as "used": the tool donut hides them too, and a pill for an agent showing
+    /// 0 tokens everywhere would only be a dead end.
+    private func activeTools(inRollups rollups: [DailyRollup]) -> [String] {
+        Set(rollups.lazy.filter { $0.totalTokens > 0 }.map(\.sourceId)).sorted()
+    }
+
     public func fetchAvailableYears() async throws -> [Int] {
         let years = try database.fetchAvailableYears()
         if years.isEmpty {

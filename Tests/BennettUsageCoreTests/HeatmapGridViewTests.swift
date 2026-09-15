@@ -106,6 +106,16 @@ final class HeatmapGridViewTests: XCTestCase {
         XCTAssertNotEqual(colors["claude"], colors["codex"])
         XCTAssertEqual(palette.colors(for: ["pi", "omp", "claude", "codex", "gemini"]), colors)
 
+        // The filter bar colors come from a fixed all-agents universe, so a tool
+        // keeps one color while the range-scoped pill list grows and shrinks.
+        XCTAssertEqual(AgentFilterBarView.knownAgentIds.count, 14)
+        XCTAssertEqual(Set(AgentFilterBarView.knownAgentIds).count, 14)
+        XCTAssertTrue(AgentFilterBarView.knownAgentIds.contains("cline"))
+        for agentId in AgentFilterBarView.knownAgentIds {
+            XCTAssertNotNil(AgentFilterBarView.colorMap[agentId], "missing palette color for '\(agentId)'")
+        }
+        XCTAssertEqual(AgentFilterBarView.colorMap, AgentFilterBarView.colorMap)
+
         // Individual agent selected
         let piView = AgentFilterBarView(
             selectedAgent: "pi",

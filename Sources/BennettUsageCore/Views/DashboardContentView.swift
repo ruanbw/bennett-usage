@@ -28,6 +28,9 @@ public struct DashboardContentView: View {
     @State private var selectedCell: HeatmapDayCell?
     @State private var selectedToolFilter: String?
     @State private var agentNames: [String] = []
+    /// Agents with recorded usage inside `selectedRange`, independent of the
+    /// active filter. Feeds the filter bar; see `loadRangeActiveAgents()`.
+    @State private var rangeActiveAgents: [String] = []
     @State private var cachedAgentColors: [String: Color] = [:]
     @State private var cachedModelColors: [String: Color] = [:]
     @State private var isProjectsExpanded: Bool = false
@@ -118,6 +121,9 @@ public struct DashboardContentView: View {
         }
         .task(id: RefreshKey(scope: .period, range: selectedRange, year: nil, toolFilter: selectedToolFilter, tick: refreshTick)) {
             await loadPeriodMetrics()
+        }
+        .task(id: RefreshKey(scope: .agents, range: selectedRange, year: nil, toolFilter: nil, tick: refreshTick)) {
+            await loadRangeActiveAgents()
         }
         .task(id: RefreshKey(scope: .annual, range: nil, year: selectedHeatmapYear, toolFilter: selectedToolFilter, tick: refreshTick)) {
             await loadAnnualSummaryData()
@@ -876,28 +882,31 @@ public struct DashboardContentView: View {
 
     // MARK: - Data Loading
     //
-    // The refresh work is split into three independent `.task(id:)` pipelines so
+    // The refresh work is split into four independent `.task(id:)` pipelines so
     // that changing one dimension (range / heatmap year / tool filter) only
     // re-runs the queries that actually depend on it (U-02 / U-41):
     //
     //   • period  → selectedRange,       selectedToolFilter, refreshTick
+    //   • agents  → selectedRange,                           refreshTick
     //   • annual  → selectedHeatmapYear, selectedToolFilter, refreshTick
     //   • totals  →                      selectedToolFilter, refreshTick
     //
-    // `agentNames` and the cached palettes are derived from *both* `periodMetrics`
-    // and `heatmapCells`, so the period and annual pipelines each call the shared,
-    // synchronous `refreshDerivedToolState()` once their own results are published.
-    // Every `@State` write lives on the main actor and that helper has no
-    // suspension point, so the two callers can never interleave half-way through
-    // an update; whichever call runs last always observes a fully-updated pair of
-    // inputs, so the final derived value is independent of completion order and
-    // there is no race on the assigned state.
+    // `agentNames` (the range-scoped filter options) is derived from
+    // `rangeActiveAgents` + `selectedToolFilter`, and the cached palettes are
+    // fixed/period-derived, so the period and agents pipelines each call the
+    // shared, synchronous `refreshDerivedToolState()` once their own results are
+    // published. Every `@State` write lives on the main actor and that helper
+    // has no suspension point, so the callers can never interleave half-way
+    // through an update; whichever call runs last always observes a
+    // fully-updated pair of inputs, so the final derived value is independent of
+    // completion order and there is no race on the assigned state.
 
     /// Scope discriminator for the dimension-scoped refresh tasks. A structured
     /// `Hashable` key (rather than a concatenated string) keeps each task's id
     /// free of unrelated dimensions and avoids per-body string interpolation.
     private enum RefreshScope: Hashable {
         case period
+        case agents
         case annual
         case totals
     }
@@ -910,17 +919,33 @@ public struct DashboardContentView: View {
         let tick: Int
     }
 
-    /// Recompute the range/year-independent derived state from the *current*
-    /// `periodMetrics` and `heatmapCells`. Must stay synchronous (no `await`) so
-    /// no other refresh task can interleave with it.
-    private func refreshDerivedToolState() {
-        let distributionTools = (periodMetrics?.toolDistribution ?? []).map(\.tool)
-        let heatmapTools = Set(heatmapCells.flatMap { $0.toolBreakdown.keys })
-        let allAgentNames = Array(Set(distributionTools).union(heatmapTools)).sorted()
-        if allAgentNames != agentNames {
-            agentNames = allAgentNames
+    /// Filter-bar options for one range: every agent that recorded usage in it,
+    /// plus the active filter (if any). Keeping the selected agent in the list
+    /// even when the new range has no usage for it means switching ranges never
+    /// makes an active filter silently vanish — its pill stays visible and
+    /// clickable so the user can see and clear what is being filtered.
+    static func agentFilterOptions(activeAgents: [String], selectedAgent: String?) -> [String] {
+        var options = Set(activeAgents)
+        if let selectedAgent, !selectedAgent.isEmpty,
+           !options.contains(where: { $0.caseInsensitiveCompare(selectedAgent) == .orderedSame }) {
+            options.insert(selectedAgent)
         }
-        let agentColors = ChartPalette.shared.colors(for: allAgentNames)
+        return options.sorted()
+    }
+
+    /// Recompute the range-scoped filter options and the agent/model palettes
+    /// from the *current* state. Must stay synchronous (no `await`) so no other
+    /// refresh task can interleave with it.
+    private func refreshDerivedToolState() {
+        let options = Self.agentFilterOptions(activeAgents: rangeActiveAgents, selectedAgent: selectedToolFilter)
+        if options != agentNames {
+            agentNames = options
+        }
+        // The agent palette is the fixed all-agents map, not a map over the
+        // currently offered pills: the pill list shrinks with the range, and
+        // recoloring surviving agents on every range switch would make the same
+        // tool change color between the pills, the donut and the heatmap.
+        let agentColors = AgentFilterBarView.colorMap
         if agentColors != cachedAgentColors {
             cachedAgentColors = agentColors
         }
@@ -938,6 +963,22 @@ public struct DashboardContentView: View {
         if Task.isCancelled { return }
         if metrics != periodMetrics {
             periodMetrics = metrics
+        }
+        refreshDerivedToolState()
+    }
+
+    /// `selectedRange` dependents that ignore the active filter: which agents
+    /// the filter bar may offer. Deliberately unfiltered — deriving the options
+    /// from the filtered `periodMetrics` would collapse the bar to the single
+    /// selected agent, and deriving them from the annual heatmap (as this used
+    /// to) leaked agents that were only active elsewhere in the year into a
+    /// narrow range such as "Today".
+    private func loadRangeActiveAgents() async {
+        let range = selectedRange
+        let tools = (try? await aggregator.fetchActiveTools(range: range)) ?? []
+        if Task.isCancelled { return }
+        if tools != rangeActiveAgents {
+            rangeActiveAgents = tools
         }
         refreshDerivedToolState()
     }
@@ -969,7 +1010,6 @@ public struct DashboardContentView: View {
         if trendPoints != annualTrendPoints {
             annualTrendPoints = trendPoints
         }
-        refreshDerivedToolState()
     }
 
     /// `selectedToolFilter` dependents that are independent of both the selected
@@ -992,9 +1032,10 @@ public struct DashboardContentView: View {
     }
 
     /// Full refresh used by the throttled data-update notification path. Reuses
-    /// the three dimension-scoped pipelines so there is a single code path.
+    /// the four dimension-scoped pipelines so there is a single code path.
     private func loadData() async {
         await loadPeriodMetrics()
+        await loadRangeActiveAgents()
         await loadAnnualSummaryData()
         await loadAllTimeData()
     }

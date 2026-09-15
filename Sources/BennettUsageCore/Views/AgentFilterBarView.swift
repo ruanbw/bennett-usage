@@ -18,32 +18,46 @@ public struct AgentFilterBarView: View {
         self.onSelect = onSelect
     }
 
+    /// Display name per agent source id. This table is the single source of
+    /// truth for the agent universe: the fixed palette below derives from it, so
+    /// an agent can never get a color without also having a display name.
+    public static let displayNamesById: [String: String] = [
+        "pi": "Pi Agent",
+        "omp": "Oh My Pi",
+        "claude": "Claude Code",
+        "codex": "OpenAI Codex",
+        "gemini": "Gemini CLI",
+        "antigravity": "Antigravity",
+        "opencode": "OpenCode",
+        "roo": "Roo Code · Cline",
+        "cline": "Cline",
+        "qwen": "Qwen Code",
+        "copilot": "GitHub Copilot",
+        "cursor": "Cursor",
+        "trae": "Trae",
+        "dsh": "DSH Harness"
+    ]
+
+    /// Every agent id this app can record.
+    public static let knownAgentIds: [String] = displayNamesById.keys.sorted()
+
+    /// One color per agent, keyed by the whole agent universe rather than by the
+    /// subset currently on screen. The pill list is scoped to the selected time
+    /// range and therefore grows and shrinks as ranges are switched; assigning
+    /// colors over a fixed universe keeps an agent's color identical in the
+    /// pills, the tool donut and the heatmap day breakdown no matter which
+    /// range — or which filter — is active.
+    public static var colorMap: [String: Color] {
+        ChartPalette.shared.colors(for: knownAgentIds)
+    }
+
     public static func displayName(for agent: String) -> String {
-        switch agent.lowercased() {
-        case "pi": return "Pi Agent"
-        case "omp": return "Oh My Pi"
-        case "claude": return "Claude Code"
-        case "codex": return "OpenAI Codex"
-        case "gemini": return "Gemini CLI"
-        case "antigravity": return "Antigravity"
-        case "opencode": return "OpenCode"
-        case "roo": return "Roo Code · Cline"
-        case "cline": return "Cline"
-        case "qwen": return "Qwen Code"
-        case "copilot": return "GitHub Copilot"
-        case "cursor": return "Cursor"
-        case "trae": return "Trae"
-        case "dsh": return "DSH Harness"
-        default: return agent.capitalized
-        }
+        displayNamesById[agent.lowercased()] ?? agent.capitalized
     }
 
 
     private var isAllSelected: Bool {
         selectedAgent == nil
-    }
-    private var agentColors: [String: Color] {
-        ChartPalette.shared.colors(for: availableAgents)
     }
 
     public var body: some View {
@@ -72,7 +86,7 @@ public struct AgentFilterBarView: View {
                 // Individual agent pills
                 ForEach(availableAgents, id: \.self) { agent in
                     let isSelected = selectedAgent?.lowercased() == agent.lowercased()
-                    let color = agentColors[agent] ?? .gray
+                    let color = Self.colorMap[agent] ?? .gray
 
                     Button {
                         onSelect(agent)
