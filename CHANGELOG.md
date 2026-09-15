@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.2.0 — 2026-09-16
+
+新增 Cline 独立版（桌面版 / `cline` CLI）适配器，数据源 13 → 14 个。
+
+### 新增适配器
+
+- **Cline（桌面版 / CLI）**：解析 `~/.cline/data/sessions/<sessionId>/<sessionId>.messages.json` 每条 assistant 消息的 `metrics`（`inputTokens` / `outputTokens` / `cacheReadTokens` / `cacheWriteTokens`）与 `modelInfo`（真实模型 id、provider），按稳定消息 id 去重；`CLINE_DIR` / `CLINE_DATA_DIR` / `CLINE_SESSION_DATA_DIR` 可改数据目录。与既有的 Roo Code·Kilo（VSCode 扩展 `globalStorage/*/tasks`）适配器互不重叠。
+  - 会话清单（`<sessionId>.json`）的 `metadata.usage` 累计值仅在缺少转录文件时兜底，避免与逐条记录重复计费；
+  - `apps/<app>/sessions/*.jsonl` 事件流按 `chat_usage` 事件逐请求解析（忽略其中的累计值），且只用于规范目录中不存在的会话 id，同样杜绝重复计费；
+  - 会话在没有项目目录（`workspace_root` 为 `/`）时不写入项目排行。
+
 ## v1.1.1 — 2026-09-14
 
 修复 DSH Harness 适配器模型归属与双重计费 Bug，数据库支持自愈重构。
