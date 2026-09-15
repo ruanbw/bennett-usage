@@ -90,6 +90,7 @@ public enum SettingsCategory: String, CaseIterable, Identifiable, Sendable {
 public struct SettingsContentView: View {
     public let aggregator: MetricsAggregator?
     @ObservedObject public var localization: LocalizationManager
+    @ObservedObject public var updateChecker: UpdateChecker
     public let onDismiss: (() -> Void)?
 
     /// The packaged app icon, available when running from a real .app bundle.
@@ -114,11 +115,13 @@ public struct SettingsContentView: View {
     public init(
         aggregator: MetricsAggregator? = nil,
         localization: LocalizationManager = .shared,
+        updateChecker: UpdateChecker = .shared,
         initialCategory: SettingsCategory = .general,
         onDismiss: (() -> Void)? = nil
     ) {
         self.aggregator = aggregator
         self.localization = localization
+        self.updateChecker = updateChecker
         self.onDismiss = onDismiss
         self._selectedCategory = State(initialValue: initialCategory)
     }
@@ -365,6 +368,28 @@ public struct SettingsContentView: View {
                     ) { index in
                         autoRefreshSeconds = [0, 10, 30, 60][index]
                     }
+                }
+                .padding(.vertical, 4)
+
+                Divider()
+
+                // Automatic update check row
+                HStack(spacing: 12) {
+                    cardRowIcon("arrow.down.circle", color: .blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(localization.localized(.autoCheckUpdatesLabel))
+                            .font(.body.weight(.medium))
+                        Text(localization.localized(.autoCheckUpdatesSubtitle))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $updateChecker.automaticallyChecksForUpdates)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .accessibilityIdentifier(Self.autoCheckToggleID)
                 }
                 .padding(.vertical, 4)
             }
@@ -666,6 +691,8 @@ public struct SettingsContentView: View {
 
     private var aboutPane: some View {
         VStack(alignment: .leading, spacing: 16) {
+            updateCard
+
             // Hero Card
             settingsCard {
                 HStack(spacing: 16) {
@@ -675,7 +702,7 @@ public struct SettingsContentView: View {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(localization.localized(.appName))
                                 .font(.title3.bold())
-                            Text("v\(BennettUsageCore.version)")
+                            Text("v\(updateChecker.currentVersion.description)")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
@@ -731,6 +758,179 @@ public struct SettingsContentView: View {
                 }
                 .padding(.vertical, 4)
             }
+        }
+    }
+
+    // MARK: - Update Check Card
+
+    /// Stable identifiers so the settings tests can reach the new controls.
+    static let autoCheckToggleID = "settings.update.autoCheck"
+    static let checkNowButtonID = "settings.update.checkNow"
+    static let downloadUpdateButtonID = "settings.update.download"
+
+    private var updateCard: some View {
+        settingsCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    cardRowIcon("arrow.down.circle", color: .blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(localization.localized(.checkForUpdates))
+                            .font(.body.weight(.medium))
+                        Text(updateStatusDetail)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: checkForUpdatesNow) {
+                        HStack(spacing: 6) {
+                            if updateChecker.isChecking {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                            }
+                            Text(localization.localized(updateChecker.isChecking ? .checkingForUpdates : .checkForUpdates))
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .disabled(updateChecker.isChecking)
+                    .accessibilityIdentifier(Self.checkNowButtonID)
+                }
+                .padding(.vertical, 4)
+
+                if let release = updateChecker.availableUpdate {
+                    Divider()
+                    availableUpdateRow(release)
+                } else if let skipped = skippedPendingVersion {
+                    Divider()
+                    skippedUpdateRow(skipped)
+                } else if case .upToDate = updateChecker.status {
+                    Divider()
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(.green)
+                        Text(localization.localized(.updateUpToDate))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                }
+
+                if case .failed(let failure) = updateChecker.status {
+                    Divider()
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(localization.localized(.updateCheckFailed))
+                                .font(.caption.weight(.medium))
+                            Text(failureDescription(failure))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                    }
+                }
+            }
+        }
+    }
+
+    /// “Version v1.2.0 · Last checked 3 minutes ago”.
+    private var updateStatusDetail: String {
+        let checkedText: String
+        if let lastCheckAt = updateChecker.lastCheckAt {
+            checkedText = String(format: localization.localized(.updateLastChecked), relativeTimestamp(lastCheckAt))
+        } else {
+            checkedText = localization.localized(.updateNeverChecked)
+        }
+        let versionText = String(
+            format: localization.localized(.updateCurrentVersion),
+            updateChecker.currentVersion.description
+        )
+        return "\(versionText) · \(checkedText)"
+    }
+
+    /// The version the user skipped — only while it is still the release on
+    /// offer, so the row disappears once a newer version shows up.
+    private var skippedPendingVersion: AppVersion? {
+        guard case .updateAvailable = updateChecker.status, updateChecker.availableUpdate == nil else { return nil }
+        return updateChecker.skippedVersion
+    }
+
+    private func availableUpdateRow(_ release: UpdateRelease) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(String(format: localization.localized(.updateAvailableTitle), release.version.description))
+                .font(.subheadline.weight(.semibold))
+            Text(String(format: localization.localized(.updateAvailableMessage), updateChecker.currentVersion.description))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button(action: { download(release) }) {
+                    Label(localization.localized(.downloadUpdate), systemImage: "arrow.down.circle")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .accessibilityIdentifier(Self.downloadUpdateButtonID)
+
+                Button(localization.localized(.viewReleaseNotes)) {
+                    NSWorkspace.shared.open(release.pageURL)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button(localization.localized(.skipThisVersion)) {
+                    updateChecker.skip(release)
+                }
+                .buttonStyle(.link)
+                .controlSize(.small)
+
+                Spacer()
+            }
+        }
+    }
+
+    private func skippedUpdateRow(_ version: AppVersion) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "bell.slash")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            Text(String(format: localization.localized(.updateSkippedNote), version.description))
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Button(localization.localized(.updateRestoreSkipped)) {
+                updateChecker.clearSkippedVersion()
+            }
+            .buttonStyle(.link)
+            .controlSize(.small)
+            Spacer()
+        }
+    }
+
+    /// Opens the DMG built for this Mac; a release without a recognizable
+    /// asset name still gets the user to the release page.
+    private func download(_ release: UpdateRelease) {
+        NSWorkspace.shared.open(release.preferredAsset()?.downloadURL ?? release.pageURL)
+    }
+
+    private func checkForUpdatesNow() {
+        Task { await updateChecker.check(force: true) }
+    }
+
+    private func failureDescription(_ failure: UpdateCheckFailure) -> String {
+        switch failure {
+        case .network:
+            return localization.localized(.updateErrorNetwork)
+        case .server(let statusCode):
+            return String(format: localization.localized(.updateErrorServer), statusCode)
+        case .decoding:
+            return localization.localized(.updateErrorDecoding)
+        case .noReleases:
+            return localization.localized(.updateErrorNoReleases)
         }
     }
 

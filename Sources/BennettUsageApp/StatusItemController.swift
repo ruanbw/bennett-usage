@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import BennettUsageCore
 
@@ -12,21 +13,25 @@ public final class StatusItemController: NSObject {
     private let aggregator: MetricsAggregator
     private let syncCoordinator: SyncCoordinator
     private let summaryModel = StatusSummaryModel()
+    private let updateChecker: UpdateChecker
     private let openDashboardAction: () -> Void
     private let openSettingsAction: () -> Void
     private let localization: LocalizationManager
     private var refreshTask: Task<Void, Never>?
+    private var updateObservation: AnyCancellable?
 
     public init(
         aggregator: MetricsAggregator,
         syncCoordinator: SyncCoordinator,
         localization: LocalizationManager = .shared,
+        updateChecker: UpdateChecker = .shared,
         openDashboardAction: @escaping () -> Void = {},
         openSettingsAction: @escaping () -> Void = {}
     ) {
         self.aggregator = aggregator
         self.syncCoordinator = syncCoordinator
         self.localization = localization
+        self.updateChecker = updateChecker
         self.openDashboardAction = openDashboardAction
         self.openSettingsAction = openSettingsAction
         super.init()
@@ -38,6 +43,12 @@ public final class StatusItemController: NSObject {
             name: .bennettUsageDataDidUpdate,
             object: nil
         )
+        // A background check can land long after launch; the menu bar icon is
+        // the only surface a popover-shy user ever looks at.
+        updateObservation = updateChecker.$status
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.applyStatusItemAppearance() }
+            }
         refreshData()
     }
 
@@ -68,6 +79,7 @@ public final class StatusItemController: NSObject {
         let view = MenuBarPopoverView(
             model: summaryModel,
             localization: localization,
+            updateChecker: updateChecker,
             onOpenDashboard: { [weak self] in self?.openDashboardWindow() },
             onSyncNow: { [weak self] in self?.forceSync() },
             onQuit: { NSApp.terminate(nil) },
@@ -134,13 +146,37 @@ public final class StatusItemController: NSObject {
             guard let summary = try? await aggregator.fetchTodaySummary() else { return }
             guard !Task.isCancelled else { return }
             summaryModel.summary = summary
-            if let button = self.statusItem.button {
-                button.title = TokenFormatter.formatStatusTitle(summary.totalTokens)
-                button.toolTip = summary.totalTokens > 0
-                    ? "\(TokenFormatter.formatFull(summary.totalTokens)) tokens"
-                    : self.localization.localized(.statusItemAccessibility)
-            }
+            applyStatusItemAppearance()
         }
+    }
+
+    /// Renders the status item from the current summary + update state. Called
+    /// both when data lands and when the update checker changes, so the two
+    /// sources never overwrite each other's contribution to the icon/tooltip.
+    private func applyStatusItemAppearance() {
+        guard let button = statusItem.button else { return }
+        let tokens = summaryModel.summary?.totalTokens ?? 0
+        button.title = TokenFormatter.formatStatusTitle(tokens)
+        var tooltip = tokens > 0
+            ? "\(TokenFormatter.formatFull(tokens)) tokens"
+            : localization.localized(.statusItemAccessibility)
+
+        if let update = updateChecker.availableUpdate {
+            button.image = NSImage(
+                systemSymbolName: "arrow.down.circle",
+                accessibilityDescription: String(
+                    format: localization.localized(.updateAvailableTitle),
+                    update.version.description
+                )
+            )
+            tooltip += " · " + String(format: localization.localized(.updateAvailableTitle), update.version.description)
+        } else {
+            button.image = NSImage(
+                systemSymbolName: "sparkles",
+                accessibilityDescription: localization.localized(.statusItemAccessibility)
+            )
+        }
+        button.toolTip = tooltip
     }
 
     /// Explicit user-initiated sync (the popover’s “Sync Now” button).

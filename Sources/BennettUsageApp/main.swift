@@ -54,4 +54,16 @@ Task {
     statusController.refreshData()
 }
 
+// Update check. The launch check is throttled internally to once a day, so the
+// timer only has to be frequent enough to catch a menu bar session that stays
+// open for weeks (and to survive sleep/wake drift).
+Task {
+    await UpdateChecker.shared.checkAutomatically()
+    while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(6 * 60 * 60))
+        guard !Task.isCancelled else { break }
+        await UpdateChecker.shared.checkAutomatically()
+    }
+}
+
 app.run()

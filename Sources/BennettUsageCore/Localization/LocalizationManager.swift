@@ -153,6 +153,28 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case settingsPricingSubtitle
     case settingsStorageSubtitle
     case settingsAboutSubtitle
+
+    // Update Checker
+    case checkForUpdates
+    case checkingForUpdates
+    case updateCurrentVersion
+    case updateUpToDate
+    case updateAvailableTitle
+    case updateAvailableMessage
+    case downloadUpdate
+    case viewReleaseNotes
+    case skipThisVersion
+    case updateSkippedNote
+    case updateRestoreSkipped
+    case autoCheckUpdatesLabel
+    case autoCheckUpdatesSubtitle
+    case updateLastChecked
+    case updateNeverChecked
+    case updateCheckFailed
+    case updateErrorNetwork
+    case updateErrorServer
+    case updateErrorDecoding
+    case updateErrorNoReleases
 }
 public typealias LocalizationKey = LocalizedKey
 
@@ -408,7 +430,29 @@ private let englishDictionary: [LocalizedKey: String] = [
     .settingsAgentsSubtitle: "Local AI agent detection, session logs, and health status",
     .settingsPricingSubtitle: "Reference exchange rates and primary currency display",
     .settingsStorageSubtitle: "Local database metrics, index rollups, and cache maintenance",
-    .settingsAboutSubtitle: "Version details, privacy commitment, and repository links"
+    .settingsAboutSubtitle: "Version details, privacy commitment, and repository links",
+
+    // Update Checker
+    .checkForUpdates: "Check for Updates",
+    .checkingForUpdates: "Checking…",
+    .updateCurrentVersion: "Version v%@",
+    .updateUpToDate: "You're running the latest version",
+    .updateAvailableTitle: "v%@ is now available",
+    .updateAvailableMessage: "You're on v%@. Download the new build, or read the release notes first.",
+    .downloadUpdate: "Download",
+    .viewReleaseNotes: "Release Notes",
+    .skipThisVersion: "Skip This Version",
+    .updateSkippedNote: "Version v%@ is skipped",
+    .updateRestoreSkipped: "Restore",
+    .autoCheckUpdatesLabel: "Automatically Check for Updates",
+    .autoCheckUpdatesSubtitle: "Query the public GitHub Releases feed once a day. No usage data is sent.",
+    .updateLastChecked: "Last checked %@",
+    .updateNeverChecked: "Not checked yet",
+    .updateCheckFailed: "Couldn't check for updates",
+    .updateErrorNetwork: "No network connection, or the update server is unreachable.",
+    .updateErrorServer: "The update server returned HTTP %d.",
+    .updateErrorDecoding: "The update server sent a response this version can't read.",
+    .updateErrorNoReleases: "No published release with a usable version tag was found."
 ]
 private let chineseDictionary: [LocalizedKey: String] = [
     // App & Common
@@ -541,5 +585,27 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .settingsAgentsSubtitle: "本地各 AI 编程 Agent 日志路径与会话采集状态诊断",
     .settingsPricingSubtitle: "配置 USD 与 CNY 参考汇率换算与主货币显示",
     .settingsStorageSubtitle: "查看本地 SQLite 数据库状态、重建统计与数据清理",
-    .settingsAboutSubtitle: "版本信息、100% 本地隐私保证与开源仓库信息"
+    .settingsAboutSubtitle: "版本信息、100% 本地隐私保证与开源仓库信息",
+
+    // Update Checker
+    .checkForUpdates: "检查更新",
+    .checkingForUpdates: "正在检查…",
+    .updateCurrentVersion: "当前版本 v%@",
+    .updateUpToDate: "当前已是最新版本",
+    .updateAvailableTitle: "发现新版本 v%@",
+    .updateAvailableMessage: "当前版本 v%@。可直接下载新版本，也可以先看更新日志。",
+    .downloadUpdate: "下载更新",
+    .viewReleaseNotes: "更新日志",
+    .skipThisVersion: "跳过此版本",
+    .updateSkippedNote: "已跳过 v%@",
+    .updateRestoreSkipped: "恢复提醒",
+    .autoCheckUpdatesLabel: "自动检查更新",
+    .autoCheckUpdatesSubtitle: "每天向 GitHub Releases 公共接口查询一次版本，不发送任何本地数据。",
+    .updateLastChecked: "上次检查：%@",
+    .updateNeverChecked: "尚未检查",
+    .updateCheckFailed: "检查更新失败",
+    .updateErrorNetwork: "网络不可用，或无法连接更新服务器。",
+    .updateErrorServer: "更新服务器返回 HTTP %d。",
+    .updateErrorDecoding: "更新服务器返回的内容无法解析。",
+    .updateErrorNoReleases: "未找到带有效版本号的已发布版本。"
 ]

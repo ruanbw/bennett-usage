@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Shared summary state for the menu bar popover: the popover's hosting
 /// controller is built once and stays alive; publishing a new summary here
@@ -13,6 +14,7 @@ public final class StatusSummaryModel: ObservableObject {
 
 public struct MenuBarPopoverView: View {
     @ObservedObject public var model: StatusSummaryModel
+    @ObservedObject public var updateChecker: UpdateChecker
     public let onOpenDashboard: () -> Void
     public let onSyncNow: () -> Void
     public let onQuit: () -> Void
@@ -24,6 +26,7 @@ public struct MenuBarPopoverView: View {
     public init(
         model: StatusSummaryModel,
         localization: LocalizationManager = .shared,
+        updateChecker: UpdateChecker = .shared,
         onOpenDashboard: @escaping () -> Void,
         onSyncNow: @escaping () -> Void,
         onQuit: @escaping () -> Void,
@@ -31,6 +34,7 @@ public struct MenuBarPopoverView: View {
     ) {
         self.model = model
         self.localization = localization
+        self.updateChecker = updateChecker
         self.onOpenDashboard = onOpenDashboard
         self.onSyncNow = onSyncNow
         self.onQuit = onQuit
@@ -95,6 +99,13 @@ public struct MenuBarPopoverView: View {
 
             Divider()
 
+            // Surfaced here as well as in Settings > About: a menu bar user who
+            // never opens Settings would otherwise never learn about a release.
+            if let update = updateChecker.availableUpdate {
+                updateBanner(update)
+                Divider()
+            }
+
             HStack {
                 Button(localization.localized(.syncNow), action: onSyncNow)
                     .buttonStyle(.borderedProminent)
@@ -109,6 +120,30 @@ public struct MenuBarPopoverView: View {
         .padding(14)
         .frame(width: 320)
     }
+
+    private func updateBanner(_ release: UpdateRelease) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down.circle.fill")
+                .foregroundColor(.blue)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(String(format: localization.localized(.updateAvailableTitle), release.version.description))
+                    .font(.caption.weight(.semibold))
+                Text(release.title)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(release.title)
+            }
+            Spacer()
+            Button(localization.localized(.downloadUpdate)) {
+                NSWorkspace.shared.open(release.preferredAsset()?.downloadURL ?? release.pageURL)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
     /// Tools with activity today, sorted by tokens descending. Zero-token and
     /// unknown tools are omitted so the popover never shows unused rows.
     public struct ActiveTool: Sendable, Equatable {
