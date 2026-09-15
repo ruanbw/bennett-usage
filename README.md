@@ -18,7 +18,10 @@ macOS 菜单栏常驻的 AI coding 助手 Token 用量统计。Claude Code / Ope
 
 ## 安装
 
-1. 从 [Releases](../../releases) 下载 `BennettUsage-<版本>.dmg`。
+1. 从 [Releases](../../releases) 下载对应架构的 DMG：
+   - Apple Silicon（M 系列）：`BennettUsage-<版本>-arm64.dmg`
+   - Intel：`BennettUsage-<版本>-x86_64.dmg`
+   - 不确定 / 想一个包通用：`BennettUsage-<版本>-universal.dmg`
 2. 打开 DMG，把 `Bennett Usage` 拖进 Applications。
 3. 首次启动用右键 → 打开（未经过 Apple 公证，右键打开一次即可，以后正常双击）。
 
@@ -28,8 +31,13 @@ macOS 菜单栏常驻的 AI coding 助手 Token 用量统计。Claude Code / Ope
 
 ```sh
 swift build -c release
-./scripts/package-dmg.sh   # 输出 dist/BennettUsage-<版本>.dmg
+./scripts/package-dmg.sh            # 默认出 arm64 / x86_64 / universal 三个包
+./scripts/package-dmg.sh 1.3.0      # 指定版本号
+./scripts/package-dmg.sh 1.3.0 --only universal   # 只出其中一个
+# 输出 dist/BennettUsage-<版本>-<架构>.dmg 与 dist/SHA256SUMS.txt
 ```
+
+脚本在任意一台 Mac 上交叉编译两种架构（Intel 机器也能打出 arm64 / universal 包）。
 
 ## 数据来源
 
