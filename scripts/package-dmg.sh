@@ -74,6 +74,12 @@ elif [ ${#ONLY[@]} -gt 0 ]; then
 fi
 [ ${#VARIANTS[@]} -gt 0 ] || { echo "error: no variant selected" >&2; exit 2; }
 
+# The app icon is a checked-in build input; regenerate it with make-app-icon.swift.
+[ -f packaging/AppIcon.icns ] || {
+    echo "error: packaging/AppIcon.icns is missing (run: swift scripts/make-app-icon.swift)" >&2
+    exit 1
+}
+
 # --- 1. Work out which slices are needed, then build each architecture once -----
 
 needs_arch() {
@@ -131,8 +137,10 @@ assemble_app() {  # <variant> <binary>
     local stage="$STAGE_ROOT/$1" binary="$2"
     local app="$stage/$APP_NAME.app"
     rm -rf "$stage"
-    mkdir -p "$app/Contents/MacOS"
+    mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp "$binary" "$app/Contents/MacOS/BennettUsageApp"
+    # Regenerate with: swift scripts/make-app-icon.swift
+    cp packaging/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
     sed "s/__VERSION__/$VERSION/g" packaging/Info.plist > "$app/Contents/Info.plist"
     printf 'APPL????' > "$app/Contents/PkgInfo"
 

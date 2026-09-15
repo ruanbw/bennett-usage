@@ -92,6 +92,16 @@ public struct SettingsContentView: View {
     @ObservedObject public var localization: LocalizationManager
     public let onDismiss: (() -> Void)?
 
+    /// The packaged app icon, available when running from a real .app bundle.
+    /// Nil under `swift run` and in tests, where the hero card falls back to the
+    /// drawn gradient tile.
+    @MainActor private static let bundledAppIcon: NSImage? = {
+        guard let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns") else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
+    }()
+
     @State private var selectedCategory: SettingsCategory
     @State private var agentHealthInfos: [AgentHealthInfo] = []
     @State private var isSyncing: Bool = false
@@ -625,25 +635,41 @@ public struct SettingsContentView: View {
     }
 
     // MARK: - Section 5: About Pane
+
+    /// The packaged app icon, or the gradient tile it replaced when the bundle
+    /// carries no icon (a `swift run` build, or the test host).
+    @ViewBuilder
+    private var appIconTile: some View {
+        if let icon = Self.bundledAppIcon {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 56, height: 56)
+                .accessibilityHidden(true)
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.accentColor, Color.purple],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 52, height: 52)
+                Image(systemName: "gauge.with.dots.needle.bottom.50percent")
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+        }
+    }
+
     private var aboutPane: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Hero Card
             settingsCard {
                 HStack(spacing: 16) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.accentColor, Color.purple],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: 52, height: 52)
-                        Image(systemName: "gauge.with.dots.needle.bottom.50percent")
-                            .font(.system(size: 26, weight: .semibold))
-                            .foregroundColor(.white)
-                    }
+                    appIconTile
 
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
