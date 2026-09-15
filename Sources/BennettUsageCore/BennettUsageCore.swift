@@ -1,5 +1,9 @@
 public struct BennettUsageCore {
-    public static let version = "1.1.1"
+    /// Fallback marketing version for executables that run outside an app
+    /// bundle (tests, `swift run`). A packaged build reports the version the
+    /// packaging script stamped into `CFBundleShortVersionString` instead —
+    /// see `UpdateChecker.bundledVersion(bundle:)`.
+    public static let version = "1.3.0"
 }
 
 import Foundation
