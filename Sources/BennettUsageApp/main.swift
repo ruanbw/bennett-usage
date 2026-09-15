@@ -22,6 +22,7 @@ AdapterRegistry.shared.register(GeminiAdapter())
 AdapterRegistry.shared.register(AntigravityAdapter())
 AdapterRegistry.shared.register(OpenCodeAdapter())
 AdapterRegistry.shared.register(RooCodeAdapter())
+AdapterRegistry.shared.register(ClineAdapter())
 AdapterRegistry.shared.register(QwenCodeAdapter())
 // Cloud-billed tools: detection-only (Agent Health) until API adapters land.
 AdapterRegistry.shared.register(CopilotAdapter())

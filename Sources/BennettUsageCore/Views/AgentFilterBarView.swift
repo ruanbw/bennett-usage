@@ -28,6 +28,7 @@ public struct AgentFilterBarView: View {
         case "antigravity": return "Antigravity"
         case "opencode": return "OpenCode"
         case "roo": return "Roo Code · Cline"
+        case "cline": return "Cline"
         case "qwen": return "Qwen Code"
         case "copilot": return "GitHub Copilot"
         case "cursor": return "Cursor"

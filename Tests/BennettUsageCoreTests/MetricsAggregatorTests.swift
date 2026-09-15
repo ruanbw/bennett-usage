@@ -189,7 +189,7 @@ final class MetricsAggregatorTests: XCTestCase {
         try db.insertRecords([r1])
 
         let healthInfos = try await aggregator.fetchAgentHealthInfos()
-        XCTAssertEqual(healthInfos.count, 13)
+        XCTAssertEqual(healthInfos.count, 14)
         let ids = Set(healthInfos.map { $0.id })
         XCTAssertTrue(ids.contains("pi"))
         XCTAssertTrue(ids.contains("omp"))
@@ -199,6 +199,7 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertTrue(ids.contains("antigravity"))
         XCTAssertTrue(ids.contains("opencode"))
         XCTAssertTrue(ids.contains("roo"))
+        XCTAssertTrue(ids.contains("cline"))
         XCTAssertTrue(ids.contains("qwen"))
         XCTAssertTrue(ids.contains("copilot"))
         XCTAssertTrue(ids.contains("cursor"))

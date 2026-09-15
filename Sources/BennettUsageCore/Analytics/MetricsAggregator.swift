@@ -307,14 +307,24 @@ public final class MetricsAggregator: Sendable {
         try database.fetchProjectRankings(limit: limit, sourceId: toolFilter)
     }
 
+    /// Every adapter shipped with the app, in registration order. Used as the
+    /// fallback when the shared registry is empty (unit tests) and as the
+    /// merge-in set for ids the registry does not already provide.
+    static func builtInAdapters() -> [AgentSourceAdapter] {
+        [
+            PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter(), GeminiAdapter(),
+            AntigravityAdapter(), OpenCodeAdapter(), RooCodeAdapter(), ClineAdapter(),
+            QwenCodeAdapter(), CopilotAdapter(), CursorAdapter(), TraeAdapter(), DshAdapter()
+        ]
+    }
+
     public func fetchAgentHealthInfos() async throws -> [AgentHealthInfo] {
         var adapters = AdapterRegistry.shared.allAdapters()
         if adapters.isEmpty {
-            adapters = [PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter(), GeminiAdapter(), AntigravityAdapter(), OpenCodeAdapter(), RooCodeAdapter(), QwenCodeAdapter(), CopilotAdapter(), CursorAdapter(), TraeAdapter(), DshAdapter()]
+            adapters = Self.builtInAdapters()
         } else {
             let existingIds = Set(adapters.map { $0.sourceId.lowercased() })
-            let defaults: [AgentSourceAdapter] = [PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter(), GeminiAdapter(), AntigravityAdapter(), OpenCodeAdapter(), RooCodeAdapter(), QwenCodeAdapter(), CopilotAdapter(), CursorAdapter(), TraeAdapter(), DshAdapter()]
-            for def in defaults {
+            for def in Self.builtInAdapters() {
                 if !existingIds.contains(def.sourceId.lowercased()) {
                     adapters.append(def)
                 }

@@ -25,6 +25,7 @@ extension AgentSourceAdapter {
         case "antigravity": return "~/.gemini/antigravity/conversations"
         case "opencode": return "~/.local/share/opencode"
         case "roo": return "~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks"
+        case "cline": return "~/.cline/data/sessions"
         case "qwen": return "~/.qwen"
         case "copilot": return "~/.copilot"
         case "cursor": return "~/Library/Application Support/Cursor"
@@ -68,6 +69,11 @@ extension AgentSourceAdapter {
                 return (home as NSString).appendingPathComponent("sessions")
             }
             return "~/.dsh/sessions"
+        case "cline":
+            // Canonical session store only (CLINE_SESSION_DATA_DIR /
+            // CLINE_DATA_DIR / CLINE_DIR aware): ~/.cline/data also holds
+            // SQLite WAL files and logs that churn during every session.
+            return ClineAdapter.sessionsRoot().path
         default:
             return nil
         }

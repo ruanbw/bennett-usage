@@ -1,6 +1,6 @@
 # Bennett Usage
 
-macOS 菜单栏常驻的 AI coding 助手 Token 用量统计。Claude Code / OpenAI Codex / Gemini CLI / Qwen Code / OpenCode / Roo Code·Cline / DSH Harness / Oh My Pi / Pi Agent / Antigravity，一个菜单栏图标加一个 Dashboard，全部看清。Cursor / Copilot / Trae 显示安装状态（云端计费，需 API 才能取数）。
+macOS 菜单栏常驻的 AI coding 助手 Token 用量统计。Claude Code / OpenAI Codex / Gemini CLI / Qwen Code / OpenCode / Roo Code·Cline·Kilo（VSCode 扩展）/ Cline（桌面版·CLI）/ DSH Harness / Oh My Pi / Pi Agent / Antigravity，一个菜单栏图标加一个 Dashboard，全部看清。Cursor / Copilot / Trae 显示安装状态（云端计费，需 API 才能取数）。
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -9,7 +9,7 @@ macOS 菜单栏常驻的 AI coding 助手 Token 用量统计。Claude Code / Ope
 - **菜单栏速览**：常驻显示今日 Token，点击弹出今日用量、预估费用、各工具分布，一键立即同步。
 - **Dashboard**：24 小时 / 今日 / 7 天 / 30 天 / 过去一年 / 按年查看；小时级 Token 趋势（按模型堆叠，柱状 / 折线可切）；工具消耗占比、模型消耗占比；年度热力图（日历 / 月趋势可切）；项目排行；缓存命中统计。
 - **设置**：通用（语言、自动刷新频率）、Agent 状态（是否已安装、立即重扫）、计价与汇率（USD / CNY、自定义汇率）、数据与存储（数据库位置、一键清空）、关于。
-- **13 个数据源**：本地解析各工具会话记录，无需 API Key，纯本地 SQLite 存储，FSEvents 文件监听自动同步（Cursor / Copilot / Trae 为云端计费，仅检测安装状态）。
+- **14 个数据源**：本地解析各工具会话记录，无需 API Key，纯本地 SQLite 存储，FSEvents 文件监听自动同步（Cursor / Copilot / Trae 为云端计费，仅检测安装状态）。
 - **中英双语**：简体中文 / English / 跟随系统。
 
 ![菜单栏弹窗](docs/screenshots/popover.png)
@@ -40,7 +40,8 @@ swift build -c release
 | Gemini CLI | `~/.gemini/tmp` | session JSONL |
 | Qwen Code | `~/.qwen/tmp`（`QWEN_HOME` 可改） | Gemini 分叉，同格式 |
 | OpenCode | `~/.local/share/opencode` | `opencode.db`，老版本走 `storage/message` |
-| Roo Code·Cline·Kilo | VSCode `globalStorage/*/tasks` | `api_conversation_history.json` |
+| Roo Code·Cline·Kilo（VSCode 扩展） | VSCode `globalStorage/*/tasks` | `api_conversation_history.json` |
+| Cline（桌面版 / CLI） | `~/.cline/data/sessions` | `messages.json` 逐条 assistant `metrics`；`CLINE_DIR` / `CLINE_DATA_DIR` / `CLINE_SESSION_DATA_DIR` 可改 |
 | DSH Harness | `~/.dsh/sessions`（`DSH_HOME` 可改） | `session.v3.jsonl.zstd`，无 zstd 时回退 projcache |
 | Oh My Pi | `~/.omp/agent/sessions` | 另支持 `~/.omp/stats.db` |
 | Pi Agent | `~/.pi/agent/sessions` | |
