@@ -419,14 +419,15 @@ public struct DashboardContentView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Image(systemName: "calendar")
-                            .foregroundColor(.accentColor)
+                            .foregroundColor(AppTheme.Status.accent)
                             .font(.headline)
                         Text(localization.localized(.annualPanorama))
                             .font(.headline)
+                            .foregroundColor(AppTheme.Text.primary)
                     }
                     Text("\(String(selectedHeatmapYear))-01-01 ~ \(String(selectedHeatmapYear))-12-31")
                         .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppTheme.Text.secondary)
                 }
 
                 Spacer()
@@ -434,24 +435,33 @@ public struct DashboardContentView: View {
                 HStack(spacing: 8) {
                     // Year Switcher Pills (or Menu if > 4 years)
                     if displayedYears.count <= 4 {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 2) {
                             ForEach(displayedYears, id: \.self) { year in
+                                let isSelected = selectedHeatmapYear == year
                                 Button {
                                     selectedHeatmapYear = year
                                     selectedCell = nil
                                 } label: {
                                     Text(String(year))
                                         .font(.caption)
-                                        .fontWeight(selectedHeatmapYear == year ? .semibold : .regular)
+                                        .fontWeight(isSelected ? .semibold : .regular)
+                                        .foregroundColor(isSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
-                                        .background(selectedHeatmapYear == year ? Color.accentColor : Color(NSColor.windowBackgroundColor).opacity(0.6))
-                                        .foregroundColor(selectedHeatmapYear == year ? .white : .primary)
-                                        .cornerRadius(6)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .fill(isSelected ? AppTheme.Surface.primary : Color.clear)
+                                                .shadow(color: Color.black.opacity(isSelected ? 0.04 : 0), radius: 1.5, x: 0, y: 1)
+                                        )
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
+                        .padding(2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(AppTheme.Surface.subtle)
+                        )
                     } else {
                         Menu {
                             ForEach(displayedYears, id: \.self) { year in
@@ -463,13 +473,17 @@ public struct DashboardContentView: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Text(String(selectedHeatmapYear)).bold()
+                                    .foregroundColor(AppTheme.Text.primary)
                                 Image(systemName: "chevron.down").font(.caption2)
+                                    .foregroundColor(AppTheme.Text.secondary)
                             }
                             .font(.caption)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Color(NSColor.windowBackgroundColor).opacity(0.6))
-                            .cornerRadius(6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(AppTheme.Surface.subtle)
+                            )
                         }
                         .menuStyle(.borderlessButton)
                         .fixedSize()
@@ -511,12 +525,12 @@ public struct DashboardContentView: View {
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(isFullDashboardYear ? Color.accentColor.opacity(0.15) : Color(NSColor.windowBackgroundColor).opacity(0.6))
-                        .foregroundColor(isFullDashboardYear ? .accentColor : .secondary)
+                        .background(isFullDashboardYear ? AppTheme.Surface.selected : AppTheme.Surface.subtle)
+                        .foregroundColor(isFullDashboardYear ? AppTheme.Status.accent : AppTheme.Text.secondary)
                         .cornerRadius(6)
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(isFullDashboardYear ? Color.accentColor.opacity(0.4) : Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.8)
+                                .stroke(isFullDashboardYear ? AppTheme.Status.accent.opacity(0.3) : AppTheme.Border.subtle, lineWidth: 0.5)
                         )
                     }
                     .buttonStyle(.plain)
@@ -551,8 +565,14 @@ public struct DashboardContentView: View {
             }
         }
         .padding(16)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(AppTheme.Surface.primary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+        )
     }
 
     private func annualMetricsStrip(summary: (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String, activeDays: Int, totalDays: Int)) -> some View {
@@ -563,9 +583,9 @@ public struct DashboardContentView: View {
                 value: TokenFormatter.formatCompact(summary.annualTokens),
                 subvalue: "\(TokenFormatter.formatFull(summary.annualTokens)) tokens",
                 icon: "flame.fill",
-                color: .orange
+                color: AppTheme.Status.warning
             )
-            Divider().frame(height: 28).padding(.horizontal, 8)
+            Divider().frame(height: 24).opacity(0.3).padding(.horizontal, 8)
 
             // 2. Annual Cost
             annualStatItem(
@@ -573,9 +593,9 @@ public struct DashboardContentView: View {
                 value: PricingEngine.shared.spendString(summary.annualCostUSD),
                 subvalue: summary.annualCostUSD > 0 ? (PricingEngine.shared.preferredCurrency == .cny ? "CNY" : "USD") : "-",
                 icon: "dollarsign.circle.fill",
-                color: .green
+                color: AppTheme.Status.success
             )
-            Divider().frame(height: 28).padding(.horizontal, 8)
+            Divider().frame(height: 24).opacity(0.3).padding(.horizontal, 8)
 
             // 3. Active Days
             let pct = summary.totalDays > 0 ? (Double(summary.activeDays) / Double(summary.totalDays) * 100.0) : 0.0
@@ -584,13 +604,13 @@ public struct DashboardContentView: View {
                 value: "\(summary.activeDays) / \(summary.totalDays)",
                 subvalue: String(format: "%.1f%%", pct),
                 icon: "calendar.badge.checkmark",
-                color: .blue
+                color: AppTheme.Status.accent
             )
-            Divider().frame(height: 28).padding(.horizontal, 8)
+            Divider().frame(height: 24).opacity(0.3).padding(.horizontal, 8)
 
             // 4. Primary Agent
             let agentName = summary.mostActiveTool != "None" ? AgentFilterBarView.displayName(for: summary.mostActiveTool) : localization.localized(.none)
-            let agentColor = summary.mostActiveTool != "None" ? (cachedAgentColors[summary.mostActiveTool] ?? .purple) : .secondary
+            let agentColor = summary.mostActiveTool != "None" ? (cachedAgentColors[summary.mostActiveTool] ?? AppTheme.Status.accent) : AppTheme.Text.secondary
             annualStatItem(
                 title: localization.localized(.annualPrimaryAgent),
                 value: agentName,
@@ -601,8 +621,10 @@ public struct DashboardContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(NSColor.windowBackgroundColor).opacity(0.5))
-        .cornerRadius(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(AppTheme.Surface.subtle)
+        )
     }
 
     private func annualStatItem(title: String, value: String, subvalue: String, icon: String, color: Color) -> some View {
@@ -613,14 +635,15 @@ public struct DashboardContentView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.Text.secondary)
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(value)
                         .font(.subheadline)
                         .bold()
+                        .foregroundColor(AppTheme.Text.primary)
                     Text(subvalue)
                         .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppTheme.Text.tertiary)
                         .lineLimit(1)
                 }
             }
@@ -633,7 +656,9 @@ public struct DashboardContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(localization.localized(.activityOnDay, arguments: cell.dayKey))
-                    .font(.headline)
+                    .font(.subheadline)
+                    .bold()
+                    .foregroundColor(AppTheme.Text.primary)
                 Spacer()
                 Button {
                     selectedCell = nil
@@ -644,34 +669,45 @@ public struct DashboardContentView: View {
                         Image(systemName: "xmark.circle.fill")
                             .font(.caption)
                     }
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.Text.secondary)
                 }
                 .buttonStyle(.plain)
             }
             let formattedTokens = "\(TokenFormatter.formatCompact(cell.totalTokens)) (\(TokenFormatter.formatFull(cell.totalTokens)))"
             Text(localization.localized(.activityDetail, arguments: formattedTokens, String(format: "%.3f", cell.costUSD)))
-                .foregroundColor(.secondary)
+                .font(.caption)
+                .foregroundColor(AppTheme.Text.secondary)
             if !cell.toolBreakdown.isEmpty {
                 HStack(spacing: 8) {
                     ForEach(cell.toolBreakdown.sorted(by: { $0.value > $1.value }), id: \.key) { tool, count in
+                        let color = cachedAgentColors[tool] ?? AppTheme.Text.tertiary
                         HStack(spacing: 4) {
-                            Circle().fill(cachedAgentColors[tool] ?? .gray).frame(width: 6, height: 6)
+                            Circle().fill(color).frame(width: 6, height: 6)
                             Text("\(AgentFilterBarView.displayName(for: tool)): \(TokenFormatter.formatCompact(count))")
                                 .font(.caption)
+                                .foregroundColor(AppTheme.Text.primary)
                                 .help("\(AgentFilterBarView.displayName(for: tool)): \(TokenFormatter.formatFull(count)) tokens")
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background((cachedAgentColors[tool] ?? .gray).opacity(0.12))
-                        .cornerRadius(4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(AppTheme.Surface.primary)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+                        )
                     }
                 }
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(AppTheme.Surface.subtle)
+        )
     }
 
     // MARK: - Distribution Charts
@@ -731,19 +767,20 @@ public struct DashboardContentView: View {
             HStack {
                 Text(localization.localized(.topProjectsDrillDown))
                     .font(.headline)
+                    .foregroundColor(AppTheme.Text.primary)
                 Spacer()
                 Text(localization.localized(.trackedProjectsCount, arguments: projectRankings.count))
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.Text.secondary)
             }
 
             if projectRankings.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "folder.badge.questionmark")
                         .font(.system(size: 28))
-                        .foregroundColor(.secondary.opacity(0.5))
+                        .foregroundColor(AppTheme.Text.tertiary.opacity(0.5))
                     Text(localization.localized(.noProjectFoldersRecorded))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppTheme.Text.secondary)
                         .font(.caption)
                 }
                 .frame(maxWidth: .infinity)
@@ -753,42 +790,51 @@ public struct DashboardContentView: View {
                 let displayedProjects = isProjectsExpanded ? projectRankings : Array(projectRankings.prefix(3))
                 VStack(spacing: 8) {
                     ForEach(Array(displayedProjects.enumerated()), id: \.element.project) { index, item in
+                        let rank = index + 1
                         HStack(spacing: 12) {
-                            medalBadge(rank: index + 1)
-                                .frame(width: 28, alignment: .leading)
+                            medalBadge(rank: rank)
+                                .frame(width: 20, alignment: .leading)
 
                             VStack(alignment: .leading, spacing: 4) {
                                 let folderName = (item.project as NSString).lastPathComponent.isEmpty ? item.project : (item.project as NSString).lastPathComponent
                                 Text(folderName)
-                                    .font(.subheadline).bold()
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(AppTheme.Text.primary)
                                     .lineLimit(1)
                                     .help(item.project)
                                 GeometryReader { geo in
                                     let ratio = CGFloat(item.totalTokens) / CGFloat(maxTokens)
                                     ZStack(alignment: .leading) {
-                                        Capsule().fill(Color.secondary.opacity(0.15))
-                                        Capsule().fill(progressColor(rank: index + 1).opacity(0.75))
+                                        Capsule().fill(AppTheme.Surface.subtle)
+                                        Capsule().fill(AppTheme.Rank.color(for: rank))
                                             .frame(width: max(4, geo.size.width * ratio))
                                     }
                                 }
-                                .frame(height: 4)
+                                .frame(height: 3)
                             }
 
                             Spacer(minLength: 20)
 
                             VStack(alignment: .trailing, spacing: 2) {
                                 Text(localization.localized(.tokensCount, arguments: TokenFormatter.formatCompact(item.totalTokens)))
-                                    .font(.subheadline).bold()
+                                    .font(.subheadline)
+                                    .bold()
+                                    .monospacedDigit()
+                                    .foregroundColor(AppTheme.Text.primary)
                                     .help("\(TokenFormatter.formatFull(item.totalTokens)) tokens")
                                 Text(PricingEngine.shared.spendString(item.costUSD))
                                     .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .monospacedDigit()
+                                    .foregroundColor(AppTheme.Text.secondary)
                             }
                         }
                         .padding(.vertical, 6)
                         .padding(.horizontal, 10)
-                        .background(Color(NSColor.windowBackgroundColor).opacity(0.5))
-                        .cornerRadius(6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(AppTheme.Surface.subtle.opacity(0.5))
+                        )
                     }
 
                     if projectRankings.count > 3 {
@@ -807,11 +853,10 @@ public struct DashboardContentView: View {
                                 Image(systemName: isProjectsExpanded ? "chevron.up" : "chevron.down")
                                     .font(.caption2)
                             }
-                            .foregroundColor(.accentColor)
-                            .padding(.vertical, 5)
-                            .padding(.horizontal, 10)
-                            .background(Color.accentColor.opacity(0.08))
-                            .cornerRadius(6)
+                            .foregroundColor(AppTheme.Status.accent)
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 6)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .padding(.top, 4)
@@ -820,29 +865,23 @@ public struct DashboardContentView: View {
             }
         }
         .padding(16)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(AppTheme.Surface.primary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+        )
     }
 
     // MARK: - Helpers
 
-    @ViewBuilder
     private func medalBadge(rank: Int) -> some View {
-        switch rank {
-        case 1:
-            Text("🥇")
-                .font(.subheadline)
-        case 2:
-            Text("🥈")
-                .font(.subheadline)
-        case 3:
-            Text("🥉")
-                .font(.subheadline)
-        default:
-            Text("#\(rank)")
-                .font(.subheadline).bold()
-                .foregroundColor(.secondary)
-        }
+        Text(String(format: "%02d", rank))
+            .font(.caption)
+            .monospacedDigit()
+            .foregroundColor(AppTheme.Rank.color(for: rank))
     }
 
     private func progressColor(rank: Int) -> Color {

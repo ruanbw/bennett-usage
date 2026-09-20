@@ -288,6 +288,13 @@ final class DashboardViewTests: XCTestCase {
         let share0 = Double(items[0].1) / Double(total)
         XCTAssertEqual(share0, 0.6, accuracy: 0.001)
     }
+
+    func testRankIndexFormatting() throws {
+        let rank1 = String(format: "%02d", 1)
+        let rank10 = String(format: "%02d", 10)
+        XCTAssertEqual(rank1, "01")
+        XCTAssertEqual(rank10, "10")
+    }
 }
 
 extension TrendPoint {

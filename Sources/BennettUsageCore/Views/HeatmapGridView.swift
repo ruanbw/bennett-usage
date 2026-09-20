@@ -50,18 +50,24 @@ public struct HeatmapGridView: View {
             // Legend
             HStack(spacing: 4) {
                 Spacer()
-                Text(localization.localized(.less)).font(.caption2).foregroundColor(.secondary)
+                Text(localization.localized(.less))
+                    .font(.caption2)
+                    .foregroundColor(AppTheme.Text.secondary)
                 ForEach(0..<5) { level in
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(colorFor(intensity: level))
-                        .frame(width: 10, height: 10)
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .fill(AppTheme.Heatmap.color(for: level))
+                        .frame(width: 11, height: 11)
                 }
-                Text(localization.localized(.more)).font(.caption2).foregroundColor(.secondary)
+                Text(localization.localized(.more))
+                    .font(.caption2)
+                    .foregroundColor(AppTheme.Text.secondary)
             }
         }
         .padding(12)
-        .background(AppTheme.Surface.primary)
-        .cornerRadius(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(AppTheme.Surface.primary)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
@@ -82,8 +88,7 @@ public struct HeatmapGridView: View {
                             ) { onSelectDay?($0) }
                         } else {
                             Color.clear
-                                .frame(maxWidth: .infinity)
-                                .aspectRatio(1, contentMode: .fit)
+                                .frame(width: 11, height: 11)
                         }
                     }
                 }
@@ -121,15 +126,14 @@ private struct HeatmapDayCellView: View {
     }
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 2)
+        RoundedRectangle(cornerRadius: 2.5)
             .fill(colorFor(intensity: cell.intensityLevel))
-            .frame(maxWidth: .infinity)
-            .aspectRatio(1, contentMode: .fit)
+            .frame(width: 11, height: 11)
             .overlay {
                 if isSelected || isHovered {
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: 2.5)
                         .stroke(
-                            isSelected ? Color.accentColor : Color.primary,
+                            isSelected ? AppTheme.Status.accent : AppTheme.Text.primary,
                             lineWidth: isSelected ? 1.5 : 1
                         )
                 }
