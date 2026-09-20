@@ -1,9 +1,29 @@
 # Changelog
 
-## Unreleased
+## v1.4.0 — 2026-09-21
+
+全新「极简」界面：仪表盘、菜单栏弹窗与设置页统一为 Things 3 风格的编辑式排版；同时修复 OpenCode V2 适配器读不到数据的问题。
+
+### 界面重构
+
+- **统一设计令牌（`ThemeColors.swift`，新增）**：画布 / 表面 / 文本 / 分隔线 / 状态 / 热力图 / 图表全套语义色，浅色与深色各取一档并随系统外观实时切换；`ChartPalette` 改由令牌驱动，为 14 个 Agent 各配一个稳定的低饱和品牌色——同一个 Agent 在任何图表里颜色一致，不再每次启动换色。
+- **仪表盘**：
+  - Hero KPI 去掉卡片嵌套，改为无边框编辑式色带：32pt 圆体大数字 + 右侧支出，下方五项指标（新增输入 / 模型输出 / 缓存写入 / 缓存命中 / 缓存命中率）以 0.5pt 细分隔线横向排布；
+  - 趋势图改用渐变面积 / 圆角柱形与虚线网格，悬停提示换成毛玻璃浮层；
+  - 工具分布与模型分布用**分段式比例条**取代环形图，下方是 Top 4 贡献者列表（色点 + 占比 + Token + 支出）；
+  - 年度全景：年度指标条、52 周热力图（5 级绿色梯度、11×11pt 圆角单元格）、当日明细条；
+  - 项目排行以 `01` / `02` / `03` 等宽数字取代 🥇🥈🥉 emoji，并附相对占比的 3pt 微进度条；
+  - 顶部筛选栏改为「色点 + 名称」的轻量胶囊，选中态用淡色底而非描边。
+- **菜单栏弹窗**：改用系统毛玻璃材质与无卡片布局，今日 Token / 支出 + 迷你分段分布条 + 紧凑工具列表，底部保留「立即同步」与「退出」。
+- **设置**：按 macOS 系统设置的分组内嵌样式重排（单一表面 + 10pt 圆角 + 行间 0.5pt 细分隔线），Agent 健康页使用 6pt 状态点，关于页展示真实 bundle 图标。
+- **主题测试**：新增 `ThemeColorsTests`，覆盖浅 / 深色解析、14 Agent 调色板完备性与取色稳定性。
 
 ### 修复与优化
 
+- **OpenCode V2 适配器**：OpenCode V2 已把消息迁到 `session_message` / `session_v2` 表，旧适配器仍按 `message` 表探测，探测失败后回退到更早的 JSON 文件路径，结果一条记录都读不到，OpenCode 在仪表盘上完全消失。现在按数据库实际存在的表选择 V2 / V1 / JSON 后端。
+  - 角色取自 `session_message.type`，项目目录回退到 `session_v2.directory`；
+  - 进行中的回合（只有 `time.streamed`、尚未写回 `tokens`）不会被游标跳过：其 rowid 留在待复查集合中，回合结束补齐 Token 后再次入库；
+  - `tokens.reasoning` 计入输出——OpenCode 单独上报推理 Token（`session_v2` 累计值可证 `tokens_output` 不含 `tokens_reasoning`），而 provider 按输出价计费。
 - **统计同步与状态栏更新优化**：
   - 修复 `SyncCoordinator` 并发重入时丢失后续 `changedPaths` 的事件丢失缺陷，引入路径累计缓冲区；
   - 增加动态目录检测，当新 Agent 目录建立时自动热重载并扩充 FSEvents 监听池；
@@ -15,6 +35,7 @@
 ### 文档
 
 - **README 中英双语**：`README.md` 改为英文（GitHub 默认展示），新增 `README.zh-CN.md` 简体中文版，两份内容一一对应、顶部互相跳转；补充版本 / 平台 / 架构 / 纯本地 / License 徽章、源码构建新增 `swift test`、数据源表格补上 Cline 与 DSH 的环境变量覆盖说明。
+- **设计规范与实施计划**：新增 `docs/superpowers/specs/2026-09-20-minimalist-ui-ux-refactor-design.md`（设计令牌、组件分解、验收标准）与 `docs/superpowers/plans/2026-09-20-minimalist-ui-ux-refactor.md`。
 
 ## v1.3.0 — 2026-09-16
 

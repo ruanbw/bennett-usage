@@ -3,7 +3,7 @@ public struct BennettUsageCore {
     /// bundle (tests, `swift run`). A packaged build reports the version the
     /// packaging script stamped into `CFBundleShortVersionString` instead —
     /// see `UpdateChecker.bundledVersion(bundle:)`.
-    public static let version = "1.3.0"
+    public static let version = "1.4.0"
 }
 
 import Foundation
