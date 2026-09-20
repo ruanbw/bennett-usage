@@ -1188,7 +1188,7 @@ private struct TrendChartCard: View {
                                         y: .value("Tokens", row.tokens)
                                     )
                                     .foregroundStyle(by: .value("Model", row.model))
-                                    .cornerRadius(2)
+                                    .cornerRadius(3)
                                     .opacity(hoveredTrendPeriod == nil || hoveredTrendPeriod == bucket.point.label ? 1.0 : 0.35)
                                 }
                             }
@@ -1231,37 +1231,31 @@ private struct TrendChartCard: View {
                                     x: .value("Period", item.label),
                                     y: .value("Tokens", item.tokens)
                                 )
-                                .foregroundStyle(Color.blue.gradient)
-                                .cornerRadius(4)
+                                .foregroundStyle(AppTheme.Chart.primaryLine.gradient)
+                                .cornerRadius(3)
                                 .opacity(hoveredTrendPeriod == nil || hoveredTrendPeriod == item.label ? 1.0 : 0.35)
                             } else {
                                 AreaMark(
                                     x: .value("Period", item.label),
                                     y: .value("Tokens", item.tokens)
                                 )
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        colors: [Color.blue.opacity(0.35), Color.blue.opacity(0.03)],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
+                                .foregroundStyle(AppTheme.Chart.primaryAreaGradient)
                                 .interpolationMethod(.monotone)
 
                                 LineMark(
                                     x: .value("Period", item.label),
                                     y: .value("Tokens", item.tokens)
                                 )
-                                .foregroundStyle(Color.blue)
+                                .foregroundStyle(AppTheme.Chart.primaryLine)
                                 .interpolationMethod(.monotone)
-                                .lineStyle(StrokeStyle(lineWidth: 2.5))
+                                .lineStyle(StrokeStyle(lineWidth: 2))
 
                                 if hoveredTrendPeriod == item.label {
                                     PointMark(
                                         x: .value("Period", item.label),
                                         y: .value("Tokens", item.tokens)
                                     )
-                                    .foregroundStyle(Color.blue)
+                                    .foregroundStyle(AppTheme.Chart.primaryLine)
                                     .symbolSize(50)
                                 }
                             }
@@ -1270,7 +1264,7 @@ private struct TrendChartCard: View {
 
                     if let hovered = hoveredTrendPeriod, trendPoints.contains(where: { $0.label == hovered }) {
                         RuleMark(x: .value("Period", hovered))
-                            .foregroundStyle(Color.secondary.opacity(0.5))
+                            .foregroundStyle(AppTheme.Text.secondary.opacity(0.6))
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     }
                 }
@@ -1321,38 +1315,66 @@ private struct TrendChartCard: View {
                                let bucket = buckets.first(where: { $0.point.label == hovered }) {
                                 let point = bucket.point
                                 let rows = hasBreakdown ? Array(bucket.rows.prefix(6)) : []
-                                let tooltipSize = CGSize(width: rows.isEmpty ? 140 : 190, height: 60 + CGFloat(rows.count) * 15)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(point.label)
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                    Text("\(TokenFormatter.formatFull(point.tokens)) tokens")
-                                        .font(.caption).bold()
-                                    Text(PricingEngine.shared.spendString(point.costUSD))
-                                        .font(.caption2)
-                                        .foregroundColor(AppTheme.Status.success)
-                                    ForEach(rows, id: \.model) { row in
-                                        HStack(spacing: 4) {
-                                            Circle().fill(modelColors[row.model] ?? .gray).frame(width: 6, height: 6)
-                                            Text(row.model)
-                                                .font(.caption2)
-                                                .lineLimit(1)
-                                                .truncationMode(.middle)
-                                            Text(TokenFormatter.formatCompact(row.tokens))
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
+                                let tooltipWidth: CGFloat = rows.isEmpty ? 150 : 200
+                                let tooltipHeight: CGFloat = rows.isEmpty ? 56 : (64 + CGFloat(rows.count) * 16)
+                                let tooltipSize = CGSize(width: tooltipWidth, height: tooltipHeight)
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text(point.label)
+                                            .font(.caption2.weight(.medium))
+                                            .foregroundColor(AppTheme.Text.secondary)
+                                        Spacer()
+                                        Text(PricingEngine.shared.spendString(point.costUSD))
+                                            .font(.caption2.monospacedDigit().weight(.medium))
+                                            .foregroundColor(AppTheme.Status.success)
+                                    }
+
+                                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                        Text(TokenFormatter.formatFull(point.tokens))
+                                            .font(.caption.monospacedDigit().weight(.semibold))
+                                            .foregroundColor(AppTheme.Text.primary)
+                                        Text("tokens")
+                                            .font(.caption2)
+                                            .foregroundColor(AppTheme.Text.tertiary)
+                                    }
+
+                                    if !rows.isEmpty {
+                                        Divider()
+                                            .overlay(AppTheme.Border.divider)
+
+                                        VStack(spacing: 3) {
+                                            ForEach(rows, id: \.model) { row in
+                                                HStack(spacing: 6) {
+                                                    Circle()
+                                                        .fill(modelColors[row.model] ?? .gray)
+                                                        .frame(width: 5, height: 5)
+                                                    Text(row.model)
+                                                        .font(.caption2)
+                                                        .foregroundColor(AppTheme.Text.primary)
+                                                        .lineLimit(1)
+                                                        .truncationMode(.middle)
+                                                    Spacer(minLength: 8)
+                                                    Text(TokenFormatter.formatCompact(row.tokens))
+                                                        .font(.caption2.monospacedDigit())
+                                                        .foregroundColor(AppTheme.Text.secondary)
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(Color(NSColor.windowBackgroundColor))
-                                .cornerRadius(6)
-                                .shadow(color: Color.black.opacity(0.2), radius: 3, x: 0, y: 1)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(Color(NSColor.separatorColor), lineWidth: 0.8)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .frame(width: tooltipWidth)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(.ultraThinMaterial)
                                 )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+                                )
+                                .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
                                 .position(tooltipPosition(for: loc, in: geo.size, tooltipSize: tooltipSize))
                                 .allowsHitTesting(false)
                             }
@@ -1366,34 +1388,34 @@ private struct TrendChartCard: View {
                 .chartForegroundStyleScale(domain: modelNames, range: modelRange)
                 .chartXAxis {
                     AxisMarks(values: visibleLabels) { value in
-                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
-                            .foregroundStyle(Color.secondary.opacity(0.3))
-                        AxisTick()
-                            .foregroundStyle(Color.secondary.opacity(0.5))
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
+                            .foregroundStyle(AppTheme.Chart.gridline)
+                        AxisTick(stroke: StrokeStyle(lineWidth: 0.5))
+                            .foregroundStyle(AppTheme.Border.subtle)
                         AxisValueLabel {
                             if let str = value.as(String.self) {
                                 Text(str)
                                     .font(.caption2)
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(AppTheme.Text.tertiary)
                             }
                         }
                     }
                 }
                 .chartYAxis {
                     AxisMarks(position: .leading) { value in
-                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
-                            .foregroundStyle(Color.secondary.opacity(0.3))
-                        AxisTick()
-                            .foregroundStyle(Color.secondary.opacity(0.5))
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
+                            .foregroundStyle(AppTheme.Chart.gridline)
+                        AxisTick(stroke: StrokeStyle(lineWidth: 0.5))
+                            .foregroundStyle(AppTheme.Border.subtle)
                         AxisValueLabel {
                             if let tokens = value.as(Int.self) {
                                 Text(TokenFormatter.formatCompact(tokens))
                                     .font(.caption2)
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(AppTheme.Text.tertiary)
                             } else if let tokens = value.as(Double.self) {
                                 Text(TokenFormatter.formatCompact(Int(tokens)))
                                     .font(.caption2)
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(AppTheme.Text.tertiary)
                             }
                         }
                     }
@@ -1406,6 +1428,7 @@ private struct TrendChartCard: View {
                                     Circle().fill(modelColors[model] ?? .gray).frame(width: 8, height: 8)
                                     Text(model)
                                         .font(.caption2)
+                                        .foregroundColor(AppTheme.Text.secondary)
                                         .lineLimit(1)
                                         .truncationMode(.middle)
                                 }
@@ -1419,9 +1442,9 @@ private struct TrendChartCard: View {
                     Spacer()
                     Image(systemName: "chart.bar")
                         .font(.system(size: 32))
-                        .foregroundColor(.secondary.opacity(0.5))
+                        .foregroundColor(AppTheme.Text.tertiary)
                     Text(localization.localized(.noActivityRecorded, arguments: rangeSubtitle))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppTheme.Text.secondary)
                         .font(.caption)
                     Spacer()
                 }
@@ -1431,8 +1454,14 @@ private struct TrendChartCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(AppTheme.Surface.primary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+        )
 }
 
     private func shouldUpdateTrendHoverLocation(_ loc: CGPoint) -> Bool {

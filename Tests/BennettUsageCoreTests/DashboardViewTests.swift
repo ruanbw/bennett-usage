@@ -265,6 +265,24 @@ final class DashboardViewTests: XCTestCase {
         XCTAssertEqual(TokenFormatter.formatCompact(metrics.cacheReadTokens), "100k")
         XCTAssertEqual(String(format: "%.1f%%", zeroInputMetrics.cacheHitRate * 100), "40.0%")
     }
+
+    func testTrendPointDataIntegrity() throws {
+        let point = TrendPoint(
+            id: "2026-09-20-10",
+            label: "10:00",
+            tokens: 50_000,
+            costUSD: 0.25,
+            modelTokens: ["claude-3-5-sonnet": 50_000]
+        )
+        XCTAssertEqual(point.tokens, 50_000)
+        XCTAssertEqual(point.modelTokens["claude-3-5-sonnet"], 50_000)
+    }
+}
+
+extension TrendPoint {
+    public init(id: String, label: String, tokens: Int, costUSD: Double, modelTokens: [String: Int] = [:]) {
+        self.init(label: label, tokens: tokens, costUSD: costUSD, modelTokens: modelTokens)
+    }
 }
 
 extension PeriodMetrics {
