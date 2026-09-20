@@ -5,11 +5,14 @@ public actor SyncCoordinator {
     private let registry: AdapterRegistry
     private let pricingEngine: PricingEngine
     private var watcher: FSEventsWatcher?
+    private var watchedPaths: [String] = []
     // Coalescing: while a sync is running, additional FSEvent-triggered
     // requests collapse into a single follow-up pass instead of queueing one
-    // full-tree walk per event.
+    // full-tree walk per event. Distinct changedPaths are accumulated so
+    // concurrent events for other adapters are never lost. `nil` means full sync.
     private var isSyncing = false
     private var needsResync = false
+    private var pendingChangedPaths: Set<String>? = Set<String>()
     // Throttle state for the UI-triggered entry point (`syncForUI`). Opening the
     // dashboard / popover fires a sync on every interaction, so a full pass is
     // coalesced to at most one per `minInterval` (U-01).
@@ -29,14 +32,32 @@ public actor SyncCoordinator {
     public func syncAll(changedPaths: [String]? = nil) async throws -> Int {
         if isSyncing {
             needsResync = true
+            if let changedPaths {
+                if var pending = pendingChangedPaths {
+                    pending.formUnion(changedPaths)
+                    pendingChangedPaths = pending
+                }
+            } else {
+                // At least one caller requested a full sync (nil changedPaths)
+                pendingChangedPaths = nil
+            }
             return 0
         }
         isSyncing = true
-        defer { isSyncing = false }
+        pendingChangedPaths = Set<String>()
+        defer {
+            isSyncing = false
+            pendingChangedPaths = Set<String>()
+        }
+        var currentPaths = changedPaths
         var total = 0
         repeat {
             needsResync = false
-            total += try await syncAllOnce(changedPaths: changedPaths)
+            total += try await syncAllOnce(changedPaths: currentPaths)
+            if needsResync {
+                currentPaths = pendingChangedPaths.map { Array($0) }
+                pendingChangedPaths = Set<String>()
+            }
         } while needsResync
         return total
     }
@@ -68,6 +89,7 @@ public actor SyncCoordinator {
     }
 
     private func syncAllOnce(changedPaths: [String]? = nil) async throws -> Int {
+        updateWatchingPathsIfNeeded()
         // Phase 1 (actor, cheap): eligibility is a few path-prefix checks.
         var eligible: [(adapter: any AgentSourceAdapter, path: URL)] = []
         for adapter in registry.allAdapters() {
@@ -203,13 +225,43 @@ public actor SyncCoordinator {
         return false
     }
 
+    public func currentWatchingPaths() -> [String] {
+        return watchedPaths
+    }
+
     public func startWatching() {
-        let paths = registry.allAdapters().compactMap { dataRoot(for: $0)?.path }
-        self.watcher = FSEventsWatcher(paths: paths) { [weak self] eventPaths in
-            Task { [weak self] in
-                _ = try? await self?.syncAll(changedPaths: eventPaths)
+        updateWatchingPathsIfNeeded()
+    }
+
+    /// Checks if any newly created adapter directories appeared since watching started,
+    /// and restarts FSEventsWatcher with the expanded path list if needed.
+    public func updateWatchingPathsIfNeeded() {
+        let activePaths = registry.allAdapters().compactMap { adapter -> String? in
+            guard let root = dataRoot(for: adapter) else { return nil }
+            return Self.watchDirectory(for: root).path
+        }
+        let uniquePaths = Array(Set(activePaths)).sorted()
+        if uniquePaths != watchedPaths {
+            watchedPaths = uniquePaths
+            self.watcher = FSEventsWatcher(paths: uniquePaths) { [weak self] eventPaths in
+                Task { [weak self] in
+                    _ = try? await self?.syncAll(changedPaths: eventPaths)
+                }
             }
         }
+    }
+
+    /// FSEvents requires directory paths. If an adapter root points directly to a file
+    /// (e.g. ~/.omp/stats.db), watch its parent directory instead.
+    private static func watchDirectory(for url: URL) -> URL {
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) {
+            return isDir.boolValue ? url : url.deletingLastPathComponent()
+        }
+        if !url.pathExtension.isEmpty {
+            return url.deletingLastPathComponent()
+        }
+        return url
     }
 
     /// Adapter fetches do full-tree enumeration + JSON parsing synchronously.

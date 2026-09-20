@@ -10,10 +10,12 @@ private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
     var recordsToReturn: [UnifiedTokenRecord] = []
     var fetchCallCount = 0
     var newCursorToReturn: SyncCursor = .rowId(1)
+    var onFetch: (@Sendable () async -> Void)? = nil
 
-    init(sourceId: String = "mock", path: URL? = nil) {
+    init(sourceId: String = "mock", path: URL? = nil, onFetch: (@Sendable () async -> Void)? = nil) {
         self.sourceId = sourceId
         self.path = path
+        self.onFetch = onFetch
     }
 
     func detectDefaultPath() -> URL? {
@@ -22,6 +24,9 @@ private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
 
     func fetchIncrementalRecords(from directory: URL, since cursor: SyncCursor?) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
         fetchCallCount += 1
+        if let onFetch {
+            await onFetch()
+        }
         return (recordsToReturn, newCursorToReturn)
     }
 }
@@ -250,5 +255,139 @@ final class SyncCoordinatorTests: XCTestCase {
         _ = try await coordinator.syncAll(changedPaths: [unrelated])
         XCTAssertEqual(mockA.fetchCallCount, 2)
         XCTAssertEqual(mockB.fetchCallCount, 1)
+    }
+
+    func testConcurrentSyncAllAccumulatesDistinctChangedPaths() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let dirA = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let dirB = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dirA, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dirB, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: dirA)
+            try? FileManager.default.removeItem(at: dirB)
+        }
+
+        actor Barrier {
+            private var isEntered = false
+            private var isProceed = false
+            private var enterWaiters: [CheckedContinuation<Void, Never>] = []
+            private var proceedWaiters: [CheckedContinuation<Void, Never>] = []
+
+            func signalEntered() {
+                isEntered = true
+                for w in enterWaiters { w.resume() }
+                enterWaiters.removeAll()
+            }
+
+            func waitUntilEntered() async {
+                if isEntered { return }
+                await withCheckedContinuation { enterWaiters.append($0) }
+            }
+
+            func signalProceed() {
+                isProceed = true
+                for w in proceedWaiters { w.resume() }
+                proceedWaiters.removeAll()
+            }
+
+            func waitUntilProceed() async {
+                if isProceed { return }
+                await withCheckedContinuation { proceedWaiters.append($0) }
+            }
+        }
+
+        let barrier = Barrier()
+
+        let mockA = MockSyncAdapter(sourceId: "mock_a", path: dirA, onFetch: {
+            await barrier.signalEntered()
+            await barrier.waitUntilProceed()
+        })
+        let mockB = MockSyncAdapter(sourceId: "mock_b", path: dirB)
+        registry.register(mockA)
+        registry.register(mockB)
+
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+
+        // Start sync for adapter A in background task
+        let taskA = Task {
+            try await coordinator.syncAll(changedPaths: [dirA.appendingPathComponent("session.jsonl").path])
+        }
+
+        // Wait until mockA is executing its fetch
+        await barrier.waitUntilEntered()
+
+        // While task A is in flight, an event for adapter B arrives
+        let taskB = Task {
+            try await coordinator.syncAll(changedPaths: [dirB.appendingPathComponent("session.jsonl").path])
+        }
+
+        // Wait briefly for taskB to attempt syncAll (and hit isSyncing == true)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        // Allow task A to finish
+        await barrier.signalProceed()
+        _ = try await taskA.value
+        _ = try await taskB.value
+
+        // Mock A should have been fetched.
+        XCTAssertGreaterThanOrEqual(mockA.fetchCallCount, 1)
+        // Mock B MUST have been fetched in the coalesced follow-up pass!
+        XCTAssertEqual(mockB.fetchCallCount, 1, "Adapter B must be synced in the follow-up pass instead of its paths being dropped")
+    }
+
+    func testDshSyncRootAllowsBothSessionsAndProjcache() {
+        let adapter = DshAdapter()
+        let root = adapter.syncRootPath
+        XCTAssertNotNil(root)
+        let expanded = URL(fileURLWithPath: (root! as NSString).expandingTildeInPath).standardized.path
+        let expected = DshAdapter.resolveHome().standardized.path
+        XCTAssertEqual(expanded, expected)
+    }
+
+    func testDynamicDirectoryDetectionUpdatesWatcher() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let parentDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parentDir) }
+
+        let dynamicSubdir = parentDir.appendingPathComponent("late_agent")
+
+        final class LateAdapter: AgentSourceAdapter, @unchecked Sendable {
+            let sourceId = "late_mock"
+            let displayName = "Late Tool"
+            let brandColorHex = "#00FF00"
+            let sfSymbolIcon = "clock"
+            let targetDir: URL
+            var fetchCount = 0
+
+            init(targetDir: URL) { self.targetDir = targetDir }
+            func detectDefaultPath() -> URL? {
+                FileManager.default.fileExists(atPath: targetDir.path) ? targetDir : nil
+            }
+            func fetchIncrementalRecords(from directory: URL, since cursor: SyncCursor?) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+                fetchCount += 1
+                return ([], .rowId(1))
+            }
+        }
+
+        let lateAdapter = LateAdapter(targetDir: dynamicSubdir)
+        registry.register(lateAdapter)
+
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+        await coordinator.startWatching()
+
+        let pathsBefore = await coordinator.currentWatchingPaths()
+        XCTAssertFalse(pathsBefore.contains(dynamicSubdir.path))
+
+        // Now directory is created
+        try FileManager.default.createDirectory(at: dynamicSubdir, withIntermediateDirectories: true)
+
+        await coordinator.updateWatchingPathsIfNeeded()
+
+        let pathsAfter = await coordinator.currentWatchingPaths()
+        XCTAssertTrue(pathsAfter.contains(dynamicSubdir.path), "Newly created directory must be added to watching paths")
     }
 }

@@ -63,12 +63,13 @@ extension AgentSourceAdapter {
             // Date-sharded rollout logs; the ~/.codex root holds auth/config.
             return "~/.codex/sessions"
         case "dsh":
-            // Transcripts + projcache live under sessions/; the home root
-            // also holds credentials/settings that need no watching.
+            // Transcripts live under sessions/ and projcache lives under
+            // storages/session_projcache/sessions/; both are under ~/.dsh.
+            // Watching ~/.dsh covers both and prevents projcache events from being ignored.
             if let home = ProcessInfo.processInfo.environment["DSH_HOME"], !home.isEmpty {
-                return (home as NSString).appendingPathComponent("sessions")
+                return home
             }
-            return "~/.dsh/sessions"
+            return "~/.dsh"
         case "cline":
             // Canonical session store only (CLINE_SESSION_DATA_DIR /
             // CLINE_DATA_DIR / CLINE_DIR aware): ~/.cline/data also holds

@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### 修复与优化
+
+- **统计同步与状态栏更新优化**：
+  - 修复 `SyncCoordinator` 并发重入时丢失后续 `changedPaths` 的事件丢失缺陷，引入路径累计缓冲区；
+  - 增加动态目录检测，当新 Agent 目录建立时自动热重载并扩充 FSEvents 监听池；
+  - 修正 DSH 监听根路径，覆盖 `sessions/` 与 `storages/session_projcache/`；
+  - 针对单文件适配器（如 OMP `stats.db`）自动截取父目录监听；
+  - `StatusItemController` 增加 30 秒后台心跳定时同步、午夜跨天（`NSCalendarDayChanged`）及电脑休眠唤醒（`NSWorkspace.didWakeNotification`）感知；
+  - 将状态栏数据库读取与主线程隔离，消除 SQLite 锁竞争导致的 UI 卡顿。
+
+### 文档
+
+- **README 中英双语**：`README.md` 改为英文（GitHub 默认展示），新增 `README.zh-CN.md` 简体中文版，两份内容一一对应、顶部互相跳转；补充版本 / 平台 / 架构 / 纯本地 / License 徽章、源码构建新增 `swift test`、数据源表格补上 Cline 与 DSH 的环境变量覆盖说明。
+
 ## v1.3.0 — 2026-09-16
 
 新增「检查更新」：读取 GitHub Releases 判断是否有新版本，并在设置与菜单栏弹窗中提示。
