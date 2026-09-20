@@ -244,201 +244,167 @@ public struct DashboardContentView: View {
         }
     }
 
-    // MARK: - KPI Cards
-
+    // MARK: - Hero KPI & Metrics Ribbon
 
     private var heroSection: some View {
         VStack(spacing: 16) {
-            // Top Row
-            HStack(alignment: .center) {
-                // Left: Brand Icon + Titles
-                HStack(spacing: 12) {
-                    let brandColor = selectedToolFilter.flatMap { cachedAgentColors[$0] } ?? Color.accentColor.opacity(0.15)
-                    let agentName = selectedToolFilter != nil ? AgentFilterBarView.displayName(for: selectedToolFilter!) : localization.localized(.filterAllAgents)
+            heroTopRow
 
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(brandColor)
-                            .frame(width: 36, height: 36)
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(selectedToolFilter != nil ? .white : .accentColor)
-                    }
+            Divider()
+                .opacity(0.3)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 4) {
-                            Text(agentName)
-                                .bold()
-                            Text("•")
-                                .foregroundColor(.secondary)
-                            Text(localization.localized(.periodTokens))
-                                .foregroundColor(.secondary)
-                        }
-                        .font(.caption)
-
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            let total = allTimeTotals?.totalTokens ?? 0
-                            Text(TokenFormatter.formatFull(total))
-                                .font(.system(size: 26, weight: .bold, design: .rounded))
-                                .monospacedDigit()
-
-                            Text("≈ \(TokenFormatter.formatCompact(total))")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.secondary.opacity(0.12))
-                                .cornerRadius(6)
-                        }
-                    }
-                }
-
-                Spacer()
-
-                // Right: Pill box container
-                HStack(spacing: 14) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(localization.localized(.rangeTokens, arguments: rangeSubtitle))
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        HStack(spacing: 4) {
-                            Image(systemName: "bolt.fill")
-                                .foregroundColor(.blue)
-                                .font(.caption)
-                            Text(TokenFormatter.formatCompact(periodMetrics?.totalTokens ?? 0))
-                                .font(.subheadline)
-                                .bold()
-                        }
-                    }
-                    .help("\(TokenFormatter.formatFull(periodMetrics?.totalTokens ?? 0)) tokens")
-
-                    Divider()
-                        .frame(height: 24)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(localization.localized(.spendSuffix, arguments: rangeSubtitle))
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Text(PricingEngine.shared.spendString(periodMetrics?.totalCostUSD ?? 0.0))
-                            .font(.subheadline)
-                            .bold()
-                            .foregroundColor(AppTheme.Status.success)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(NSColor.windowBackgroundColor).opacity(0.6))
-                .cornerRadius(10)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 1)
-                )
-            }
-
-            // Bottom Row: 5 mini stat cards
-            LazyVGrid(columns: [
-                GridItem(.flexible(), spacing: 10),
-                GridItem(.flexible(), spacing: 10),
-                GridItem(.flexible(), spacing: 10),
-                GridItem(.flexible(), spacing: 10),
-                GridItem(.flexible(), spacing: 10)
-            ], spacing: 10) {
-                miniStatCard(
-                    title: localization.localized(.freshInput),
-                    icon: "arrow.down.to.line",
-                    iconColor: .blue,
-                    value: TokenFormatter.formatCompact(periodMetrics?.inputTokens ?? 0),
-                    fullTokens: periodMetrics?.inputTokens ?? 0
-                )
-
-                miniStatCard(
-                    title: localization.localized(.modelOutput),
-                    icon: "arrow.up.from.line",
-                    iconColor: .purple,
-                    value: TokenFormatter.formatCompact(periodMetrics?.outputTokens ?? 0),
-                    fullTokens: periodMetrics?.outputTokens ?? 0
-                )
-
-                miniStatCard(
-                    title: localization.localized(.cacheWrite),
-                    icon: "cylinder.split.1x2",
-                    iconColor: .orange,
-                    value: TokenFormatter.formatCompact(periodMetrics?.cacheWriteTokens ?? 0),
-                    fullTokens: periodMetrics?.cacheWriteTokens ?? 0
-                )
-
-                miniStatCard(
-                    title: localization.localized(.cacheRead),
-                    icon: "sparkles",
-                    iconColor: .green,
-                    value: TokenFormatter.formatCompact(periodMetrics?.cacheReadTokens ?? 0),
-                    fullTokens: periodMetrics?.cacheReadTokens ?? 0
-                )
-                cacheHitRateCard
-            }
+            heroMetricsRibbon
         }
-        .padding(16)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(12)
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(AppTheme.Surface.primary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+        )
     }
 
-    private func miniStatCard(title: String, icon: String, iconColor: Color, value: String, fullTokens: Int? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.caption2)
-                    .foregroundColor(iconColor)
-                Text(title)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+    private var heroTopRow: some View {
+        HStack(alignment: .bottom) {
+            // Left: Agent identity dot (6pt) + agent name / "所有 Agent 用量" + large tabular token count + compact badge
+            let agentDotColor = selectedToolFilter.flatMap { AgentFilterBarView.colorMap[$0] ?? cachedAgentColors[$0] } ?? AppTheme.Status.accent
+            let agentTitle = selectedToolFilter != nil
+                ? AgentFilterBarView.displayName(for: selectedToolFilter!)
+                : (localization.effectiveLanguage == .zh ? "所有 Agent 用量" : "All Agents Usage")
+            let totalTokens = periodMetrics?.totalTokens ?? 0
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(agentDotColor)
+                        .frame(width: 6, height: 6)
+
+                    Text(agentTitle)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(AppTheme.Text.secondary)
+                }
+
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(TokenFormatter.formatFull(totalTokens))
+                        .font(.system(size: 32, weight: .semibold, design: .rounded))
+                        .foregroundColor(AppTheme.Text.primary)
+                        .monospacedDigit()
+
+                    Text("≈ \(TokenFormatter.formatCompact(totalTokens))")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(AppTheme.Text.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(AppTheme.Surface.subtle)
+                        .cornerRadius(6)
+                }
             }
-            Text(value)
-                .font(.subheadline)
-                .bold()
+            .help("\(TokenFormatter.formatFull(totalTokens)) tokens")
+
+            Spacer()
+
+            // Right: Period spend in font(.system(size: 28, weight: .semibold, design: .rounded)) and AppTheme.Status.success with period subtitle above
+            VStack(alignment: .trailing, spacing: 6) {
+                Text(localization.localized(.spendSuffix, arguments: rangeSubtitle))
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Text.secondary)
+
+                Text(PricingEngine.shared.spendString(periodMetrics?.totalCostUSD ?? 0.0))
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                    .foregroundColor(AppTheme.Status.success)
+                    .monospacedDigit()
+            }
+        }
+    }
+
+    private var heroMetricsRibbon: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ribbonMetricColumn(
+                label: localization.localized(.freshInput),
+                value: TokenFormatter.formatCompact(periodMetrics?.inputTokens ?? 0),
+                fullTokens: periodMetrics?.inputTokens ?? 0
+            )
+
+            Divider().frame(height: 24).opacity(0.3)
+
+            ribbonMetricColumn(
+                label: localization.localized(.modelOutput),
+                value: TokenFormatter.formatCompact(periodMetrics?.outputTokens ?? 0),
+                fullTokens: periodMetrics?.outputTokens ?? 0
+            )
+
+            Divider().frame(height: 24).opacity(0.3)
+
+            ribbonMetricColumn(
+                label: localization.localized(.cacheWrite),
+                value: TokenFormatter.formatCompact(periodMetrics?.cacheWriteTokens ?? 0),
+                fullTokens: periodMetrics?.cacheWriteTokens ?? 0
+            )
+
+            Divider().frame(height: 24).opacity(0.3)
+
+            ribbonMetricColumn(
+                label: localization.localized(.cacheRead),
+                value: TokenFormatter.formatCompact(periodMetrics?.cacheReadTokens ?? 0),
+                fullTokens: periodMetrics?.cacheReadTokens ?? 0
+            )
+
+            Divider().frame(height: 24).opacity(0.3)
+
+            ribbonCacheHitRateColumn
+        }
+    }
+
+    private func ribbonMetricColumn(label: String, value: String, fullTokens: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(AppTheme.Text.secondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+
+            Text(value)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundColor(AppTheme.Text.primary)
+                .monospacedDigit()
+                .lineLimit(1)
+
+            Color.clear
+                .frame(height: 3)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(Color(NSColor.windowBackgroundColor).opacity(0.4))
-        .cornerRadius(8)
-        .help(fullTokens != nil ? "\(TokenFormatter.formatFull(fullTokens!)) tokens" : value)
+        .help("\(TokenFormatter.formatFull(fullTokens)) tokens")
     }
 
-    private var cacheHitRateCard: some View {
+    private var ribbonCacheHitRateColumn: some View {
         let hitRate = periodMetrics?.cacheHitRate ?? 0.0
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                Image(systemName: "chart.pie.fill")
-                    .font(.caption2)
-                    .foregroundColor(AppTheme.Status.success)
-                Text(localization.localized(.cacheHitRate))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(localization.localized(.cacheHitRate))
+                .font(.caption)
+                .foregroundColor(AppTheme.Text.secondary)
+                .lineLimit(1)
+
             Text(String(format: "%.1f%%", hitRate * 100))
-                .font(.subheadline)
-                .bold()
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundColor(AppTheme.Text.primary)
+                .monospacedDigit()
                 .lineLimit(1)
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color.secondary.opacity(0.2))
-                        .frame(height: 4)
+                        .fill(AppTheme.Surface.subtle)
+                        .frame(height: 3)
                     Capsule()
                         .fill(AppTheme.Status.success)
-                        .frame(width: max(0, min(geo.size.width * CGFloat(hitRate), geo.size.width)), height: 4)
+                        .frame(width: max(0, min(geo.size.width * CGFloat(hitRate), geo.size.width)), height: 3)
                 }
             }
-            .frame(height: 4)
+            .frame(height: 3)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(Color(NSColor.windowBackgroundColor).opacity(0.4))
-        .cornerRadius(8)
         .help(localization.localized(.cacheHitRate) + ": " + String(format: "%.1f%%", hitRate * 100))
     }
 

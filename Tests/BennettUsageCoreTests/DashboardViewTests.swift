@@ -223,4 +223,76 @@ final class DashboardViewTests: XCTestCase {
         XCTAssertEqual(dayCell?.totalTokens, 12000)
         XCTAssertEqual(dayCell?.intensityLevel, 4)
     }
+
+    func testHeroMetricsRibbonCalculations() throws {
+        let metrics = PeriodMetrics(
+            totalTokens: 1_250_000,
+            inputTokens: 800_000,
+            outputTokens: 200_000,
+            cacheWriteTokens: 150_000,
+            cacheReadTokens: 100_000,
+            totalCostUSD: 4.50,
+            toolDistribution: [("claude", 1_250_000, 4.50)],
+            modelDistribution: [("claude-3-5-sonnet", 1_250_000, 4.50)],
+            projectRankings: [("/test/proj", 1_250_000, 4.50)],
+            trendPoints: []
+        )
+        // Cacheable tokens = 800_000 (input) + 150_000 (write) + 100_000 (read) = 1_050_000.
+        // Prompt cache hit rate = cacheReadTokens / cacheable = 100_000 / 1_050_000 ≈ 0.0952.
+        XCTAssertEqual(metrics.cacheHitRate, 100_000.0 / 1_050_000.0, accuracy: 0.01)
+
+        // When fresh input tokens are 0, cacheRead / (cacheWrite + cacheRead) = 100_000 / 250_000 = 0.4.
+        let zeroInputMetrics = PeriodMetrics(
+            totalTokens: 250_000,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheWriteTokens: 150_000,
+            cacheReadTokens: 100_000,
+            totalCostUSD: 4.50,
+            toolDistribution: [("claude", 250_000, 4.50)],
+            modelDistribution: [("claude-3-5-sonnet", 250_000, 4.50)],
+            projectRankings: [("/test/proj", 250_000, 4.50)],
+            trendPoints: []
+        )
+        XCTAssertEqual(zeroInputMetrics.cacheHitRate, 0.4, accuracy: 0.01)
+
+        // Verify token formatting and spend calculations used in hero section & ribbon
+        XCTAssertEqual(TokenFormatter.formatFull(metrics.totalTokens), "1,250,000")
+        XCTAssertEqual(TokenFormatter.formatCompact(metrics.totalTokens), "1.25M")
+        XCTAssertEqual(TokenFormatter.formatCompact(metrics.inputTokens), "800k")
+        XCTAssertEqual(TokenFormatter.formatCompact(metrics.outputTokens), "200k")
+        XCTAssertEqual(TokenFormatter.formatCompact(metrics.cacheWriteTokens), "150k")
+        XCTAssertEqual(TokenFormatter.formatCompact(metrics.cacheReadTokens), "100k")
+        XCTAssertEqual(String(format: "%.1f%%", zeroInputMetrics.cacheHitRate * 100), "40.0%")
+    }
+}
+
+extension PeriodMetrics {
+    public init(
+        totalTokens: Int,
+        inputTokens: Int = 0,
+        outputTokens: Int = 0,
+        cacheWriteTokens: Int = 0,
+        cacheReadTokens: Int = 0,
+        totalCostUSD: Double = 0.0,
+        toolDistribution: [(tool: String, tokens: Int, costUSD: Double)] = [],
+        modelDistribution: [(model: String, tokens: Int, costUSD: Double)] = [],
+        projectRankings: [(project: String, totalTokens: Int, costUSD: Double)] = [],
+        trendPoints: [TrendPoint] = [],
+        mostActiveTool: String = ""
+    ) {
+        self.init(
+            totalTokens: totalTokens,
+            totalCostUSD: totalCostUSD,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            cacheReadTokens: cacheReadTokens,
+            cacheWriteTokens: cacheWriteTokens,
+            mostActiveTool: mostActiveTool,
+            trendPoints: trendPoints,
+            toolDistribution: toolDistribution,
+            projectRankings: projectRankings,
+            modelDistribution: modelDistribution
+        )
+    }
 }
