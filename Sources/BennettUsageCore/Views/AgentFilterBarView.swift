@@ -69,16 +69,13 @@ public struct AgentFilterBarView: View {
                 } label: {
                     Text(localization.localized(.filterAllAgents))
                         .font(.caption)
-                        .fontWeight(isAllSelected ? .semibold : .regular)
+                        .fontWeight(isAllSelected ? .medium : .regular)
+                        .foregroundColor(isAllSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
                         .background(
-                            RoundedRectangle(cornerRadius: 14)
-                                .fill(isAllSelected ? AppTheme.Status.accent.opacity(0.12) : Color.clear)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14)
-                                .stroke(isAllSelected ? AppTheme.Status.accent : AppTheme.Border.divider, lineWidth: 1)
+                            Capsule()
+                                .fill(isAllSelected ? AppTheme.Surface.selected : Color.clear)
                         )
                 }
                 .buttonStyle(.plain)
@@ -94,20 +91,17 @@ public struct AgentFilterBarView: View {
                         HStack(spacing: 5) {
                             Circle()
                                 .fill(color)
-                                .frame(width: 8, height: 8)
+                                .frame(width: 6, height: 6)
                             Text(Self.displayName(for: agent))
                                 .font(.caption)
-                                .fontWeight(isSelected ? .semibold : .regular)
+                                .fontWeight(isSelected ? .medium : .regular)
+                                .foregroundColor(isSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
                         .background(
-                            RoundedRectangle(cornerRadius: 14)
+                            Capsule()
                                 .fill(isSelected ? color.opacity(0.12) : Color.clear)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14)
-                                .stroke(isSelected ? color : AppTheme.Border.divider, lineWidth: 1)
                         )
                     }
                     .buttonStyle(.plain)

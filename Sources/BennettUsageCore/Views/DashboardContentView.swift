@@ -41,6 +41,7 @@ public struct DashboardContentView: View {
     @State private var annualSummary: (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String, activeDays: Int, totalDays: Int)? = nil
     @State private var annualTrendPoints: [TrendPoint] = []
     @State private var heatmapDisplayMode: HeatmapDisplayMode = .calendar
+    @State private var isSettingsHovered: Bool = false
 
     public init(
         aggregator: MetricsAggregator,
@@ -148,17 +149,39 @@ public struct DashboardContentView: View {
         return availableYears
     }
 
+    private func rangePill(_ option: TimeRangeOption, title: String) -> some View {
+        let isSelected = selectedRange == option
+        return Button {
+            selectedRange = option
+        } label: {
+            Text(title)
+                .font(.caption)
+                .fontWeight(isSelected ? .semibold : .regular)
+                .foregroundColor(isSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isSelected ? AppTheme.Surface.primary : Color.clear)
+                        .shadow(color: Color.black.opacity(isSelected ? 0.04 : 0), radius: 1.5, x: 0, y: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
     private var headerSection: some View {
         HStack(spacing: 12) {
-            Picker("", selection: $selectedRange) {
-                Text(localization.localized(.range24h)).tag(TimeRangeOption.last24Hours)
-                Text(localization.localized(.rangeToday)).tag(TimeRangeOption.today)
-                Text(localization.localized(.range7Days)).tag(TimeRangeOption.last7Days)
-                Text(localization.localized(.range30Days)).tag(TimeRangeOption.last30Days)
+            HStack(spacing: 2) {
+                rangePill(.last24Hours, title: localization.localized(.range24h))
+                rangePill(.today, title: localization.localized(.rangeToday))
+                rangePill(.last7Days, title: localization.localized(.range7Days))
+                rangePill(.last30Days, title: localization.localized(.range30Days))
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 270)
+            .padding(2)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(AppTheme.Surface.subtle)
+            )
 
             if case .year(let y) = selectedRange {
                 HStack(spacing: 5) {
@@ -170,22 +193,19 @@ public struct DashboardContentView: View {
                     Button {
                         selectedRange = .last30Days
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
                     }
                     .buttonStyle(.plain)
                     .help(localization.localized(.exitAnnualDashboard))
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color.accentColor.opacity(0.12))
-                .foregroundColor(.accentColor)
-                .cornerRadius(6)
-                .overlay(
+                .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
+                        .fill(AppTheme.Surface.selected)
                 )
+                .foregroundColor(AppTheme.Status.accent)
             }
 
             Spacer()
@@ -194,16 +214,18 @@ public struct DashboardContentView: View {
                 Button(action: onOpenSettings) {
                     Image(systemName: "gearshape")
                         .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(isSettingsHovered ? AppTheme.Text.primary : AppTheme.Text.secondary)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background(Color(NSColor.controlBackgroundColor))
-                        .cornerRadius(6)
-                        .overlay(
+                        .background(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 1)
+                                .fill(isSettingsHovered ? AppTheme.Surface.hover : Color.clear)
                         )
                 }
                 .buttonStyle(.plain)
+                .onHover { hovering in
+                    isSettingsHovered = hovering
+                }
                 .help(localization.localized(.settings))
             }
         }

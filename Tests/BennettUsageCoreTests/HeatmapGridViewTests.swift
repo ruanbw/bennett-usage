@@ -134,6 +134,21 @@ final class HeatmapGridViewTests: XCTestCase {
     }
 
     @MainActor
+    func testAgentFilterBarViewMinimalistState() throws {
+        var selected: String? = nil
+        let view = AgentFilterBarView(
+            selectedAgent: selected,
+            availableAgents: ["claude", "cursor", "codex"],
+            localization: .shared
+        ) { agent in
+            selected = agent
+        }
+        XCTAssertNotNil(view)
+        XCTAssertEqual(AgentFilterBarView.displayName(for: "claude"), "Claude Code")
+        XCTAssertNotNil(AgentFilterBarView.colorMap["claude"])
+    }
+
+    @MainActor
     func testHeatmapGridSelectionHighlight() {
         let cells = [
             HeatmapDayCell(
