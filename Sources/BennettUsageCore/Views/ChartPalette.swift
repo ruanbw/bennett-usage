@@ -1,11 +1,10 @@
 import SwiftUI
 
-/// Per-launch color palette for chart segments.
+/// Unified color palette for chart segments, agents, and model distributions.
 ///
-/// A random seed is drawn once per process launch. Keys are sorted and hues
-/// step around the color wheel by the golden angle, so any list of keys gets
-/// visually distinct colors. Colors are stable within a session for a given
-/// key list, but change on every app launch.
+/// Integrates curated brand colors from `AppTheme` for all 14 known agents,
+/// brand-derived hues for standard model families, and a refined 16-color
+/// Things 3 harmonic wheel for arbitrary keys.
 public struct ChartPalette: Sendable {
     public static let shared = ChartPalette()
 
@@ -15,11 +14,11 @@ public struct ChartPalette: Sendable {
     /// so it must be thread-safe; see `Cache`.
     private let cache = Cache()
 
-    public init(seed: Double = Double.random(in: 0..<1)) {
+    public init(seed: Double = 0.0) {
         self.seed = seed
     }
 
-    /// Assigns a color to each key. Deterministic for a given key list.
+    /// Assigns a curated, harmonic color to each key. Deterministic and session-stable.
     public func colors(for keys: [String]) -> [String: Color] {
         let sortedKeys = keys.sorted()
         if let cached = cache.value(for: sortedKeys) {
@@ -28,24 +27,20 @@ public struct ChartPalette: Sendable {
         var result: [String: Color] = [:]
         result.reserveCapacity(sortedKeys.count)
         for (index, key) in sortedKeys.enumerated() {
-            let hue = (seed + Double(index) * 0.618033988749895)
-                .truncatingRemainder(dividingBy: 1)
-            result[key] = Color(hue: hue, saturation: 0.62, brightness: 0.95)
+            let lower = key.lowercased()
+            if let agentColor = AppTheme.Agent.knownColor(for: lower) {
+                result[key] = agentColor
+            } else if let modelColor = AppTheme.Agent.inferredModelColor(for: lower) {
+                result[key] = modelColor
+            } else {
+                result[key] = AppTheme.Harmonic.color(for: key, index: index, seed: seed)
+            }
         }
         cache.store(result, for: sortedKeys)
         return result
     }
 
     /// Bounded, thread-safe memoization box.
-    ///
-    /// `ChartPalette` is a `Sendable` struct and `shared` is a `static let`,
-    /// so the cache cannot be a bare mutable dictionary. This reference type
-    /// carries its own `NSLock` and is `@unchecked Sendable`: every read and
-    /// write of `entries`/`insertionOrder` happens under `lock`, so the only
-    /// reason the compiler cannot prove `Sendable` is the unchecked nature of
-    /// the lock-guarded mutation (a common, well-defined pattern). Each
-    /// `ChartPalette` value (and its copies) owns one box, so entries are
-    /// always keyed by the same `seed` and cannot cross instances.
     private final class Cache: @unchecked Sendable {
         private let lock = NSLock()
         private var entries: [[String]: [String: Color]] = [:]
@@ -63,8 +58,6 @@ public struct ChartPalette: Sendable {
         func store(_ value: [String: Color], for key: [String]) {
             lock.lock()
             defer { lock.unlock() }
-            // `updateValue` returns the previous value only if the key was
-            // already present, so an existing entry never grows `insertionOrder`.
             if entries.updateValue(value, forKey: key) != nil { return }
             insertionOrder.append(key)
             if insertionOrder.count > capacity {

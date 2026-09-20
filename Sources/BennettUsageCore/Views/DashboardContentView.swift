@@ -300,7 +300,7 @@ public struct DashboardContentView: View {
                         Text(PricingEngine.shared.spendString(periodMetrics?.totalCostUSD ?? 0.0))
                             .font(.subheadline)
                             .bold()
-                            .foregroundColor(.green)
+                            .foregroundColor(AppTheme.Status.success)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -390,7 +390,7 @@ public struct DashboardContentView: View {
             HStack(spacing: 4) {
                 Image(systemName: "chart.pie.fill")
                     .font(.caption2)
-                    .foregroundColor(.green)
+                    .foregroundColor(AppTheme.Status.success)
                 Text(localization.localized(.cacheHitRate))
                     .font(.caption2)
                     .foregroundColor(.secondary)
@@ -407,7 +407,7 @@ public struct DashboardContentView: View {
                         .fill(Color.secondary.opacity(0.2))
                         .frame(height: 4)
                     Capsule()
-                        .fill(Color.green)
+                        .fill(AppTheme.Status.success)
                         .frame(width: max(0, min(geo.size.width * CGFloat(hitRate), geo.size.width)), height: 4)
                 }
             }
@@ -827,12 +827,7 @@ public struct DashboardContentView: View {
     }
 
     private func progressColor(rank: Int) -> Color {
-        switch rank {
-        case 1: return Color(red: 1.0, green: 0.84, blue: 0.0)    // Gold
-        case 2: return Color(red: 0.75, green: 0.75, blue: 0.78)  // Silver
-        case 3: return Color(red: 0.80, green: 0.50, blue: 0.20)  // Bronze
-        default: return .blue
-        }
+        AppTheme.Rank.color(for: rank)
     }
 
     private func kpiCard(title: String, value: String, subtitle: String, icon: String, color: Color) -> some View {
@@ -1347,7 +1342,7 @@ private struct TrendChartCard: View {
                                         .font(.caption).bold()
                                     Text(PricingEngine.shared.spendString(point.costUSD))
                                         .font(.caption2)
-                                        .foregroundColor(.green)
+                                        .foregroundColor(AppTheme.Status.success)
                                     ForEach(rows, id: \.model) { row in
                                         HStack(spacing: 4) {
                                             Circle().fill(modelColors[row.model] ?? .gray).frame(width: 6, height: 6)
@@ -1959,7 +1954,7 @@ private struct AnnualMonthlyTrendCard: View {
                                         .font(.caption).bold()
                                     Text(PricingEngine.shared.spendString(point.costUSD))
                                         .font(.caption2)
-                                        .foregroundColor(.green)
+                                        .foregroundColor(AppTheme.Status.success)
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 5)

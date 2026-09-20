@@ -74,7 +74,7 @@ public struct MenuBarPopoverView: View {
                 VStack(alignment: .trailing) {
                     Text(localization.localized(.estimatedCost)).font(.caption).foregroundColor(.secondary)
                     Text(PricingEngine.shared.spendString(summary?.totalCostUSD ?? 0.0))
-                        .font(.title2).bold().foregroundColor(.green)
+                        .font(.title2).bold().foregroundColor(AppTheme.Status.success)
                 }
             }
 

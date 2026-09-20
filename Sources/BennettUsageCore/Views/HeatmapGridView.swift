@@ -60,8 +60,12 @@ public struct HeatmapGridView: View {
             }
         }
         .padding(12)
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+        .background(AppTheme.Surface.primary)
         .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+        )
     }
 
     private var grid: some View {
@@ -90,13 +94,7 @@ public struct HeatmapGridView: View {
 
 
     private func colorFor(intensity: Int) -> Color {
-        switch intensity {
-        case 1: return Color.green.opacity(0.3)
-        case 2: return Color.green.opacity(0.55)
-        case 3: return Color.green.opacity(0.8)
-        case 4: return Color.green
-        default: return Color(NSColor.separatorColor).opacity(0.2)
-        }
+        AppTheme.Heatmap.color(for: intensity)
     }
 
 }
@@ -144,13 +142,7 @@ private struct HeatmapDayCellView: View {
     }
 
     private func colorFor(intensity: Int) -> Color {
-        switch intensity {
-        case 1: return Color.green.opacity(0.3)
-        case 2: return Color.green.opacity(0.55)
-        case 3: return Color.green.opacity(0.8)
-        case 4: return Color.green
-        default: return Color(NSColor.separatorColor).opacity(0.2)
-        }
+        AppTheme.Heatmap.color(for: intensity)
     }
 
     private func tooltipText(for cell: HeatmapDayCell) -> String {

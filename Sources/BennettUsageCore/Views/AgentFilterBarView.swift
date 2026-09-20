@@ -74,11 +74,11 @@ public struct AgentFilterBarView: View {
                         .padding(.vertical, 5)
                         .background(
                             RoundedRectangle(cornerRadius: 14)
-                                .fill(isAllSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+                                .fill(isAllSelected ? AppTheme.Status.accent.opacity(0.12) : Color.clear)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 14)
-                                .stroke(isAllSelected ? Color.accentColor : Color(NSColor.separatorColor), lineWidth: 1)
+                                .stroke(isAllSelected ? AppTheme.Status.accent : AppTheme.Border.divider, lineWidth: 1)
                         )
                 }
                 .buttonStyle(.plain)
@@ -103,11 +103,11 @@ public struct AgentFilterBarView: View {
                         .padding(.vertical, 5)
                         .background(
                             RoundedRectangle(cornerRadius: 14)
-                                .fill(isSelected ? color.opacity(0.15) : Color.clear)
+                                .fill(isSelected ? color.opacity(0.12) : Color.clear)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 14)
-                                .stroke(isSelected ? color : Color(NSColor.separatorColor), lineWidth: 1)
+                                .stroke(isSelected ? color : AppTheme.Border.divider, lineWidth: 1)
                         )
                     }
                     .buttonStyle(.plain)

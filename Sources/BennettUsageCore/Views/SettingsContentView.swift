@@ -74,15 +74,15 @@ public enum SettingsCategory: String, CaseIterable, Identifiable, Sendable {
     public var iconColor: Color {
         switch self {
         case .general:
-            return .blue
+            return AppTheme.Status.accent
         case .agents:
-            return .green
+            return AppTheme.Status.success
         case .pricing:
-            return .orange
+            return AppTheme.Status.warning
         case .storage:
-            return .purple
+            return AppTheme.Agent.copilot
         case .about:
-            return .gray
+            return AppTheme.Text.secondary
         }
     }
 }
