@@ -121,6 +121,18 @@ public struct TodaySummary: Sendable, Equatable {
         self.toolTokens = toolTokens
         self.toolCosts = toolCosts
     }
+
+    public init(
+        totalTokens: Int,
+        totalCostUSD: Double,
+        toolBreakdown: [String: Int],
+        toolCosts: [String: Double] = [:]
+    ) {
+        self.totalTokens = totalTokens
+        self.totalCostUSD = totalCostUSD
+        self.toolTokens = toolBreakdown
+        self.toolCosts = toolCosts
+    }
 }
 
 public struct AgentHealthInfo: Identifiable, Sendable {

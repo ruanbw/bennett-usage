@@ -80,4 +80,17 @@ final class MenuBarPopoverViewTests: XCTestCase {
         view.onOpenSettings?()
         XCTAssertTrue(settingsOpened)
     }
+
+    @MainActor
+    func testPopoverMiniDistributionActiveTools() throws {
+        let summary = TodaySummary(
+            totalTokens: 100_000,
+            totalCostUSD: 0.50,
+            toolBreakdown: ["claude": 70_000, "cursor": 30_000]
+        )
+        let active = MenuBarPopoverView.activeTools(for: summary)
+        XCTAssertEqual(active.count, 2)
+        XCTAssertEqual(active[0].id, "claude")
+        XCTAssertEqual(active[0].tokens, 70_000)
+    }
 }

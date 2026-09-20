@@ -27,6 +27,6 @@ public struct SettingsSheetView: View {
             onDismiss: onDismiss
         )
         .frame(width: 750, height: 510)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(AppTheme.Canvas.background)
     }
 }

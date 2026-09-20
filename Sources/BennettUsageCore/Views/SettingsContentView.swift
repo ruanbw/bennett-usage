@@ -156,13 +156,15 @@ public struct SettingsContentView: View {
             sidebarView
                 .frame(width: 200)
 
-            Divider()
+            AppTheme.Border.divider
+                .frame(width: 0.5)
 
             // Right Detail Content Area
             VStack(spacing: 0) {
                 detailHeaderView
 
-                Divider()
+                AppTheme.Border.divider
+                    .frame(height: 0.5)
 
                 ScrollView(.vertical, showsIndicators: true) {
                     detailContentView
@@ -170,9 +172,9 @@ public struct SettingsContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(NSColor.windowBackgroundColor))
+            .background(AppTheme.Canvas.background)
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(AppTheme.Canvas.background)
         .alert(localization.localized(.clearRecordsConfirmTitle), isPresented: $isShowingClearAlert) {
             Button(localization.localized(.clearAllRecords), role: .destructive) {
                 Task {
@@ -206,9 +208,10 @@ public struct SettingsContentView: View {
             HStack(spacing: 8) {
                 Image(systemName: "gearshape.2.fill")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(AppTheme.Status.accent)
                 Text(localization.localized(.settings))
                     .font(.headline.weight(.semibold))
+                    .foregroundColor(AppTheme.Text.primary)
                 Spacer()
             }
             .padding(.horizontal, 16)
@@ -228,50 +231,28 @@ public struct SettingsContentView: View {
             // Sidebar Footer: Active agents summary
             HStack(spacing: 6) {
                 Circle()
-                    .fill(isAnyAgentConnected ? Color.green : Color.secondary.opacity(0.4))
+                    .fill(isAnyAgentConnected ? AppTheme.Status.success : AppTheme.Text.quaternary)
                     .frame(width: 7, height: 7)
                 Text(String(format: localization.localized(.agentsConnected), connectedAgentCount))
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.Text.secondary)
                 Spacer()
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
         }
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.55))
+        .background(AppTheme.Surface.subtle.opacity(0.4))
     }
 
     private func categoryRow(_ category: SettingsCategory) -> some View {
         let isSelected = selectedCategory == category
-        return Button(action: {
+        return CategoryRowButton(
+            category: category,
+            isSelected: isSelected,
+            localization: localization
+        ) {
             selectedCategory = category
-        }) {
-            HStack(spacing: 10) {
-                // Colored squircle icon
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(category.iconColor)
-                        .frame(width: 22, height: 22)
-                    Image(systemName: category.systemImage)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white)
-                }
-
-                Text(category.title(localization: localization))
-                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? .primary : .secondary)
-
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
-            )
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Detail Header View
@@ -280,16 +261,17 @@ public struct SettingsContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(selectedCategory.fullTitle(localization: localization))
                     .font(.title2.bold())
+                    .foregroundColor(AppTheme.Text.primary)
                 Text(selectedCategory.subtitle(localization: localization))
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.Text.secondary)
             }
             Spacer()
             if let onDismiss = onDismiss {
                 Button(action: onDismiss) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 18))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppTheme.Text.tertiary)
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.cancelAction)
@@ -298,7 +280,7 @@ public struct SettingsContentView: View {
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(AppTheme.Canvas.background)
     }
 
     // MARK: - Detail Content Switcher
@@ -324,13 +306,14 @@ public struct SettingsContentView: View {
             settingsCard {
                 // Language selection row
                 HStack(spacing: 12) {
-                    cardRowIcon("globe", color: .blue)
+                    cardRowIcon("globe", color: AppTheme.Status.accent)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.language))
                             .font(.body.weight(.medium))
+                            .foregroundColor(AppTheme.Text.primary)
                         Text(localization.localized(.systemDefault))
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                     }
                     Spacer()
                     trailingMenuPicker(
@@ -344,17 +327,18 @@ public struct SettingsContentView: View {
                 }
                 .padding(.vertical, 4)
 
-                Divider()
+                rowDivider
 
                 // Auto Refresh row
                 HStack(spacing: 12) {
-                    cardRowIcon("arrow.clockwise", color: .cyan)
+                    cardRowIcon("arrow.clockwise", color: AppTheme.Agent.trae)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.autoRefreshLabel))
                             .font(.body.weight(.medium))
+                            .foregroundColor(AppTheme.Text.primary)
                         Text(autoRefreshSubtitle)
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                     }
                     Spacer()
                     trailingMenuPicker(
@@ -371,17 +355,18 @@ public struct SettingsContentView: View {
                 }
                 .padding(.vertical, 4)
 
-                Divider()
+                rowDivider
 
                 // Automatic update check row
                 HStack(spacing: 12) {
-                    cardRowIcon("arrow.down.circle", color: .blue)
+                    cardRowIcon("arrow.down.circle", color: AppTheme.Status.accent)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.autoCheckUpdatesLabel))
                             .font(.body.weight(.medium))
+                            .foregroundColor(AppTheme.Text.primary)
                         Text(localization.localized(.autoCheckUpdatesSubtitle))
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
@@ -403,7 +388,7 @@ public struct SettingsContentView: View {
             HStack {
                 Text(String(format: localization.localized(.agentsConnected), connectedAgentCount))
                     .font(.subheadline.weight(.medium))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.Text.secondary)
                 Spacer()
                 Button(action: {
                     Task { await rescanAgents() }
@@ -429,7 +414,7 @@ public struct SettingsContentView: View {
                     HStack {
                         Spacer()
                         Text(String(format: localization.localized(.agentsConnected), 0))
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                             .font(.subheadline)
                         Spacer()
                     }
@@ -438,7 +423,7 @@ public struct SettingsContentView: View {
                     ForEach(agentHealthInfos) { info in
                         agentHealthRow(info)
                         if info.id != agentHealthInfos.last?.id {
-                            Divider()
+                            rowDivider
                         }
                     }
                 }
@@ -450,39 +435,40 @@ public struct SettingsContentView: View {
         HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(info.isInstalled ? Color.green.opacity(0.14) : Color.secondary.opacity(0.12))
+                    .fill(info.isInstalled ? AppTheme.Status.success.opacity(0.14) : AppTheme.Text.secondary.opacity(0.12))
                     .frame(width: 32, height: 32)
                 Image(systemName: info.isInstalled ? "checkmark.circle.fill" : "circle.dashed")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(info.isInstalled ? .green : .secondary)
+                    .foregroundColor(info.isInstalled ? AppTheme.Status.success : AppTheme.Text.secondary)
             }
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(info.displayName)
                         .font(.body.weight(.semibold))
+                        .foregroundColor(AppTheme.Text.primary)
                     if info.isInstalled {
                         Text("Active")
                             .font(.system(size: 10, weight: .bold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
-                            .background(Color.green.opacity(0.15))
-                            .foregroundColor(.green)
+                            .background(AppTheme.Status.success.opacity(0.15))
+                            .foregroundColor(AppTheme.Status.success)
                             .cornerRadius(4)
                     } else {
                         Text("Not Found")
                             .font(.system(size: 10, weight: .medium))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
-                            .background(Color.secondary.opacity(0.12))
-                            .foregroundColor(.secondary)
+                            .background(AppTheme.Surface.subtle)
+                            .foregroundColor(AppTheme.Text.secondary)
                             .cornerRadius(4)
                     }
                 }
 
                 Text(info.defaultPath)
                     .font(.caption.monospaced())
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.Text.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(info.defaultPath)
@@ -493,15 +479,16 @@ public struct SettingsContentView: View {
             VStack(alignment: .trailing, spacing: 3) {
                 Text("\(formatNumber(info.recordCount)) records")
                     .font(.caption.weight(.medium).monospacedDigit())
+                    .foregroundColor(AppTheme.Text.primary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.10))
+                    .background(AppTheme.Surface.subtle)
                     .cornerRadius(6)
 
                 if let lastTimestamp = info.lastRecordTimestamp {
                     Text(relativeTimestamp(lastTimestamp))
                         .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppTheme.Text.secondary)
                 }
             }
         }
@@ -514,13 +501,14 @@ public struct SettingsContentView: View {
             // Preferred Currency Card
             settingsCard {
                 HStack(spacing: 12) {
-                    cardRowIcon("coloncurrencysign.circle.fill", color: .orange)
+                    cardRowIcon("coloncurrencysign.circle.fill", color: AppTheme.Status.warning)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.preferredCurrencyLabel))
                             .font(.body.weight(.medium))
+                            .foregroundColor(AppTheme.Text.primary)
                         Text("USD ($) / CNY (¥)")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                     }
                     Spacer()
                     Picker("", selection: $selectedCurrency) {
@@ -539,19 +527,20 @@ public struct SettingsContentView: View {
             // Exchange Rate Card
             settingsCard {
                 HStack(spacing: 12) {
-                    cardRowIcon("chart.line.uptrend.xyaxis", color: .green)
+                    cardRowIcon("chart.line.uptrend.xyaxis", color: AppTheme.Status.success)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.exchangeRateLabel))
                             .font(.body.weight(.medium))
+                            .foregroundColor(AppTheme.Text.primary)
                         Text("1 USD = \(exchangeRateText) CNY")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                     }
                     Spacer()
                     HStack(spacing: 6) {
                         Text("1 USD =")
                             .font(.callout)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                         TextField("7.30", text: $exchangeRateText)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 70)
@@ -561,7 +550,7 @@ public struct SettingsContentView: View {
                             }
                         Text("CNY")
                             .font(.callout)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                         Button(localization.localized(.done)) {
                             saveExchangeRate()
                         }
@@ -580,13 +569,14 @@ public struct SettingsContentView: View {
             // Database Info Card
             settingsCard {
                 HStack(alignment: .top, spacing: 12) {
-                    cardRowIcon("cylinder.split.1x2", color: .purple)
+                    cardRowIcon("cylinder.split.1x2", color: AppTheme.Agent.copilot)
                     VStack(alignment: .leading, spacing: 6) {
                         Text("SQLite Database")
                             .font(.body.weight(.semibold))
+                            .foregroundColor(AppTheme.Text.primary)
                         Text(resolvedDbPath)
                             .font(.caption.monospaced())
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .help(resolvedDbPath)
@@ -594,7 +584,7 @@ public struct SettingsContentView: View {
                         if !storageStatusText.isEmpty {
                             Text(storageStatusText)
                                 .font(.subheadline.weight(.medium))
-                                .foregroundColor(.primary)
+                                .foregroundColor(AppTheme.Text.primary)
                                 .padding(.top, 2)
                         }
                     }
@@ -615,9 +605,10 @@ public struct SettingsContentView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(localization.localized(.rebuildRollups))
                                 .font(.body.weight(.medium))
+                                .foregroundColor(AppTheme.Text.primary)
                             Text("Re-aggregate token usage and daily summaries from raw records")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppTheme.Text.secondary)
                         }
                         Spacer()
                         Button(action: {
@@ -632,16 +623,16 @@ public struct SettingsContentView: View {
                         .controlSize(.regular)
                     }
 
-                    Divider()
+                    rowDivider
 
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(localization.localized(.clearAllRecords))
                                 .font(.body.weight(.medium))
-                                .foregroundColor(.red)
+                                .foregroundColor(AppTheme.Status.error)
                             Text("Permanently delete all stored token usage history")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppTheme.Text.secondary)
                         }
                         Spacer()
                         Button(role: .destructive, action: {
@@ -651,7 +642,7 @@ public struct SettingsContentView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.regular)
-                        .foregroundColor(.red)
+                        .foregroundColor(AppTheme.Status.error)
                     }
                 }
                 .padding(.vertical, 4)
@@ -702,13 +693,14 @@ public struct SettingsContentView: View {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(localization.localized(.appName))
                                 .font(.title3.bold())
+                                .foregroundColor(AppTheme.Text.primary)
                             Text("v\(updateChecker.currentVersion.description)")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppTheme.Text.secondary)
                         }
                         Text(localization.localized(.aboutDescription))
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
@@ -719,14 +711,14 @@ public struct SettingsContentView: View {
             // Privacy Card
             settingsCard {
                 HStack(alignment: .top, spacing: 14) {
-                    cardRowIcon("lock.shield.fill", color: .green)
+                    cardRowIcon("lock.shield.fill", color: AppTheme.Status.success)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("100% Local-First & Private")
                             .font(.body.weight(.semibold))
-                            .foregroundColor(.primary)
+                            .foregroundColor(AppTheme.Text.primary)
                         Text("All analytics and token logs are stored exclusively in your local SQLite database. Bennett Usage never collects, transmits, or inspects your source code, prompts, or API keys.")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -736,13 +728,14 @@ public struct SettingsContentView: View {
             // Repository Link Card
             settingsCard {
                 HStack {
-                    cardRowIcon("chevron.left.forwardslash.chevron.right", color: .secondary)
+                    cardRowIcon("chevron.left.forwardslash.chevron.right", color: AppTheme.Text.secondary)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Open Source")
                             .font(.body.weight(.medium))
+                            .foregroundColor(AppTheme.Text.primary)
                         Text("github.com/ruanbw/bennett-usage")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                     }
                     Spacer()
                     if let githubURL = URL(string: "https://github.com/ruanbw/bennett-usage") {
@@ -772,13 +765,14 @@ public struct SettingsContentView: View {
         settingsCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
-                    cardRowIcon("arrow.down.circle", color: .blue)
+                    cardRowIcon("arrow.down.circle", color: AppTheme.Status.accent)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.checkForUpdates))
                             .font(.body.weight(.medium))
+                            .foregroundColor(AppTheme.Text.primary)
                         Text(updateStatusDetail)
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                     }
                     Spacer()
                     Button(action: checkForUpdatesNow) {
@@ -800,36 +794,37 @@ public struct SettingsContentView: View {
                 .padding(.vertical, 4)
 
                 if let release = updateChecker.availableUpdate {
-                    Divider()
+                    rowDivider
                     availableUpdateRow(release)
                 } else if let skipped = skippedPendingVersion {
-                    Divider()
+                    rowDivider
                     skippedUpdateRow(skipped)
                 } else if case .upToDate = updateChecker.status {
-                    Divider()
+                    rowDivider
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 11))
-                            .foregroundColor(.green)
+                            .foregroundColor(AppTheme.Status.success)
                         Text(localization.localized(.updateUpToDate))
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppTheme.Text.secondary)
                         Spacer()
                     }
                 }
 
                 if case .failed(let failure) = updateChecker.status {
-                    Divider()
+                    rowDivider
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 11))
-                            .foregroundColor(.orange)
+                            .foregroundColor(AppTheme.Status.warning)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(localization.localized(.updateCheckFailed))
                                 .font(.caption.weight(.medium))
+                                .foregroundColor(AppTheme.Text.primary)
                             Text(failureDescription(failure))
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppTheme.Text.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer()
@@ -940,12 +935,19 @@ public struct SettingsContentView: View {
             content()
         }
         .padding(16)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(AppTheme.Surface.primary)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
         )
+    }
+
+    private var rowDivider: some View {
+        AppTheme.Border.divider
+            .frame(height: 0.5)
     }
 
     private func cardRowIcon(_ name: String, color: Color) -> some View {
@@ -1226,5 +1228,44 @@ struct SettingsMenuControlView: NSViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: SettingsMenuControl, context: Context) -> CGSize? {
         nsView.intrinsicContentSize
+    }
+}
+
+private struct CategoryRowButton: View {
+    let category: SettingsCategory
+    let isSelected: Bool
+    let localization: LocalizationManager
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                // Colored squircle icon
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(category.iconColor)
+                        .frame(width: 22, height: 22)
+                    Image(systemName: category.systemImage)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                }
+
+                Text(category.title(localization: localization))
+                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                    .foregroundColor(isSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
+
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? AppTheme.Surface.selected : (isHovered ? AppTheme.Surface.hover : Color.clear))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 }

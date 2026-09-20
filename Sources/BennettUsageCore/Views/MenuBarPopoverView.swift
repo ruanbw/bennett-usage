@@ -42,95 +42,167 @@ public struct MenuBarPopoverView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
+            // Top Row: App Title & Quiet Action Buttons
             HStack {
                 Label(localization.localized(.appName), systemImage: "sparkles")
                     .font(.headline)
+                    .foregroundColor(AppTheme.Text.primary)
                 Spacer()
                 if let onOpenSettings = onOpenSettings {
-                    Button(action: onOpenSettings) {
-                        Image(systemName: "gearshape")
-                    }
-                    .buttonStyle(.plain)
-                    .help(localization.localized(.settings))
+                    QuietIconButton(
+                        systemName: "gearshape",
+                        tooltip: localization.localized(.settings),
+                        action: onOpenSettings
+                    )
                 }
-                Button(action: onOpenDashboard) {
-                    Image(systemName: "macwindow")
-                }
-                .buttonStyle(.plain)
-                .help(localization.localized(.openDashboardShortcut))
+                QuietIconButton(
+                    systemName: "macwindow",
+                    tooltip: localization.localized(.openDashboardShortcut),
+                    action: onOpenDashboard
+                )
             }
 
-            Divider()
-
+            // Today Metrics Row: Big Tokens & Estimated Spend
             HStack {
-                VStack(alignment: .leading) {
-                    Text(localization.localized(.todaysTokens)).font(.caption).foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(localization.localized(.todaysTokens))
+                        .font(.caption)
+                        .foregroundColor(AppTheme.Text.secondary)
                     Text(TokenFormatter.formatCompact(summary?.totalTokens ?? 0))
                         .font(.title2).bold()
+                        .foregroundColor(AppTheme.Text.primary)
                         .help(TokenFormatter.formatWithTooltip(summary?.totalTokens ?? 0).tooltip)
                 }
                 Spacer()
-                VStack(alignment: .trailing) {
-                    Text(localization.localized(.estimatedCost)).font(.caption).foregroundColor(.secondary)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(localization.localized(.estimatedCost))
+                        .font(.caption)
+                        .foregroundColor(AppTheme.Text.secondary)
                     Text(PricingEngine.shared.spendString(summary?.totalCostUSD ?? 0.0))
-                        .font(.title2).bold().foregroundColor(AppTheme.Status.success)
+                        .font(.title2).bold()
+                        .foregroundColor(AppTheme.Status.success)
                 }
             }
+            .padding(.top, 2)
 
-            Divider()
+            let active = Self.activeTools(for: summary)
+            let toolColors = ChartPalette.shared.colors(for: active.map(\.id))
 
-            Text(localization.localized(.toolBreakdownToday))
-                .font(.caption).bold().foregroundColor(.secondary)
+            // Mini Distribution Bar: 4pt continuous multi-segment capsule
+            miniDistributionBar(active: active, toolColors: toolColors)
+                .padding(.vertical, 2)
 
-            VStack(spacing: 6) {
-                let active = Self.activeTools(for: summary)
+            // Micro Tool Breakdown Rows
+            VStack(alignment: .leading, spacing: 6) {
+                Text(localization.localized(.toolBreakdownToday))
+                    .font(.caption.weight(.medium))
+                    .foregroundColor(AppTheme.Text.secondary)
+
                 if active.isEmpty {
                     Text(localization.localized(.noToolsActiveToday))
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppTheme.Text.tertiary)
+                        .padding(.vertical, 2)
                 } else {
-                    let toolColors = ChartPalette.shared.colors(for: active.map(\.id))
                     ForEach(active, id: \.id) { tool in
-                        toolRow(name: AgentFilterBarView.displayName(for: tool.id), tokens: tool.tokens, color: toolColors[tool.id] ?? .gray)
+                        toolRow(
+                            name: AgentFilterBarView.displayName(for: tool.id),
+                            tokens: tool.tokens,
+                            color: toolColors[tool.id] ?? AppTheme.Agent.knownColor(for: tool.id) ?? AppTheme.Harmonic.color(for: tool.id)
+                        )
                     }
                 }
             }
 
-            Divider()
-
-            // Surfaced here as well as in Settings > About: a menu bar user who
-            // never opens Settings would otherwise never learn about a release.
+            // Update Banner (if available)
             if let update = updateChecker.availableUpdate {
                 updateBanner(update)
-                Divider()
+                    .padding(.top, 2)
             }
 
+            // Footer: Subtle Sync Now & Quiet Quit
             HStack {
-                Button(localization.localized(.syncNow), action: onSyncNow)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                Button(action: onSyncNow) {
+                    Text(localization.localized(.syncNow))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
                 Spacer()
-                Button(localization.localized(.quit), action: onQuit)
-                    .buttonStyle(.plain)
-                    .foregroundColor(.secondary)
-                    .controlSize(.small)
+
+                QuietTextButton(
+                    title: localization.localized(.quit),
+                    action: onQuit
+                )
             }
+            .padding(.top, 4)
         }
         .padding(14)
         .frame(width: 320)
+        .background(.regularMaterial)
     }
+
+    // MARK: - Mini Distribution Bar
+
+    private func miniDistributionBar(active: [ActiveTool], toolColors: [String: Color]) -> some View {
+        let totalActive = active.reduce(0) { $0 + $1.tokens }
+        return GeometryReader { proxy in
+            let totalWidth = proxy.size.width
+            if active.isEmpty || totalActive <= 0 {
+                Capsule()
+                    .fill(AppTheme.Surface.subtle)
+                    .frame(height: 4)
+            } else {
+                let spacing: CGFloat = 1.5
+                let totalSpacing = CGFloat(max(0, active.count - 1)) * spacing
+                let availableWidth = max(0, totalWidth - totalSpacing)
+
+                HStack(spacing: spacing) {
+                    ForEach(active, id: \.id) { tool in
+                        let fraction = CGFloat(tool.tokens) / CGFloat(totalActive)
+                        let segWidth = max(2, availableWidth * fraction)
+                        (toolColors[tool.id] ?? AppTheme.Agent.knownColor(for: tool.id) ?? AppTheme.Harmonic.color(for: tool.id))
+                            .frame(width: segWidth, height: 4)
+                    }
+                }
+                .clipShape(Capsule())
+            }
+        }
+        .frame(height: 4)
+    }
+
+    // MARK: - Tool Row
+
+    private func toolRow(name: String, tokens: Int, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text(name)
+                .font(.subheadline)
+                .foregroundColor(AppTheme.Text.primary)
+            Spacer()
+            Text(tokens > 0 ? TokenFormatter.formatCompact(tokens) : "-")
+                .font(.subheadline.monospacedDigit())
+                .foregroundColor(tokens > 0 ? AppTheme.Text.secondary : AppTheme.Text.quaternary)
+                .help(tokens > 0 ? "\(TokenFormatter.formatFull(tokens)) tokens" : "")
+        }
+    }
+
+    // MARK: - Update Banner
 
     private func updateBanner(_ release: UpdateRelease) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.down.circle.fill")
-                .foregroundColor(.blue)
+                .foregroundColor(AppTheme.Status.accent)
             VStack(alignment: .leading, spacing: 1) {
                 Text(String(format: localization.localized(.updateAvailableTitle), release.version.description))
                     .font(.caption.weight(.semibold))
+                    .foregroundColor(AppTheme.Text.primary)
                 Text(release.title)
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.Text.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .help(release.title)
@@ -142,7 +214,18 @@ public struct MenuBarPopoverView: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
         }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(AppTheme.Surface.primary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+        )
     }
+
+    // MARK: - Active Tools
 
     /// Tools with activity today, sorted by tokens descending. Zero-token and
     /// unknown tools are omitted so the popover never shows unused rows.
@@ -150,6 +233,7 @@ public struct MenuBarPopoverView: View {
         public let id: String
         public let tokens: Int
     }
+
     public static func activeTools(for summary: TodaySummary?) -> [ActiveTool] {
         guard let summary else { return [] }
         return summary.toolTokens
@@ -157,17 +241,52 @@ public struct MenuBarPopoverView: View {
             .map { ActiveTool(id: $0.key, tokens: $0.value) }
             .sorted { $0.tokens > $1.tokens || ($0.tokens == $1.tokens && $0.id < $1.id) }
     }
+}
 
-    private func toolRow(name: String, tokens: Int, color: Color) -> some View {
-        HStack {
-            Circle().fill(color).frame(width: 8, height: 8)
-            Text(name).font(.subheadline)
-            Spacer()
-            Text(tokens > 0 ? TokenFormatter.formatCompact(tokens) : "-")
-                .font(.subheadline)
-                .foregroundColor(tokens > 0 ? .primary : .secondary)
-                .help(tokens > 0 ? "\(TokenFormatter.formatFull(tokens)) tokens" : "")
+// MARK: - Quiet Hover Controls
+
+private struct QuietIconButton: View {
+    let systemName: String
+    let tooltip: String
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(isHovered ? AppTheme.Text.primary : AppTheme.Text.secondary)
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isHovered ? AppTheme.Surface.hover : Color.clear)
+                )
         }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(tooltip)
+    }
+}
+
+private struct QuietTextButton: View {
+    let title: String
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline)
+                .foregroundColor(isHovered ? AppTheme.Text.primary : AppTheme.Text.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(isHovered ? AppTheme.Surface.hover : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 }
 
