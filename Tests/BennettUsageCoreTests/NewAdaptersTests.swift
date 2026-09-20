@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import BennettUsageCore
 
 final class NewAdaptersTests: XCTestCase {
@@ -206,6 +207,98 @@ final class NewAdaptersTests: XCTestCase {
         XCTAssertEqual(record.cacheWriteTokens, 100)
         XCTAssertEqual(record.model, "claude-sonnet-4-5")
         XCTAssertEqual(record.projectFolder, "/Users/test/oc")
+    }
+
+    // MARK: - OpenCode V2 (`session_message` / `session_v2`)
+
+    /// Minimal V2 database: two settled turns, one streaming turn (`msg_a2`
+    /// has no `finish` yet) and non-assistant rows that must be ignored.
+    @discardableResult
+    private func makeOpenCodeV2Database() throws -> URL {
+        let dbUrl = tempDir.appendingPathComponent("opencode.db")
+        try exec(dbUrl, """
+        CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT NOT NULL);
+        CREATE TABLE session_message (
+            id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL,
+            seq INTEGER NOT NULL, time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL, data TEXT NOT NULL
+        );
+        INSERT INTO session_v2 (id, directory) VALUES ('ses_v2', '/Users/test/oc-v2');
+        INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES
+            ('msg_u1', 'ses_v2', 'user', 1, 1789943226000, 1789943226001,
+             '{"time":{"created":1789943226000},"text":"hi"}'),
+            ('msg_a1', 'ses_v2', 'assistant', 2, 1789943226788, 1789943229947,
+             '{"time":{"created":1789943226788,"completed":1789943229946},"agent":"build","model":{"id":"deepseek-v4.1-flash","providerID":"opencode-go"},"finish":"tool-calls","tokens":{"input":7324,"output":130,"reasoning":81,"cache":{"read":7424,"write":100}}}'),
+            ('msg_idle', 'ses_v2', 'idle', 3, 1789943229950, 1789943229951,
+             '{"time":{"created":1789943229950}}'),
+            ('msg_a2', 'ses_v2', 'assistant', 4, 1789943230000, 1789943230500,
+             '{"time":{"created":1789943230000,"streamed":1789943230500},"model":{"id":"deepseek-v4.1-flash"}}');
+        """)
+        return dbUrl
+    }
+
+    private func exec(_ dbUrl: URL, _ sql: String) throws {
+        var db: OpaquePointer?
+        guard sqlite3_open(dbUrl.path, &db) == SQLITE_OK else {
+            throw XCTSkip("could not open \(dbUrl.path)")
+        }
+        defer { sqlite3_close(db) }
+        var error: UnsafeMutablePointer<CChar>?
+        let status = sqlite3_exec(db, sql, nil, nil, &error)
+        let message = error.map { String(cString: $0) } ?? ""
+        sqlite3_free(error)
+        XCTAssertEqual(status, SQLITE_OK, message)
+    }
+
+    func testOpenCodeV2ParsesSessionMessages() async throws {
+        try makeOpenCodeV2Database()
+
+        let adapter = OpenCodeAdapter()
+        let result = try await adapter.fetchIncrementalRecords(from: tempDir, since: nil)
+
+        // Only the finished assistant turn: user, idle and the streaming row
+        // never become records.
+        XCTAssertEqual(result.records.count, 1)
+        let record = result.records[0]
+        XCTAssertEqual(record.id, "opencode_msg_a1")
+        XCTAssertEqual(record.sourceId, "opencode")
+        XCTAssertEqual(record.sessionKey, "ses_v2")
+        XCTAssertEqual(record.model, "deepseek-v4.1-flash")
+        // Project comes from `session_v2.directory` (the payload has none).
+        XCTAssertEqual(record.projectFolder, "/Users/test/oc-v2")
+        XCTAssertEqual(record.inputTokens, 7324)
+        // Reasoning is billed as output and reported separately by OpenCode.
+        XCTAssertEqual(record.outputTokens, 130 + 81)
+        XCTAssertEqual(record.cacheReadTokens, 7424)
+        XCTAssertEqual(record.cacheWriteTokens, 100)
+        XCTAssertEqual(record.timestamp.timeIntervalSince1970, 1789943226.788, accuracy: 0.001)
+    }
+
+    func testOpenCodeV2PicksUpTurnsThatFinishAfterTheFirstSync() async throws {
+        let dbUrl = try makeOpenCodeV2Database()
+        let adapter = OpenCodeAdapter()
+
+        let first = try await adapter.fetchIncrementalRecords(from: tempDir, since: nil)
+        XCTAssertEqual(first.records.count, 1)
+
+        // A re-read with the returned cursor must not duplicate anything.
+        let second = try await adapter.fetchIncrementalRecords(from: tempDir, since: first.newCursor)
+        XCTAssertTrue(second.records.isEmpty)
+
+        // `msg_a2` completes in place (same rowid, now with a finish marker and
+        // tokens): the pending-rowid cursor has to surface it.
+        try exec(dbUrl, """
+        UPDATE session_message SET data =
+            '{"time":{"created":1789943230000,"completed":1789943234000},"model":{"id":"deepseek-v4.1-flash"},"finish":"stop","tokens":{"input":10,"output":20,"reasoning":5,"cache":{"read":30,"write":0}}}'
+        WHERE id = 'msg_a2';
+        """)
+
+        let third = try await adapter.fetchIncrementalRecords(from: tempDir, since: second.newCursor)
+        XCTAssertEqual(third.records.count, 1)
+        XCTAssertEqual(third.records[0].id, "opencode_msg_a2")
+        XCTAssertEqual(third.records[0].inputTokens, 10)
+        XCTAssertEqual(third.records[0].outputTokens, 25)
+        XCTAssertEqual(third.records[0].cacheReadTokens, 30)
     }
 
     // MARK: - Filter bar names
