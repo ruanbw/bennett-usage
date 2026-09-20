@@ -277,6 +277,17 @@ final class DashboardViewTests: XCTestCase {
         XCTAssertEqual(point.tokens, 50_000)
         XCTAssertEqual(point.modelTokens["claude-3-5-sonnet"], 50_000)
     }
+
+    func testDistributionShareCalculation() throws {
+        let items = [
+            ("claude", 600, 1.0),
+            ("cursor", 400, 0.5)
+        ]
+        let total = items.reduce(0) { $0 + $1.1 }
+        XCTAssertEqual(total, 1000)
+        let share0 = Double(items[0].1) / Double(total)
+        XCTAssertEqual(share0, 0.6, accuracy: 0.001)
+    }
 }
 
 extension TrendPoint {

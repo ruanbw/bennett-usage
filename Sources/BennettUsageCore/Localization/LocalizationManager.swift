@@ -79,6 +79,8 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case noTokenUsage
 
     // Breakdown & Charts
+    case toolDistribution
+    case modelDistribution
     case toolShareBreakdown
     case modelUsageBreakdown
     case noToolData
@@ -356,6 +358,8 @@ private let englishDictionary: [LocalizedKey: String] = [
     .noTokenUsage: "%@: No token usage",
 
     // Breakdown & Charts
+    .toolDistribution: "Tool Distribution",
+    .modelDistribution: "Model Distribution",
     .toolShareBreakdown: "Tool Share Breakdown (%@)",
     .modelUsageBreakdown: "Model Usage Breakdown (%@)",
     .noToolData: "No tool data for %@",
@@ -511,6 +515,8 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .noTokenUsage: "%@: 无 Token 消耗",
 
     // Breakdown & Charts
+    .toolDistribution: "工具分布",
+    .modelDistribution: "模型分布",
     .toolShareBreakdown: "各工具消耗占比 (%@)",
     .modelUsageBreakdown: "各模型消耗占比 (%@)",
     .noToolData: "%@ 暂无工具数据",
