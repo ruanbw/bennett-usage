@@ -272,7 +272,7 @@ public struct DashboardContentView: View {
             let agentDotColor = selectedToolFilter.flatMap { AgentFilterBarView.colorMap[$0] ?? cachedAgentColors[$0] } ?? AppTheme.Status.accent
             let agentTitle = selectedToolFilter != nil
                 ? AgentFilterBarView.displayName(for: selectedToolFilter!)
-                : (localization.effectiveLanguage == .zh ? "所有 Agent 用量" : "All Agents Usage")
+                : localization.localized(.allAgentsUsage)
             let totalTokens = periodMetrics?.totalTokens ?? 0
 
             VStack(alignment: .leading, spacing: 6) {
@@ -882,10 +882,6 @@ public struct DashboardContentView: View {
             .font(.caption)
             .monospacedDigit()
             .foregroundColor(AppTheme.Rank.color(for: rank))
-    }
-
-    private func progressColor(rank: Int) -> Color {
-        AppTheme.Rank.color(for: rank)
     }
 
     private func kpiCard(title: String, value: String, subtitle: String, icon: String, color: Color) -> some View {

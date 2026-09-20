@@ -119,6 +119,7 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case syncedJustNow
     case syncedMinutesAgo
     case filterAllAgents
+    case allAgentsUsage
     case clearFocus
     case agentHealthSection
     case pricingSection
@@ -398,6 +399,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     .syncedJustNow: "Synced just now",
     .syncedMinutesAgo: "Synced %d mins ago",
     .filterAllAgents: "All Agents",
+    .allAgentsUsage: "All Agents Usage",
     .clearFocus: "Clear Focus",
     .agentHealthSection: "Agent Data Sources & Health Diagnostics",
     .pricingSection: "Pricing & Currency",
@@ -555,6 +557,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .syncedJustNow: "刚刚同步",
     .syncedMinutesAgo: "%d 分钟前同步",
     .filterAllAgents: "全部 Agent",
+    .allAgentsUsage: "所有 Agent 用量",
     .clearFocus: "清除聚焦",
     .agentHealthSection: "Agent 数据源接入与状态诊断",
     .pricingSection: "计价与货币",

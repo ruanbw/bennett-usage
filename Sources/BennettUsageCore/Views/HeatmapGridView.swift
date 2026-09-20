@@ -96,12 +96,6 @@ public struct HeatmapGridView: View {
         }
         .frame(maxWidth: .infinity)
     }
-
-
-    private func colorFor(intensity: Int) -> Color {
-        AppTheme.Heatmap.color(for: intensity)
-    }
-
 }
 
 

@@ -126,6 +126,7 @@ final class LocalizationTests: XCTestCase {
             .syncedJustNow,
             .syncedMinutesAgo,
             .filterAllAgents,
+            .allAgentsUsage,
             .clearFocus,
             .agentHealthSection,
             .pricingSection,
