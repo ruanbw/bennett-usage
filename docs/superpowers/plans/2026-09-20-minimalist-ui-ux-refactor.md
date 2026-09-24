@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-20-minimalist-ui-ux-refactor-design.md`
 
+> **Historical design snapshot:** The 14-agent palette referenced by this plan reflects the agent inventory when the design was captured; the current catalog contains 18 adapters. That count is retained as design history, not as the current adapter inventory.
+
 ## Global Constraints
 - Target Platform: macOS 14.0+ (Sonoma, Sequoia).
 - 100% Bilingual localization parity: all visible labels must use `localization.localized(...)`.

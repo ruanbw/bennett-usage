@@ -7,6 +7,8 @@
 - **Application Type**: Native macOS Menu Bar Popover + Standalone Dashboard Window + Settings Sheet
 - **Design Inspiration**: Things 3 (breathable editorial rhythm, cardless whitespace grouping, typography-first hierarchy) & Apple Human Interface Guidelines (native materials, dynamic light/dark contrast, refined micro-interactions)
 
+> **Historical design snapshot:** The 14-agent palette below reflects the agent inventory when this design was captured; the current catalog contains 18 adapters. The 16-color harmonic wheel is a chart-color palette size, not an adapter count.
+
 ---
 
 ## 1. Executive Summary & Goals
