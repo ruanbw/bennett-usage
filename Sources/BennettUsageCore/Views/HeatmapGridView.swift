@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 public struct HeatmapGridView: View {
@@ -46,6 +47,18 @@ public struct HeatmapGridView: View {
         return result
     }
 
+    /// Human-readable date announced for a day button. `dayKey` remains the
+    /// stable storage/identity value; it is intentionally not used as the
+    /// spoken date because an ISO key is difficult to hear and understand.
+    public static func accessibilityLabel(
+        for cell: HeatmapDayCell,
+        localization: LocalizationManager = .shared
+    ) -> String {
+        let style = Date.FormatStyle(date: .long, time: .omitted)
+            .locale(Locale(identifier: localization.effectiveLanguage.code))
+        return cell.date.formatted(style)
+    }
+
     /// Value announced with a day's date label for VoiceOver.
     public static func accessibilityValue(
         for cell: HeatmapDayCell,
@@ -53,10 +66,11 @@ public struct HeatmapGridView: View {
         pricingEngine: PricingEngine = .shared
     ) -> String {
         guard cell.totalTokens > 0 else {
-            // `noTokenUsage` includes the date in its visible tooltip format. The
-            // date is already the accessibility label, so omit that prefix here.
-            let noUsage = localization.localized(.noTokenUsage, arguments: cell.dayKey)
-            return String(noUsage.dropFirst(cell.dayKey.count).drop(while: { $0 == ":" || $0 == "：" || $0 == " " }))
+            // `noTokenUsage` includes a date placeholder for the visible tooltip.
+            // Ask for the date-free form instead of stripping a known number of
+            // characters, which keeps this value correct for every locale.
+            let noUsage = localization.localized(.noTokenUsage, arguments: "")
+            return noUsage.trimmingCharacters(in: CharacterSet(charactersIn: ":： "))
         }
         let formattedTokens = "\(TokenFormatter.formatCompact(cell.totalTokens)) (\(TokenFormatter.formatFull(cell.totalTokens)))"
         return localization.localized(
@@ -66,9 +80,83 @@ public struct HeatmapGridView: View {
         )
     }
 
-    /// Traits applied to a day button when it is selected in the dashboard.
+    /// Action/state hint for a day. Empty days remain actionable Buttons, but
+    /// explicitly say why there is no value; selecting the same day again clears
+    /// the dashboard's day focus.
+    public static func accessibilityHint(
+        for cell: HeatmapDayCell,
+        isSelected: Bool,
+        localization: LocalizationManager = .shared
+    ) -> String {
+        if isSelected {
+            return localization.localized(.clearFocus)
+        }
+        if cell.totalTokens == 0 {
+            return localization.localized(
+                .noActivityRecorded,
+                arguments: accessibilityLabel(for: cell, localization: localization)
+            )
+        }
+        return localization.localized(
+            .activityOnDay,
+            arguments: accessibilityLabel(for: cell, localization: localization)
+        )
+    }
+
+    /// A short aggregate description for the heatmap container. Individual day
+    /// buttons remain available below this summary so VoiceOver and keyboard
+    /// users can inspect a specific date without hearing 365 values at once.
+    public static func accessibilitySummary(
+        for cells: [HeatmapDayCell],
+        localization: LocalizationManager = .shared,
+        pricingEngine: PricingEngine = .shared
+    ) -> String {
+        let boardName = localization.localized(.heatmapView)
+        guard !cells.isEmpty else {
+            return localization.localized(.noActivityRecorded, arguments: boardName)
+        }
+
+        var totalTokens = 0
+        var totalCostUSD = 0.0
+        var activeDays = 0
+        for cell in cells {
+            totalTokens += cell.totalTokens
+            totalCostUSD += cell.costUSD
+            if cell.totalTokens > 0 {
+                activeDays += 1
+            }
+        }
+
+        let total = "\(TokenFormatter.formatCompact(totalTokens)) \(localization.localized(.tokenUnit))"
+        let active = localization.localized(.activeDaysCount, arguments: activeDays)
+        let spend = "\(localization.localized(.estimatedCost)) \(pricingEngine.spendString(totalCostUSD))"
+        if localization.effectiveLanguage.code == AppLanguage.zh.code {
+            return "\(boardName)：\(total)，\(active) / \(cells.count) 天，\(spend)。"
+        }
+        return "\(boardName): \(total), \(active) of \(cells.count) days, \(spend)."
+    }
+
+    /// Traits applied to a day button. Day controls are native Buttons and
+    /// expose the keyboard-key trait alongside their selected state; the
+    /// optional focus argument documents the live focus state for callers that
+    /// render a focus indicator themselves.
     public static func accessibilityTraits(isSelected: Bool) -> AccessibilityTraits {
-        isSelected ? .isSelected : []
+        var traits: AccessibilityTraits = [.isButton, .isKeyboardKey]
+        if isSelected {
+            traits = traits.union(.isSelected)
+        }
+        return traits
+    }
+
+    public static func accessibilityTraits(
+        isSelected: Bool,
+        isKeyboardFocused: Bool
+    ) -> AccessibilityTraits {
+        var traits = accessibilityTraits(isSelected: isSelected)
+        if isKeyboardFocused {
+            traits = traits.union(.isKeyboardKey)
+        }
+        return traits
     }
 
     public var body: some View {
@@ -124,6 +212,14 @@ public struct HeatmapGridView: View {
             }
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(localization.localized(.heatmapView))
+        .accessibilityValue(HeatmapGridView.accessibilitySummary(
+            for: cells,
+            localization: localization,
+            pricingEngine: pricingEngine
+        ))
+        .accessibilityAddTraits(.isSummaryElement)
     }
 }
 
@@ -142,6 +238,12 @@ private struct HeatmapDayCellView: View {
     let onSelect: (HeatmapDayCell) -> Void
 
     @State private var isHovered = false
+    @FocusState private var isKeyboardFocused: Bool
+    @AccessibilityFocusState private var isAccessibilityFocused: Bool
+
+    private var hasFocus: Bool {
+        isKeyboardFocused || isAccessibilityFocused
+    }
 
     static func == (lhs: HeatmapDayCellView, rhs: HeatmapDayCellView) -> Bool {
         lhs.cell == rhs.cell
@@ -154,28 +256,64 @@ private struct HeatmapDayCellView: View {
         Button {
             onSelect(cell)
         } label: {
-            RoundedRectangle(cornerRadius: 2.5)
-                .fill(colorFor(intensity: cell.intensityLevel))
-                .frame(width: 11, height: 11)
-                .overlay {
-                    if isSelected || isHovered {
-                        RoundedRectangle(cornerRadius: 2.5)
-                            .stroke(
-                                isSelected ? AppTheme.Status.accent : AppTheme.Text.primary,
-                                lineWidth: isSelected ? 1.5 : 1
-                            )
-                    }
+            ZStack {
+                RoundedRectangle(cornerRadius: 2.5)
+                    .fill(colorFor(intensity: cell.intensityLevel))
+
+                // The check mark is deliberately shape-based feedback: the
+                // selected state must remain distinguishable without color.
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 6, weight: .bold))
+                        .foregroundColor(AppTheme.Text.primary)
+                        .accessibilityHidden(true)
                 }
+            }
+            .frame(width: 11, height: 11)
+            .overlay {
+                if isSelected || isHovered {
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .stroke(
+                            isSelected ? AppTheme.Status.accent : AppTheme.Text.primary,
+                            lineWidth: isSelected ? 1.5 : 1
+                        )
+                }
+            }
+            .overlay {
+                if hasFocus {
+                    // A dashed outer ring distinguishes keyboard/VoiceOver
+                    // focus from selection, which uses a solid ring + check.
+                    RoundedRectangle(cornerRadius: 3)
+                        .stroke(
+                            AppTheme.Border.focus,
+                            style: StrokeStyle(lineWidth: 2, dash: [2, 1])
+                        )
+                }
+            }
         }
         .buttonStyle(.plain)
+        .focusable()
+        .focused($isKeyboardFocused)
+        .accessibilityFocused($isAccessibilityFocused)
         .onHover { isHovered = $0 }
-        .accessibilityLabel(cell.dayKey)
+        .accessibilityLabel(HeatmapGridView.accessibilityLabel(
+            for: cell,
+            localization: localization
+        ))
         .accessibilityValue(HeatmapGridView.accessibilityValue(
             for: cell,
             localization: localization,
             pricingEngine: pricingEngine
         ))
-        .accessibilityAddTraits(HeatmapGridView.accessibilityTraits(isSelected: isSelected))
+        .accessibilityHint(HeatmapGridView.accessibilityHint(
+            for: cell,
+            isSelected: isSelected,
+            localization: localization
+        ))
+        .accessibilityAddTraits(HeatmapGridView.accessibilityTraits(
+            isSelected: isSelected,
+            isKeyboardFocused: hasFocus
+        ))
         // Formatted lazily: only the hovered square builds its tooltip
         // string; every other square carries an empty (never-shown) one.
         .help(isHovered ? tooltipText(for: cell) : "")
