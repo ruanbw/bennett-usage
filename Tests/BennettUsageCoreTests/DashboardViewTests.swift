@@ -52,6 +52,45 @@ final class DashboardViewTests: XCTestCase {
     }
 
     @MainActor
+    func testResponsiveDashboardRangeOptionsIncludePastYearAndSelectedYear() {
+        let defaults = UserDefaults(suiteName: "DashboardRangeOptionsTests_\(UUID().uuidString)")!
+        let localization = LocalizationManager(userDefaults: defaults)
+        localization.setLanguage(.en)
+
+        XCTAssertEqual(
+            DashboardContentView.dashboardTimeRanges,
+            [.last24Hours, .today, .last7Days, .last30Days, .pastYear]
+        )
+        XCTAssertEqual(
+            DashboardContentView.rangeTitle(for: .pastYear, localization: localization),
+            "1 Year"
+        )
+
+        let annualRanges = DashboardContentView.dashboardTimeRanges(including: .year(2026))
+        XCTAssertEqual(annualRanges.last, .year(2026))
+        XCTAssertTrue(annualRanges.contains(.pastYear))
+        XCTAssertEqual(
+            DashboardContentView.rangeTitle(for: .year(2026), localization: localization),
+            "2026"
+        )
+    }
+
+    @MainActor
+    func testDashboardRangeControlRendersAtNarrowWidth() throws {
+        let db = try DatabaseManager.inMemory()
+        let aggregator = MetricsAggregator(database: db)
+        let contentView = DashboardContentView(
+            aggregator: aggregator,
+            initialRange: .year(2026)
+        )
+        let renderer = ImageRenderer(
+            content: contentView.frame(width: 220, height: 680)
+        )
+
+        XCTAssertNotNil(renderer.nsImage)
+    }
+
+    @MainActor
     func testDashboardViewWithLocalization() throws {
         let db = try DatabaseManager.inMemory()
         let aggregator = MetricsAggregator(database: db)

@@ -65,14 +65,7 @@ public struct DashboardContentView: View {
     // MARK: - Computed Helpers
 
     private var rangeSubtitle: String {
-        switch selectedRange {
-        case .last24Hours: return localization.localized(.range24h)
-        case .today: return localization.localized(.rangeToday)
-        case .last7Days: return localization.localized(.range7Days)
-        case .last30Days: return localization.localized(.range30Days)
-        case .pastYear: return localization.localized(.range1Year)
-        case .year(let y): return String(y)
-        }
+        Self.rangeTitle(for: selectedRange, localization: localization)
     }
 
     private var trendTitle: String {
@@ -152,6 +145,38 @@ public struct DashboardContentView: View {
         return availableYears
     }
 
+    static let dashboardTimeRanges: [TimeRangeOption] = [
+        .last24Hours,
+        .today,
+        .last7Days,
+        .last30Days,
+        .pastYear
+    ]
+
+    /// The full year entered from the annual panorama remains selectable in the
+    /// compact menu after the toolbar folds.
+    static func dashboardTimeRanges(including selectedRange: TimeRangeOption) -> [TimeRangeOption] {
+        var ranges = dashboardTimeRanges
+        if case .year = selectedRange {
+            ranges.append(selectedRange)
+        }
+        return ranges
+    }
+
+    static func rangeTitle(
+        for range: TimeRangeOption,
+        localization: LocalizationManager
+    ) -> String {
+        switch range {
+        case .last24Hours: return localization.localized(.range24h)
+        case .today: return localization.localized(.rangeToday)
+        case .last7Days: return localization.localized(.range7Days)
+        case .last30Days: return localization.localized(.range30Days)
+        case .pastYear: return localization.localized(.range1Year)
+        case .year(let year): return String(year)
+        }
+    }
+
     private func rangePill(_ option: TimeRangeOption, title: String) -> some View {
         let isSelected = selectedRange == option
         return Button {
@@ -172,19 +197,60 @@ public struct DashboardContentView: View {
         .buttonStyle(.plain)
     }
 
-    private var headerSection: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 2) {
-                rangePill(.last24Hours, title: localization.localized(.range24h))
-                rangePill(.today, title: localization.localized(.rangeToday))
-                rangePill(.last7Days, title: localization.localized(.range7Days))
-                rangePill(.last30Days, title: localization.localized(.range30Days))
+    private var fullRangePicker: some View {
+        HStack(spacing: 2) {
+            ForEach(Self.dashboardTimeRanges, id: \.self) { range in
+                rangePill(
+                    range,
+                    title: Self.rangeTitle(for: range, localization: localization)
+                )
             }
-            .padding(2)
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(AppTheme.Surface.subtle)
+        )
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var compactRangeMenu: some View {
+        Menu {
+            ForEach(Self.dashboardTimeRanges(including: selectedRange), id: \.self) { range in
+                Button(Self.rangeTitle(for: range, localization: localization)) {
+                    selectedRange = range
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text(rangeSubtitle)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
+            }
+            .foregroundColor(AppTheme.Text.primary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 6)
                     .fill(AppTheme.Surface.subtle)
             )
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    private var responsiveRangePicker: some View {
+        ViewThatFits(in: .horizontal) {
+            fullRangePicker
+            compactRangeMenu
+        }
+    }
+
+    private var headerSection: some View {
+        HStack(spacing: 12) {
+            responsiveRangePicker
 
             if case .year(let y) = selectedRange {
                 HStack(spacing: 5) {
