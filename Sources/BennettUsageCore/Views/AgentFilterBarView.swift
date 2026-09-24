@@ -36,7 +36,8 @@ public struct AgentFilterBarView: View {
         "copilot": "GitHub Copilot",
         "cursor": "Cursor",
         "trae": "Trae",
-        "dsh": "DSH Harness"
+        "dsh": "DSH Harness",
+        "goose": "Goose"
     ]
 
     /// Every agent id this app can record.

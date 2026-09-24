@@ -33,7 +33,7 @@ final class ThemeColorsTests: XCTestCase {
         let agentIds = [
             "claude", "cursor", "codex", "gemini", "copilot",
             "trae", "dsh", "pi", "omp", "cline", "roo", "qwen",
-            "opencode", "antigravity", "continue"
+            "opencode", "antigravity", "continue", "goose"
         ]
 
         XCTAssertEqual(agentIds.count, 15)

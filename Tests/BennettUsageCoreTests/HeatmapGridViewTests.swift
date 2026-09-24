@@ -113,6 +113,7 @@ final class HeatmapGridViewTests: XCTestCase {
         XCTAssertEqual(Set(AgentFilterBarView.knownAgentIds).count, 15)
         XCTAssertTrue(AgentFilterBarView.knownAgentIds.contains("continue"))
         XCTAssertTrue(AgentFilterBarView.knownAgentIds.contains("cline"))
+        XCTAssertTrue(AgentFilterBarView.knownAgentIds.contains("goose"))
         for agentId in AgentFilterBarView.knownAgentIds {
             XCTAssertNotNil(AgentFilterBarView.colorMap[agentId], "missing palette color for '\(agentId)'")
         }

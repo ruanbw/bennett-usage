@@ -272,6 +272,9 @@ public enum AppTheme {
         // 15. Continue CLI: Signal Blue
         public static let `continue` = Color.dynamic(lightHex: "#2563EB", darkHex: "#60A5FA")
 
+        // 16. Goose: Golden Yellow
+        public static let goose = Color.dynamic(lightHex: "#CA8A04", darkHex: "#FDE047")
+
         /// Lookup curated color by agent source ID.
         public static func knownColor(for id: String) -> Color? {
             switch id.lowercased() {
@@ -290,6 +293,7 @@ public enum AppTheme {
             case "opencode": return opencode
             case "antigravity": return antigravity
             case "continue": return `continue`
+            case "goose": return goose
             default: return nil
             }
         }
@@ -310,7 +314,8 @@ public enum AppTheme {
             "qwen": qwen,
             "opencode": opencode,
             "antigravity": antigravity,
-            "continue": `continue`
+            "continue": `continue`,
+            "goose": goose
         ]
 
         /// Infers agent brand color for arbitrary model names (e.g. claude-3-5-sonnet -> claude).

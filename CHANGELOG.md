@@ -5,6 +5,7 @@
 ### 新增适配器
 
 - **Continue CLI**：解析 `~/.continue/sessions/<session UUID>.json` 中 `history[i].message.usage` 的逐条 assistant 用量；支持绝对路径 `CONTINUE_GLOBAL_DIR` 覆盖，忽略会话索引 `sessions.json`，并按文件修改时间、文件大小和文件身份维护增量游标。会话文件重写时使用不含 usage 的消息语义哈希作为稳定 ID，避免 usage 后补全或重复扫描造成重复消费。
+- **Goose**：新增只读 SQLite `usage_ledger` 适配器，支持 macOS 默认路径与绝对 `GOOSE_PATH_ROOT`；按数据库 identity + ledger row id 增量同步，schema 不兼容时安全跳过；忽略 `carried_forward`，用每会话 deterministic synthetic baseline 保留累计差额，避免重复计费。
 
 ## v1.4.0 — 2026-09-21
 

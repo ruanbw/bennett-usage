@@ -21,9 +21,9 @@
 
 ---
 
-A macOS menu bar app that aggregates token usage across **15 AI coding tools**: Claude Code, OpenAI Codex, Continue CLI, Gemini CLI, Qwen Code, OpenCode, Roo Code / Cline / Kilo (VS Code extensions), Cline (desktop & CLI), DSH Harness, Oh My Pi, Pi Agent, and Antigravity. Cursor, GitHub Copilot, and Trae are detected as installed (they bill in the cloud, so token counts need an API).
+A macOS menu bar app that aggregates token usage across **16 AI coding tools**: Claude Code, OpenAI Codex, Continue CLI, Gemini CLI, Goose, Qwen Code, OpenCode, Roo Code / Cline / Kilo (VS Code extensions), Cline (desktop & CLI), DSH Harness, Oh My Pi, Pi Agent, and Antigravity. Cursor, GitHub Copilot, and Trae are detected as installed (they bill in the cloud, so token counts need an API).
 
-Everything is parsed from local session files — no API keys, no accounts, no data leaves your Mac.
+Everything is parsed from local session stores — no API keys, no accounts, no data leaves your Mac.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -33,7 +33,7 @@ Everything is parsed from local session files — no API keys, no accounts, no d
 - **Dashboard** — 24 hours / today / 7 days / 30 days / past year / by year. Hourly token trend stacked by model (bar or line), spend share by tool and by model, annual heatmap (calendar or monthly trend), project leaderboard, and cache hit statistics.
 - **Settings** — General (language, refresh interval, automatic update checks), Agents (installed or not, rescan now), Pricing & FX (USD / CNY, custom rate), Data & Storage (database location, reset), About (check for updates).
 - **Update checks** — compares against GitHub Releases, automatic (once a day, can be turned off) or manual. New versions surface in the menu bar icon and popover, with the DMG for your architecture and an option to skip a version.
-- **15 data sources** — local session logs parsed directly. No API keys, plain SQLite storage, FSEvents file watching for automatic sync.
+- **16 data sources** — local session logs parsed directly. No API keys, plain SQLite storage, FSEvents file watching for automatic sync.
 - **English & Simplified Chinese** — or follow the system language.
 
 ![Menu bar popover](docs/screenshots/popover.png)
@@ -80,6 +80,7 @@ Any Mac can cross-compile both slices, so an Intel host still produces the arm64
 | Oh My Pi | `~/.omp/agent/sessions` | also reads `~/.omp/stats.db` |
 | Pi Agent | `~/.pi/agent/sessions` | |
 | Antigravity | `~/.gemini/antigravity/conversations` | |
+| Goose | `~/Library/Application Support/Block/goose/sessions/sessions.db` | read-only SQLite `usage_ledger`; absolute `GOOSE_PATH_ROOT` uses `$GOOSE_PATH_ROOT/data/sessions/sessions.db` |
 | GitHub Copilot | `~/.copilot` | install detection only; tokens need the GitHub API |
 | Cursor | `~/Library/Application Support/Cursor` | install detection only; tokens need the Dashboard API |
 | Trae | `~/.trae` | install detection only; billed in the cloud |

@@ -358,6 +358,7 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertEqual(healthInfos.count, 15)
         let ids = Set(healthInfos.map { $0.id })
         XCTAssertTrue(ids.contains("pi"))
+        XCTAssertTrue(ids.contains("goose"))
         XCTAssertTrue(ids.contains("omp"))
         XCTAssertTrue(ids.contains("claude"))
         XCTAssertTrue(ids.contains("codex"))

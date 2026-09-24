@@ -4,7 +4,7 @@ import XCTest
 final class AdapterCatalogTests: XCTestCase {
     private let expectedSourceIds = [
         "omp", "pi", "claude", "codex", "continue", "gemini", "antigravity", "opencode",
-        "roo", "cline", "qwen", "copilot", "cursor", "trae", "dsh"
+        "roo", "cline", "qwen", "copilot", "cursor", "trae", "dsh", "goose"
     ]
 
     func testDefaultsPreserveBuiltInAdapterOrderAndCollection() {

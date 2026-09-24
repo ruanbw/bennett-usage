@@ -18,7 +18,8 @@ public enum AdapterCatalog {
             CopilotAdapter(),
             CursorAdapter(),
             TraeAdapter(),
-            DshAdapter()
+            DshAdapter(),
+            GooseAdapter()
         ]
     }
 }

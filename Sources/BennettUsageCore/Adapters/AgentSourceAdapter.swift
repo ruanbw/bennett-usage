@@ -33,6 +33,7 @@ extension AgentSourceAdapter {
         case "cursor": return "~/Library/Application Support/Cursor"
         case "trae": return "~/.trae"
         case "dsh": return "~/.dsh"
+        case "goose": return "~/Library/Application Support/Block/goose/sessions/sessions.db"
         default: return ""
         }
     }
@@ -80,6 +81,10 @@ extension AgentSourceAdapter {
             // CLINE_DATA_DIR / CLINE_DIR aware): ~/.cline/data also holds
             // SQLite WAL files and logs that churn during every session.
             return ClineAdapter.sessionsRoot().path
+        case "goose":
+            // Watch the sessions directory containing sessions.db, including
+            // WAL/SHM lifecycle events, while Goose writes the canonical store.
+            return GooseAdapter.sessionsRoot().path
         default:
             return nil
         }
