@@ -18,6 +18,10 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
 
     public init() {}
 
+    public static func canonicalPath(for url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
     /// Resolve the session directory used by Continue. A configured
     /// `CONTINUE_GLOBAL_DIR` is the parent of `sessions` and must be absolute;
     /// a relative value cannot be resolved reliably because Continue resolves
@@ -87,7 +91,7 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
                   let modifiedAt = values?.contentModificationDate,
                   let identity = Self.fileIdentity(for: fileURL) else { continue }
 
-            let path = fileURL.standardizedFileURL.path
+            let path = Self.canonicalPath(for: fileURL)
             // A generation is derived from the complete snapshot, rather than
             // just the first line or stat metadata. Continue compacts and
             // reorders history in place, which can change occurrence IDs while
