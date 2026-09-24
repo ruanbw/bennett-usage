@@ -154,6 +154,7 @@ public struct DashboardContentView: View {
             await autoRefreshLoop()
         }
         .onReceive(NotificationCenter.default.publisher(for: .bennettUsageDataDidUpdate)) { _ in
+            guard dashboardWindowIsVisible() else { return }
             Task { await loadDataThrottled() }
         }
     }
