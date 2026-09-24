@@ -15,16 +15,19 @@ public struct DashboardView: View {
     public let aggregator: MetricsAggregator
     @ObservedObject public var localization: LocalizationManager
     @ObservedObject private var presentation: DashboardPresentationState
+    private let onOpenSettings: (() -> Void)?
 
     public init(
         aggregator: MetricsAggregator,
         localization: LocalizationManager = .shared,
         presentation: DashboardPresentationState = DashboardPresentationState(),
-        showSettingsInitially: Bool = false
+        showSettingsInitially: Bool = false,
+        onOpenSettings: (() -> Void)? = nil
     ) {
         self.aggregator = aggregator
         self.localization = localization
         self.presentation = presentation
+        self.onOpenSettings = onOpenSettings
         presentation.isShowingSettings = showSettingsInitially
     }
 
@@ -32,7 +35,7 @@ public struct DashboardView: View {
         DashboardContentView(
             aggregator: aggregator,
             localization: localization,
-            onOpenSettings: { presentation.isShowingSettings = true }
+            onOpenSettings: onOpenSettings ?? { presentation.isShowingSettings = true }
         )
         .frame(minWidth: 960, idealWidth: 1080, minHeight: 680, idealHeight: 740)
         .background(AppTheme.Canvas.background)

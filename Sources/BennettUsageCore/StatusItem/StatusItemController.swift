@@ -219,17 +219,32 @@ public final class StatusItemController: NSObject {
         refreshTask?.cancel()
         let aggregator = self.aggregator
         refreshTask = Task {
-            let summary = await Task.detached(priority: .userInitiated) { () -> TodaySummary? in
+            let result = await Task.detached(priority: .userInitiated) { () -> (TodaySummary, [TrendPoint])? in
+                let summary: TodaySummary?
                 if let res = try? await aggregator.fetchTodaySummary() {
-                    return res
+                    summary = res
+                } else {
+                    // Retry once after a brief yield in case the database was
+                    // locked during a transaction.
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    summary = try? await aggregator.fetchTodaySummary()
                 }
-                // Retry once after brief yield in case database was locked during transaction
-                try? await Task.sleep(nanoseconds: 100_000_000)
-                return try? await aggregator.fetchTodaySummary()
+                guard let summary else { return nil }
+
+                // The sparkline is optional presentation data. A failed trend
+                // read must not erase a valid Today summary or fabricate a
+                // flat line; the popover simply keeps its previous trend.
+                let trend = (try? await aggregator.fetchPeriodMetrics(
+                    range: .today,
+                    toolFilter: nil
+                ))?.trendPoints ?? []
+                return (summary, trend)
             }.value
 
-            guard !Task.isCancelled, let summary else { return }
+            guard !Task.isCancelled, let (summary, trend) = result else { return }
             summaryModel.summary = summary
+            summaryModel.trendPoints = trend.count >= 2 ? trend : nil
+            summaryModel.lastRefreshedAt = Date()
             applyStatusItemAppearance()
         }
     }

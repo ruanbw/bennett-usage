@@ -147,7 +147,10 @@ public final class DashboardWindowManager: NSObject, NSWindowDelegate {
         let view = DashboardView(
             aggregator: aggregator,
             presentation: presentation,
-            showSettingsInitially: false
+            showSettingsInitially: false,
+            onOpenSettings: {
+                SettingsWindowManager.shared.show(aggregator: aggregator)
+            }
         )
         let hostingController = NSHostingController(rootView: view)
         // The window owns the sizing contract. Letting the hosting controller
