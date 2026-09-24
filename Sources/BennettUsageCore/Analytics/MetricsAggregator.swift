@@ -191,6 +191,10 @@ public struct AllTimeTotals: Sendable, Equatable {
 }
 
 public final class MetricsAggregator: Sendable {
+    /// Project rankings are intentionally bounded for every period so the
+    /// dashboard never has to render an unbounded directory list.
+    public static let projectRankingLimit = 100
+
     private let database: DatabaseManager
 
     public init(database: DatabaseManager) {
@@ -586,7 +590,7 @@ public final class MetricsAggregator: Sendable {
             let totals = try database.fetchPeriodTotals(sinceTimestamp: sinceTimestamp, sourceId: toolFilter)
             let toolDist = try database.fetchToolDistribution(sourceId: toolFilter, sinceTimestamp: sinceTimestamp)
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: .max, sourceId: toolFilter, sinceTimestamp: sinceTimestamp)
+            let projRankings = try database.fetchProjectRankings(limit: Self.projectRankingLimit, sourceId: toolFilter, sinceTimestamp: sinceTimestamp)
 
             let currentHour = calendar.date(bySettingHour: calendar.component(.hour, from: now), minute: 0, second: 0, of: now) ?? now
             let currentHourMillis = Int64(currentHour.timeIntervalSince1970 * 1000)
@@ -647,7 +651,7 @@ public final class MetricsAggregator: Sendable {
             let totals = try database.fetchPeriodTotals(sinceTimestamp: sinceTimestamp, sourceId: toolFilter)
             let toolDist = try database.fetchToolDistribution(sourceId: toolFilter, sinceTimestamp: sinceTimestamp)
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: .max, sourceId: toolFilter, sinceTimestamp: sinceTimestamp)
+            let projRankings = try database.fetchProjectRankings(limit: Self.projectRankingLimit, sourceId: toolFilter, sinceTimestamp: sinceTimestamp)
 
             let buckets = try database.fetchHourlyBuckets(originTimestamp: sinceTimestamp, sinceTimestamp: sinceTimestamp, sourceId: toolFilter)
 
@@ -724,7 +728,7 @@ public final class MetricsAggregator: Sendable {
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter, startDate: startKey, endDate: endKey)
+            let projRankings = try database.fetchProjectRankings(limit: Self.projectRankingLimit, sourceId: toolFilter, startDate: startKey, endDate: endKey)
             let modelBuckets = (try? database.fetchDailyModelBuckets(startDate: startKey, endDate: endKey, sourceId: toolFilter)) ?? []
             var modelsByDay: [String: [String: Int]] = [:]
             for bucket in modelBuckets {
@@ -799,7 +803,7 @@ public final class MetricsAggregator: Sendable {
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter, startDate: startKey, endDate: endKey)
+            let projRankings = try database.fetchProjectRankings(limit: Self.projectRankingLimit, sourceId: toolFilter, startDate: startKey, endDate: endKey)
             let modelBuckets = (try? database.fetchDailyModelBuckets(startDate: startKey, endDate: endKey, sourceId: toolFilter)) ?? []
             var modelsByMonth: [String: [String: Int]] = [:]
             for bucket in modelBuckets {
@@ -864,7 +868,7 @@ public final class MetricsAggregator: Sendable {
             let toolDist = toolTotals.map { (tool: $0.key, tokens: $0.value.tokens, costUSD: $0.value.costUSD) }
                 .sorted { $0.tokens > $1.tokens }
             let mostActive = toolDist.first?.tool ?? "None"
-            let projRankings = try database.fetchProjectRankings(limit: 100, sourceId: toolFilter, startDate: "\(year)-01-01", endDate: "\(year)-12-31")
+            let projRankings = try database.fetchProjectRankings(limit: Self.projectRankingLimit, sourceId: toolFilter, startDate: "\(year)-01-01", endDate: "\(year)-12-31")
             let modelBuckets = (try? database.fetchDailyModelBuckets(startDate: "\(year)-01-01", endDate: "\(year)-12-31", sourceId: toolFilter)) ?? []
             var modelsByMonth: [String: [String: Int]] = [:]
             for bucket in modelBuckets {

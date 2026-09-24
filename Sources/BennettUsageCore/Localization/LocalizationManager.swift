@@ -376,8 +376,8 @@ private let englishDictionary: [LocalizedKey: String] = [
     .monthlyTrendYear: "Monthly Token Trend (%@)",
 
     // Top Projects
-    .topProjectsDrillDown: "Top Projects Drill-Down",
-    .trackedProjectsCount: "%d tracked",
+    .topProjectsDrillDown: "Top 100 Projects",
+    .trackedProjectsCount: "Top %d of 100",
     .noProjectFoldersRecorded: "No project folders recorded yet",
     .tokensCount: "%@ tokens",
     .showMoreProjects: "Show %d More Directories",
@@ -534,8 +534,8 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .monthlyTrendYear: "月度 Token 趋势 (%@)",
 
     // Top Projects
-    .topProjectsDrillDown: "项目目录深度分析",
-    .trackedProjectsCount: "已记录 %d 个",
+    .topProjectsDrillDown: "前 100 个项目",
+    .trackedProjectsCount: "前 %d 个",
     .noProjectFoldersRecorded: "暂无已记录的项目目录",
     .tokensCount: "%@ tokens",
     .showMoreProjects: "展开更多 (剩余 %d 个目录)",

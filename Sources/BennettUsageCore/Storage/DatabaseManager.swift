@@ -681,6 +681,7 @@ public final class DatabaseManager: @unchecked Sendable {
     ) throws -> [(project: String, totalTokens: Int, costUSD: Double)] {
         lock.lock(); defer { lock.unlock() }
 
+        let resultLimit = max(0, limit)
         var whereClauses = ["project_folder IS NOT NULL", "project_folder != ''"]
         var binds: [Any] = []
         if let sourceId = sourceId, !sourceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -705,7 +706,7 @@ public final class DatabaseManager: @unchecked Sendable {
         FROM unified_token_records
         WHERE \(whereClauses.joined(separator: " AND "))
         GROUP BY project_folder
-        ORDER BY sum_tokens DESC
+        ORDER BY sum_tokens DESC, sum_cost DESC, project_folder ASC
         LIMIT ?;
         """
         let stmt = try cachedStatement(sql: sql, errorCode: 13, description: "project rankings statement")
@@ -719,7 +720,7 @@ public final class DatabaseManager: @unchecked Sendable {
             }
             bindIndex += 1
         }
-        sqlite3_bind_int64(stmt, bindIndex, Int64(limit))
+        sqlite3_bind_int64(stmt, bindIndex, Int64(resultLimit))
 
         var result: [(project: String, totalTokens: Int, costUSD: Double)] = []
         while true {
@@ -749,7 +750,13 @@ public final class DatabaseManager: @unchecked Sendable {
             }
         }
         return merged.map { (project: $0.key, totalTokens: $0.value.tokens, costUSD: $0.value.cost) }
-            .sorted { $0.totalTokens > $1.totalTokens }
+            .sorted {
+                if $0.totalTokens != $1.totalTokens { return $0.totalTokens > $1.totalTokens }
+                if $0.costUSD != $1.costUSD { return $0.costUSD > $1.costUSD }
+                return $0.project < $1.project
+            }
+            .prefix(resultLimit)
+            .map { $0 }
     }
 
     public func fetchModelDistribution(

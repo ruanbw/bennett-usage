@@ -66,6 +66,74 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertEqual(rankings[1].costUSD, 0.02, accuracy: 0.0001)
     }
 
+    func testProjectRankingsAreBoundedAndSortedAcrossPeriods() async throws {
+        let now = Date()
+        let dayKey = UnifiedTokenRecord.dayKey(for: now)
+        let records = (0..<150).map { index in
+            let project = String(format: "/tmp/project-%03d", index)
+            return UnifiedTokenRecord(
+                id: "ranking-\(index)",
+                sourceId: "pi",
+                timestamp: now,
+                dayKey: dayKey,
+                sessionKey: "session-\(index)",
+                projectFolder: project,
+                model: "m",
+                provider: nil,
+                inputTokens: 1000,
+                outputTokens: 0,
+                rawCostUSD: Double(index % 3)
+            )
+        }
+        try db.insertRecords(records)
+
+        for range in [TimeRangeOption.last24Hours, .today, .last30Days] {
+            let rankings = try await aggregator.fetchPeriodMetrics(range: range).projectRankings
+            XCTAssertLessThanOrEqual(rankings.count, MetricsAggregator.projectRankingLimit)
+            XCTAssertEqual(rankings.count, MetricsAggregator.projectRankingLimit)
+            XCTAssertEqual(rankings.map { $0.project }.count, Set(rankings.map { $0.project }).count)
+
+            for (higher, lower) in zip(rankings, rankings.dropFirst()) {
+                if higher.totalTokens == lower.totalTokens {
+                    XCTAssertGreaterThanOrEqual(higher.costUSD, lower.costUSD)
+                    if higher.costUSD == lower.costUSD {
+                        XCTAssertLessThan(higher.project, lower.project)
+                    }
+                } else {
+                    XCTAssertGreaterThan(higher.totalTokens, lower.totalTokens)
+                }
+            }
+        }
+    }
+
+    func testProjectRankingsCanonicalMergeStaysBounded() async throws {
+        let now = Date()
+        let records = (0..<60).flatMap { index -> [UnifiedTokenRecord] in
+            let project = String(format: "/tmp/canonical-%03d", index)
+            return [project, project + "/"].enumerated().map { variant, folder in
+                UnifiedTokenRecord(
+                    id: "canonical-\(index)-\(variant)",
+                    sourceId: "pi",
+                    timestamp: now,
+                    dayKey: UnifiedTokenRecord.dayKey(for: now),
+                    sessionKey: "session-\(index)-\(variant)",
+                    projectFolder: folder,
+                    model: "m",
+                    provider: nil,
+                    inputTokens: 1000,
+                    outputTokens: 0,
+                    rawCostUSD: 1.0
+                )
+            }
+        }
+        try db.insertRecords(records)
+
+        let rankings = try await aggregator.fetchProjectRankings(limit: MetricsAggregator.projectRankingLimit)
+        XCTAssertLessThanOrEqual(rankings.count, MetricsAggregator.projectRankingLimit)
+        XCTAssertEqual(rankings.count, 50)
+        XCTAssertEqual(rankings.map { $0.project }.count, Set(rankings.map { $0.project }).count)
+    }
+
     func testAnnualSummaryAndToolDistribution() async throws {
         let r1 = UnifiedTokenRecord(id: "a1", sourceId: "pi", timestamp: Date(), dayKey: "2026-04-10", sessionKey: "s1", projectFolder: nil, model: "m", provider: nil, inputTokens: 3000, outputTokens: 2000, rawCostUSD: 0.25)
         let r2 = UnifiedTokenRecord(id: "a2", sourceId: "omp", timestamp: Date(), dayKey: "2026-05-15", sessionKey: "s2", projectFolder: nil, model: "m", provider: nil, inputTokens: 1000, outputTokens: 500, rawCostUSD: 0.05)

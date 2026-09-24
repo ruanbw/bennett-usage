@@ -67,6 +67,28 @@ final class DashboardViewTests: XCTestCase {
         XCTAssertNotNil(enView.body)
     }
 
+    func testTopProjectCopyIsBounded() {
+        let defaults = UserDefaults(suiteName: "TopProjectCopyTests_\(UUID().uuidString)")!
+        let localization = LocalizationManager(userDefaults: defaults)
+
+        XCTAssertEqual(
+            localization.localized(.topProjectsDrillDown, language: .en),
+            "Top 100 Projects"
+        )
+        XCTAssertEqual(
+            localization.localized(.trackedProjectsCount, language: .en, arguments: 12),
+            "Top 12 of 100"
+        )
+        XCTAssertEqual(
+            localization.localized(.topProjectsDrillDown, language: .zh),
+            "前 100 个项目"
+        )
+        XCTAssertEqual(
+            localization.localized(.trackedProjectsCount, language: .zh, arguments: 12),
+            "前 12 个"
+        )
+    }
+
     @MainActor
     func testDashboardContentViewInitialization() throws {
         let db = try DatabaseManager.inMemory()

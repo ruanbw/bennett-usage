@@ -96,7 +96,7 @@ public struct DashboardContentView: View {
     }
 
     private var projectRankings: [(project: String, totalTokens: Int, costUSD: Double)] {
-        periodMetrics?.projectRankings ?? []
+        Array((periodMetrics?.projectRankings ?? []).prefix(MetricsAggregator.projectRankingLimit))
     }
 
     // MARK: - Body
@@ -788,7 +788,7 @@ public struct DashboardContentView: View {
             } else {
                 let maxTokens = max(projectRankings.first?.totalTokens ?? 1, 1)
                 let displayedProjects = isProjectsExpanded ? projectRankings : Array(projectRankings.prefix(3))
-                VStack(spacing: 8) {
+                LazyVStack(spacing: 8) {
                     ForEach(Array(displayedProjects.enumerated()), id: \.element.project) { index, item in
                         let rank = index + 1
                         HStack(spacing: 12) {
