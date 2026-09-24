@@ -216,6 +216,34 @@ final class SettingsSheetViewTests: XCTestCase {
     }
 
     @MainActor
+    func testAgentHealthRowDisplaysRecordCountInEnglishAndChinese() async throws {
+        let record = UnifiedTokenRecord(
+            id: "settings_agent_row",
+            sourceId: "pi",
+            timestamp: Date(),
+            dayKey: UnifiedTokenRecord.dayKey(for: Date()),
+            sessionKey: "settings-test",
+            projectFolder: "/tmp/settings-test",
+            model: "test-model",
+            provider: "test-provider",
+            inputTokens: 1,
+            outputTokens: 1
+        )
+        try db.insertRecords([record])
+        let agentInfos = try await aggregator.fetchAgentHealthInfos()
+        let piInfo = try XCTUnwrap(agentInfos.first(where: { $0.id == "pi" }))
+
+        for (language, expectedText) in [(AppLanguage.en, "1 records"), (.zh, "1 条记录")] {
+            let manager = LocalizationManager(userDefaults: testDefaults)
+            manager.setLanguage(language)
+            XCTAssertEqual(
+                SettingsContentView.agentRecordsText(for: piInfo, localization: manager),
+                expectedText
+            )
+        }
+    }
+
+    @MainActor
     private func menuControls(in view: NSView) -> [SettingsMenuControl] {
         var found: [SettingsMenuControl] = []
         if let control = view as? SettingsMenuControl { found.append(control) }

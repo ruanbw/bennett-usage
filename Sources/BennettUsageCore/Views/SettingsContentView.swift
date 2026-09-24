@@ -435,6 +435,10 @@ public struct SettingsContentView: View {
         }
     }
 
+    static func agentRecordsText(for info: AgentHealthInfo, localization: LocalizationManager) -> String {
+        String(format: localization.localized(.agentRecords), info.recordCount)
+    }
+
     private func agentHealthRow(_ info: AgentHealthInfo) -> some View {
         HStack(spacing: 12) {
             ZStack {
@@ -481,7 +485,7 @@ public struct SettingsContentView: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 3) {
-                Text(String(format: localization.localized(.agentRecords), formatNumber(info.recordCount)))
+                Text(Self.agentRecordsText(for: info, localization: localization))
                     .font(.caption.weight(.medium).monospacedDigit())
                     .foregroundColor(AppTheme.Text.primary)
                     .padding(.horizontal, 8)
