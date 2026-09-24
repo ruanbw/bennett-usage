@@ -304,6 +304,82 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(try db.fetchCursor(for: "identity_source"), .databaseIdentity("db-v2", 1))
     }
 
+    func testSyncAllContinuesWithinSameFileGeneration() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        let oldCursor = SyncCursor.fileGenerations([
+            "/test/audit-wire.jsonl": FileGeneration(generation: "gen-1", offset: 100, size: 200)
+        ])
+        try db.insertRecords([makeRecord(id: "old", sourceId: "generation_source")], updateCursorFor: "generation_source", cursor: oldCursor)
+        let mock = MockSyncAdapter(sourceId: "generation_source", path: testDir)
+        mock.recordsToReturn = [makeRecord(id: "new", sourceId: "generation_source")]
+        mock.newCursorToReturn = .fileGenerations([
+            "/test/audit-wire.jsonl": FileGeneration(generation: "gen-1", offset: 150, size: 250)
+        ])
+        registry.register(mock)
+
+        let count = try await SyncCoordinator(database: db, registry: registry).syncAll()
+
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(mock.receivedCursors, [oldCursor])
+        XCTAssertEqual(try db.fetchTotalRecordCount(), 2)
+        XCTAssertEqual(try db.fetchCursor(for: "generation_source"), mock.newCursorToReturn)
+    }
+
+    func testSyncAllResetsAndRefetchesWhenFileGenerationChanges() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        let oldCursor = SyncCursor.fileGenerations([
+            "/test/audit-wire.jsonl": FileGeneration(generation: "gen-1", offset: 100, size: 200)
+        ])
+        try db.insertRecords([makeRecord(id: "old", sourceId: "generation_source")], updateCursorFor: "generation_source", cursor: oldCursor)
+        let mock = MockSyncAdapter(sourceId: "generation_source", path: testDir)
+        mock.recordsToReturn = [makeRecord(id: "new", sourceId: "generation_source")]
+        mock.newCursorToReturn = .fileGenerations([
+            "/test/audit-wire.jsonl": FileGeneration(generation: "gen-2", offset: 25, size: 50)
+        ])
+        registry.register(mock)
+
+        let count = try await SyncCoordinator(database: db, registry: registry).syncAll()
+
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(mock.receivedCursors, [oldCursor, nil])
+        XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0).map(\.id), ["new"])
+        XCTAssertEqual(try db.fetchCursor(for: "generation_source"), mock.newCursorToReturn)
+    }
+
+    func testSyncAllCutsOverFromFileOffsetsToFileGenerations() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        let oldCursor = SyncCursor.fileOffsets(["/test/audit-wire.jsonl": 100])
+        try db.insertRecords([makeRecord(id: "old", sourceId: "generation_source")], updateCursorFor: "generation_source", cursor: oldCursor)
+        let mock = MockSyncAdapter(sourceId: "generation_source", path: testDir)
+        mock.recordsToReturn = [makeRecord(id: "new", sourceId: "generation_source")]
+        mock.newCursorToReturn = .fileGenerations([
+            "/test/audit-wire.jsonl": FileGeneration(generation: "gen-1", offset: 100, size: 200)
+        ])
+        registry.register(mock)
+
+        let count = try await SyncCoordinator(database: db, registry: registry).syncAll()
+
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(mock.receivedCursors, [oldCursor, nil])
+        XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0).map(\.id), ["new"])
+        XCTAssertEqual(try db.fetchCursor(for: "generation_source"), mock.newCursorToReturn)
+    }
+
     func testSyncAllCutsOverFromRowIdToDatabaseIdentity() async throws {
         let db = try DatabaseManager.inMemory()
         let registry = AdapterRegistry()

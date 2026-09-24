@@ -203,19 +203,26 @@ public actor SyncCoordinator {
         return totalIngested
     }
 
-    /// A changed database identity invalidates an otherwise compatible
-    /// watermark. Cross-kind cursor changes are also unsafe: the old watermark
-    /// cannot describe the source represented by the new cursor kind.
+    /// A changed database or file-generation identity invalidates an otherwise
+    /// compatible watermark. Cross-representation changes are also unsafe: the
+    /// old watermark cannot describe the source represented by the new cursor.
     private static func requiresCutover(from oldCursor: SyncCursor?, to newCursor: SyncCursor) -> Bool {
         switch (oldCursor, newCursor) {
+        case (nil, _):
+            return false
         case (.databaseIdentity(let oldIdentity, _), .databaseIdentity(let newIdentity, _)):
             return oldIdentity != newIdentity
-        case (.rowId, .fileOffsets), (.fileOffsets, .rowId),
-             (.rowId, .databaseIdentity), (.databaseIdentity, .rowId),
-             (.fileOffsets, .databaseIdentity), (.databaseIdentity, .fileOffsets):
-            return true
-        default:
+        case (.fileGenerations(let oldGenerations), .fileGenerations(let newGenerations)):
+            return newGenerations.contains { path, newGeneration in
+                guard let oldGeneration = oldGenerations[path] else { return false }
+                return oldGeneration.generation != newGeneration.generation
+            }
+        case (.rowId, .rowId),
+             (.fileOffsets, .fileOffsets),
+             (.timestamp, .timestamp):
             return false
+        default:
+            return true
         }
     }
 
