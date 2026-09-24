@@ -12,8 +12,13 @@ private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
     var receivedCursors: [SyncCursor?] = []
     var fetchCallCount = 0
     var newCursorToReturn: SyncCursor = .rowId(1)
+    var fetchErrorOnCall: Int?
     var onFetch: (@Sendable () async -> Void)? = nil
     let supportsRecordCorrections: Bool
+
+    private enum FetchError: Error {
+        case expected
+    }
 
     init(
         sourceId: String = "mock",
@@ -38,6 +43,9 @@ private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
     func fetchIncrementalRecords(from directory: URL, since cursor: SyncCursor?) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
         fetchCallCount += 1
         receivedCursors.append(cursor)
+        if fetchErrorOnCall == fetchCallCount {
+            throw FetchError.expected
+        }
         if let onFetch {
             await onFetch()
         }
@@ -484,6 +492,93 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(mock.receivedCursors, [oldCursor, nil])
         XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0).map(\.id), ["new"])
         XCTAssertEqual(try db.fetchCursor(for: "generation_source"), mock.newCursorToReturn)
+    }
+
+    func testCutoverFetchFailurePreservesOldRecordsRollupsAndCursor() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        let oldCursor = SyncCursor.rowId(1)
+        let oldRecord = makeRecord(id: "old", sourceId: "cutover_read_failure")
+        try db.insertRecords([oldRecord], updateCursorFor: "cutover_read_failure", cursor: oldCursor)
+
+        let mock = MockSyncAdapter(sourceId: "cutover_read_failure", path: testDir)
+        mock.newCursorToReturn = .databaseIdentity("db-v2", 1)
+        mock.fetchErrorOnCall = 2
+        registry.register(mock)
+
+        let count = try await SyncCoordinator(database: db, registry: registry).syncAll()
+        XCTAssertEqual(count, 0)
+        XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0).map(\.id), [oldRecord.id])
+        XCTAssertEqual(try db.fetchCursor(for: "cutover_read_failure"), oldCursor)
+        let rollup = try XCTUnwrap(try db.fetchDailyRollups(forYear: 2026).first)
+        XCTAssertEqual(rollup.totalTokens, oldRecord.totalTokens)
+    }
+
+    func testCutoverWriteFailureRollsBackAndPreservesOldCursor() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        let oldCursor = SyncCursor.rowId(1)
+        let oldRecord = makeRecord(id: "old", sourceId: "cutover_write_failure")
+        try db.insertRecords([oldRecord], updateCursorFor: "cutover_write_failure", cursor: oldCursor)
+        // A globally colliding stable ID makes the replacement INSERT fail
+        // after the source delete. The whole transaction must roll back.
+        try db.insertRecords([makeRecord(id: "replacement", sourceId: "other_source")])
+
+        let replacement = makeRecord(id: "replacement", sourceId: "cutover_write_failure")
+        let mock = MockSyncAdapter(sourceId: "cutover_write_failure", path: testDir)
+        mock.recordsToReturn = [replacement]
+        mock.newCursorToReturn = .databaseIdentity("db-v2", 1)
+        registry.register(mock)
+
+        let count = try await SyncCoordinator(database: db, registry: registry).syncAll()
+        XCTAssertEqual(count, 0)
+        XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0).map(\.id), ["old", "replacement"])
+        XCTAssertEqual(try db.fetchCursor(for: "cutover_write_failure"), oldCursor)
+        let oldRollup = try XCTUnwrap(try db.fetchDailyRollups(forYear: 2026).first { $0.sourceId == "cutover_write_failure" })
+        XCTAssertEqual(oldRollup.totalTokens, oldRecord.totalTokens)
+    }
+
+    func testEmptyCutoverReplacesOldStateAndPublishesZeroCountNotification() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        try db.insertRecords(
+            [makeRecord(id: "old", sourceId: "empty_cutover")],
+            updateCursorFor: "empty_cutover",
+            cursor: .rowId(1)
+        )
+        let mock = MockSyncAdapter(sourceId: "empty_cutover", path: testDir)
+        mock.newCursorToReturn = .databaseIdentity("db-v2", 1)
+        registry.register(mock)
+
+        let notification = expectation(description: "empty replacement notification")
+        let observer = NotificationCenter.default.addObserver(
+            forName: .bennettUsageDataDidUpdate,
+            object: nil,
+            queue: .main
+        ) { event in
+            XCTAssertEqual(event.userInfo?["ingested"] as? Int, 0)
+            notification.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let count = try await SyncCoordinator(database: db, registry: registry).syncAll()
+        XCTAssertEqual(count, 0)
+        await fulfillment(of: [notification], timeout: 2.0)
+        XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0), [])
+        XCTAssertTrue(try db.fetchDailyRollups(forYear: 2026).isEmpty)
+        XCTAssertEqual(try db.fetchCursor(for: "empty_cutover"), .databaseIdentity("db-v2", 1))
     }
 
     func testSyncAllCutsOverFromRowIdToDatabaseIdentity() async throws {

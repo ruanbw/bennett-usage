@@ -138,6 +138,7 @@ public actor SyncCoordinator {
         // Phase 3 (actor, serial, registry order): cutover handling, pricing,
         // persistence. Cursor writes stay ordered and deterministic.
         var totalIngested = 0
+        var dataDidChange = false
         for slot in fetched {
             guard let fetch = slot else { continue }
             let adapter = fetch.adapter
@@ -148,10 +149,10 @@ public actor SyncCoordinator {
                 let finalRecords: [UnifiedTokenRecord]
                 let finalCursor: SyncCursor
                 if isCutover {
-                    try database.resetRecords(for: adapter.sourceId)
-                    let (freshRecords, freshCursor) = try await Self.fetchOffActor(adapter, from: fetch.path, since: nil)
-                    finalRecords = freshRecords
-                    finalCursor = freshCursor
+                    // Never delete the old source state before a complete fresh
+                    // snapshot has been read and priced. Persistence below swaps
+                    // records, rollups, and cursor in one transaction.
+                    (finalRecords, finalCursor) = try await Self.fetchOffActor(adapter, from: fetch.path, since: nil)
                 } else {
                     finalRecords = fetch.records
                     finalCursor = fetch.newCursor
@@ -175,20 +176,31 @@ public actor SyncCoordinator {
                 // adapters keep insert-and-ignore semantics; adapters that
                 // explicitly opt in may correct an existing stable ID.
                 var changed = 0
-                if !pricedRecords.isEmpty || finalCursor != cursor {
+                if isCutover {
+                    changed = try database.replaceSourceRecords(
+                        pricedRecords,
+                        sourceId: adapter.sourceId,
+                        cursor: finalCursor
+                    )
+                    // A valid empty snapshot is still a source replacement: it
+                    // removes old records/rollups and advances the cursor, so
+                    // consumers must refresh even though the row count is zero.
+                    dataDidChange = true
+                } else if !pricedRecords.isEmpty || finalCursor != cursor {
                     changed = try database.insertRecords(
                         pricedRecords,
                         updateCursorFor: adapter.sourceId,
                         cursor: finalCursor,
                         updateExisting: adapter.supportsRecordCorrections
                     )
+                    dataDidChange = dataDidChange || changed > 0
                 }
                 totalIngested += changed
             } catch {
                 print("Error syncing adapter \(adapter.sourceId): \(error)")
             }
         }
-        if totalIngested > 0 {
+        if dataDidChange {
             let count = totalIngested
             await MainActor.run {
                 NotificationCenter.default.post(

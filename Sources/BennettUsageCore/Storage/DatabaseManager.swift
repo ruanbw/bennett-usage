@@ -88,14 +88,16 @@ public final class DatabaseManager: @unchecked Sendable {
     /// Memoized chunk SQL by row count. A batch reuses the same one or two
     /// shapes for every chunk, so the string is joined once per shape instead of
     /// once per chunk. Only touched while `lock` is held.
-    private var insertStatementSQL: [Int: String] = [:]
+    private var insertStatementSQL: [String: String] = [:]
 
-    private func insertRecordsSQL(rowCount: Int) -> String {
-        if let memoized = insertStatementSQL[rowCount] { return memoized }
+    private func insertRecordsSQL(rowCount: Int, ignoreConflicts: Bool = true) -> String {
+        let memoKey = "\(rowCount)-\(ignoreConflicts)"
+        if let memoized = insertStatementSQL[memoKey] { return memoized }
         let boundRow = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         let values = Array(repeating: boundRow, count: rowCount).joined(separator: ", ")
-        let sql = "INSERT OR IGNORE INTO unified_token_records \(Self.insertColumnList) VALUES \(values);"
-        insertStatementSQL[rowCount] = sql
+        let conflictClause = ignoreConflicts ? "OR IGNORE " : ""
+        let sql = "INSERT \(conflictClause)INTO unified_token_records \(Self.insertColumnList) VALUES \(values);"
+        insertStatementSQL[memoKey] = sql
         return sql
     }
 
@@ -535,6 +537,139 @@ public final class DatabaseManager: @unchecked Sendable {
             throw error
         }
         return changedCount
+    }
+
+    /// Atomically replaces every record, rollup, and cursor belonging to one
+    /// adapter. Any insert, rollup, or cursor failure rolls the whole cutover
+    /// back, leaving the previously stored source state intact.
+    @discardableResult
+    public func replaceSourceRecords(
+        _ records: [UnifiedTokenRecord],
+        sourceId: String,
+        cursor: SyncCursor
+    ) throws -> Int {
+        guard records.allSatisfy({ $0.sourceId == sourceId }) else {
+            throw NSError(
+                domain: "DatabaseManager",
+                code: 36,
+                userInfo: [NSLocalizedDescriptionKey: "Replacement records must belong to source '\(sourceId)'"]
+            )
+        }
+
+        let cursorData = try JSONEncoder().encode(cursor)
+        let nowMillis = Int64(Date().timeIntervalSince1970 * 1000)
+        lock.lock(); defer { lock.unlock() }
+
+        try execute(sql: "BEGIN TRANSACTION;")
+        do {
+            try executeBound("DELETE FROM unified_token_records WHERE source_id = ?;", values: [.text(sourceId)])
+            try executeBound("DELETE FROM daily_rollups WHERE source_id = ?;", values: [.text(sourceId)])
+
+            var rollupDeltas: [RollupKey: RollupDelta] = [:]
+            var index = 0
+            while index < records.count {
+                let chunkCount = min(Self.insertChunkRows, records.count - index)
+                let chunk = Array(records[index..<(index + chunkCount)])
+                // Plain INSERT is intentional: after deleting this source, a
+                // duplicate stable ID is a cutover collision and must fail
+                // atomically rather than silently produce incomplete data.
+                let stmt = try cachedStatement(
+                    sql: insertRecordsSQL(rowCount: chunk.count, ignoreConflicts: false),
+                    errorCode: 3,
+                    description: "replacement record insert statement"
+                )
+                for (offset, record) in chunk.enumerated() {
+                    Self.bindRecord(stmt, baseParameter: Int32(offset) * Self.insertColumnCount, record)
+                }
+                guard sqlite3_step(stmt) == SQLITE_DONE else {
+                    throw NSError(
+                        domain: "DatabaseManager",
+                        code: 36,
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to replace records for '\(sourceId)': \(lastErrorMessage())"]
+                    )
+                }
+                for record in chunk {
+                    let key = RollupKey(dayKey: record.dayKey, sourceId: record.sourceId)
+                    let addition = Self.rollupDelta(for: record)
+                    var delta = rollupDeltas[key] ?? RollupDelta()
+                    delta.totalTokens += addition.totalTokens
+                    delta.inputTokens += addition.inputTokens
+                    delta.outputTokens += addition.outputTokens
+                    delta.cacheTokens += addition.cacheTokens
+                    delta.costUSD += addition.costUSD
+                    rollupDeltas[key] = delta
+                }
+                index += chunkCount
+            }
+
+            for (key, delta) in rollupDeltas {
+                try upsertRollup(key: key, delta: delta)
+            }
+
+            let cursorStmt = try cachedStatement(
+                sql: Self.cursorUpsertSQL,
+                errorCode: 5,
+                description: "cursor upsert statement"
+            )
+            sqlite3_bind_text(cursorStmt, 1, (sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            _ = cursorData.withUnsafeBytes { rawBuffer in
+                sqlite3_bind_blob(cursorStmt, 2, rawBuffer.baseAddress, Int32(rawBuffer.count), SQLITE_TRANSIENT)
+            }
+            sqlite3_bind_int64(cursorStmt, 3, nowMillis)
+            guard sqlite3_step(cursorStmt) == SQLITE_DONE else {
+                throw NSError(
+                    domain: "DatabaseManager",
+                    code: 36,
+                    userInfo: [NSLocalizedDescriptionKey: "Failed to replace cursor for '\(sourceId)': \(lastErrorMessage())"]
+                )
+            }
+
+            try execute(sql: "COMMIT;")
+            rollupsRevision += 1
+        } catch {
+            try? execute(sql: "ROLLBACK;")
+            throw error
+        }
+        return records.count
+    }
+
+    private enum BoundSQLValue {
+        case text(String)
+    }
+
+    private func executeBound(_ sql: String, values: [BoundSQLValue]) throws {
+        let stmt = try cachedStatement(sql: sql, errorCode: 36, description: "replacement statement")
+        for (offset, value) in values.enumerated() {
+            let index = Int32(offset + 1)
+            if case .text(let value) = value {
+                sqlite3_bind_text(stmt, index, (value as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            }
+        }
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw NSError(domain: "DatabaseManager", code: 36, userInfo: [NSLocalizedDescriptionKey: lastErrorMessage()])
+        }
+    }
+
+    private func upsertRollup(key: RollupKey, delta: RollupDelta) throws {
+        let stmt = try cachedStatement(
+            sql: Self.rollupUpsertSQL,
+            errorCode: 4,
+            description: "rollup upsert statement"
+        )
+        sqlite3_bind_text(stmt, 1, (key.dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, (key.sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 3, delta.totalTokens)
+        sqlite3_bind_int64(stmt, 4, delta.inputTokens)
+        sqlite3_bind_int64(stmt, 5, delta.outputTokens)
+        sqlite3_bind_int64(stmt, 6, delta.cacheTokens)
+        sqlite3_bind_double(stmt, 7, delta.costUSD)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw NSError(
+                domain: "DatabaseManager",
+                code: 36,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to replace rollup for '\(key.dayKey)'/'\(key.sourceId)': \(lastErrorMessage())"]
+            )
+        }
     }
 
     public func fetchDailyRollups(forYear year: Int) throws -> [DailyRollup] {
