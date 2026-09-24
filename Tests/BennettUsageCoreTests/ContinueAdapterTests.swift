@@ -69,7 +69,7 @@ final class ContinueAdapterTests: XCTestCase {
 
         let withIndex = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
         XCTAssertEqual(withIndex.records.count, 1)
-        XCTAssertEqual(generationEntries(withIndex.newCursor)[file.path], generationEntries(result.newCursor)[file.path])
+        XCTAssertEqual(generationEntries(withIndex.newCursor)[ContinueAdapter.canonicalPath(for: file)], generationEntries(result.newCursor)[ContinueAdapter.canonicalPath(for: file)])
     }
 
     func testCacheReadSynonymsAreAlternativesAndOversizedCacheUsageIsSkipped() async throws {
@@ -187,7 +187,7 @@ final class ContinueAdapterTests: XCTestCase {
             modifiedAt: modifiedAt
         )
         let first = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
-        let firstGeneration = try XCTUnwrap(generationEntries(first.newCursor)[file.path]).generation
+        let firstGeneration = try XCTUnwrap(generationEntries(first.newCursor)[ContinueAdapter.canonicalPath(for: file)]).generation
 
         let rewrittenHistory = firstHistory.replacingOccurrences(
             of: #""completion_tokens":2"#,
@@ -199,7 +199,7 @@ final class ContinueAdapterTests: XCTestCase {
 
         let second = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: first.newCursor)
         XCTAssertEqual(second.records.count, 2)
-        XCTAssertNotEqual(generationEntries(second.newCursor)[file.path]?.generation, firstGeneration)
+        XCTAssertNotEqual(generationEntries(second.newCursor)[ContinueAdapter.canonicalPath(for: file)]?.generation, firstGeneration)
         XCTAssertEqual(second.records[0].id, first.records[0].id)
         XCTAssertEqual(second.records[1].outputTokens, 9)
     }
@@ -215,7 +215,7 @@ final class ContinueAdapterTests: XCTestCase {
         let first = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
         XCTAssertEqual(first.records.count, 1)
         XCTAssertEqual(first.records[0].outputTokens, 5)
-        let firstGeneration = try XCTUnwrap(generationEntries(first.newCursor)[file.path]).generation
+        let firstGeneration = try XCTUnwrap(generationEntries(first.newCursor)[ContinueAdapter.canonicalPath(for: file)]).generation
 
         let rewritten = validSessionJSON(content: "same", completionTokens: 9)
         XCTAssertEqual(Data(rewritten.utf8).count, try Data(contentsOf: file).count)
@@ -233,7 +233,7 @@ final class ContinueAdapterTests: XCTestCase {
         XCTAssertEqual(second.records.count, 1)
         XCTAssertEqual(second.records[0].id, first.records[0].id)
         XCTAssertEqual(second.records[0].outputTokens, 9)
-        let secondCheckpoint = try XCTUnwrap(generationEntries(second.newCursor)[file.path])
+        let secondCheckpoint = try XCTUnwrap(generationEntries(second.newCursor)[ContinueAdapter.canonicalPath(for: file)])
         XCTAssertNotEqual(secondCheckpoint.generation, firstGeneration)
         XCTAssertEqual(secondCheckpoint.size, secondCheckpoint.offset)
     }
@@ -242,7 +242,7 @@ final class ContinueAdapterTests: XCTestCase {
         let file = try writeSession(validSessionJSON(content: "legacy"))
         let initial = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
         XCTAssertEqual(initial.records.count, 1)
-        let initialGeneration = try XCTUnwrap(generationEntries(initial.newCursor)[file.path])
+        let initialGeneration = try XCTUnwrap(generationEntries(initial.newCursor)[ContinueAdapter.canonicalPath(for: file)])
 
         let migrated = try await adapter.fetchIncrementalRecords(
             from: sessionsRoot,
@@ -251,7 +251,7 @@ final class ContinueAdapterTests: XCTestCase {
 
         XCTAssertEqual(migrated.records.count, 1)
         XCTAssertEqual(migrated.records[0].id, initial.records[0].id)
-        XCTAssertEqual(generationEntries(migrated.newCursor)[file.path], initialGeneration)
+        XCTAssertEqual(generationEntries(migrated.newCursor)[ContinueAdapter.canonicalPath(for: file)], initialGeneration)
 
         let repeated = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: migrated.newCursor)
         XCTAssertTrue(repeated.records.isEmpty)
@@ -307,8 +307,8 @@ final class ContinueAdapterTests: XCTestCase {
         XCTAssertNotEqual(second.records[1].id, first.records[2].id)
         XCTAssertEqual(second.records[1].inputTokens, 25)
         XCTAssertEqual(second.records[1].outputTokens, 7)
-        XCTAssertNotEqual(generationEntries(second.newCursor)[file.path]?.generation,
-                          generationEntries(first.newCursor)[file.path]?.generation)
+        XCTAssertNotEqual(generationEntries(second.newCursor)[ContinueAdapter.canonicalPath(for: file)]?.generation,
+                          generationEntries(first.newCursor)[ContinueAdapter.canonicalPath(for: file)]?.generation)
 
         // Coordinator cutover semantics replace the complete source snapshot.
         // In particular, old occurrence _1 must not survive beside the new _0.

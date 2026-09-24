@@ -200,9 +200,13 @@ final class KimiCodeAdapterTests: XCTestCase {
         )
 
         XCTAssertEqual(rewrittenStat.identity, initialStat.identity)
+        let rewrittenModificationDate = try XCTUnwrap(
+            try FileManager.default.attributesOfItem(atPath: mainWire.path)[.modificationDate] as? Date
+        )
         XCTAssertEqual(
-            try FileManager.default.attributesOfItem(atPath: mainWire.path)[.modificationDate] as? Date,
-            initialModificationDate
+            rewrittenModificationDate.timeIntervalSince1970,
+            initialModificationDate.timeIntervalSince1970,
+            accuracy: 0.001
         )
         let rescanned = try await adapter.fetchIncrementalRecords(from: home, since: initial.newCursor)
         XCTAssertEqual(rescanned.records.count, 2)

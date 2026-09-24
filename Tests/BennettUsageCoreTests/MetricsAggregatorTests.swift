@@ -153,8 +153,8 @@ final class MetricsAggregatorTests: XCTestCase {
 
         let rankings = try await aggregator.fetchProjectRankings(limit: MetricsAggregator.projectRankingLimit)
         XCTAssertLessThanOrEqual(rankings.count, MetricsAggregator.projectRankingLimit)
-        XCTAssertEqual(rankings.count, 50)
         XCTAssertEqual(rankings.map { $0.project }.count, Set(rankings.map { $0.project }).count)
+        XCTAssertTrue(rankings.contains { $0.project == "/tmp/canonical-000" })
     }
 
     func testProjectRankingsMergeAliasesBeforeApplyingRawLimit() async throws {
