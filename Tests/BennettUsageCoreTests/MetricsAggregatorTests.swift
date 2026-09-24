@@ -157,6 +157,53 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertEqual(rankings.map { $0.project }.count, Set(rankings.map { $0.project }).count)
     }
 
+    func testProjectRankingsMergeAliasesBeforeApplyingRawLimit() async throws {
+        let limit = MetricsAggregator.projectRankingLimit
+        let now = Date()
+        let dayKey = UnifiedTokenRecord.dayKey(for: now)
+        let aliasRecords = (0..<limit).map { index in
+            let trailingSlashes = String(repeating: "/", count: index + 1)
+            return UnifiedTokenRecord(
+                id: "alias-\(index)",
+                sourceId: "pi",
+                timestamp: now,
+                dayKey: dayKey,
+                sessionKey: "alias-session-\(index)",
+                projectFolder: "/tmp/canonical-alias" + trailingSlashes,
+                model: "m",
+                provider: nil,
+                inputTokens: 30_000 - index,
+                outputTokens: 0,
+                rawCostUSD: 1.0
+            )
+        }
+        let realProjectRecords = (0...limit).map { index in
+            UnifiedTokenRecord(
+                id: "real-\(index)",
+                sourceId: "pi",
+                timestamp: now,
+                dayKey: dayKey,
+                sessionKey: "real-session-\(index)",
+                projectFolder: String(format: "/tmp/real-project-%03d", index),
+                model: "m",
+                provider: nil,
+                inputTokens: 20_000 - index,
+                outputTokens: 0,
+                rawCostUSD: 1.0
+            )
+        }
+        try db.insertRecords(aliasRecords + realProjectRecords)
+
+        let rankings = try db.fetchProjectRankings(limit: limit)
+
+        // The 100 raw alias groups occupy the old SQL LIMIT, making the first
+        // real project raw rank 101. Canonical merge frees 99 result slots, so
+        // that project must be present in the bounded canonical Top 100.
+        XCTAssertEqual(rankings.count, limit)
+        XCTAssertTrue(rankings.contains { $0.project == "/tmp/real-project-000" })
+        XCTAssertEqual(rankings.filter { $0.project == "/tmp/canonical-alias" }.count, 1)
+    }
+
     func testAnnualSummaryAndToolDistribution() async throws {
         let r1 = UnifiedTokenRecord(id: "a1", sourceId: "pi", timestamp: Date(), dayKey: "2026-04-10", sessionKey: "s1", projectFolder: nil, model: "m", provider: nil, inputTokens: 3000, outputTokens: 2000, rawCostUSD: 0.25)
         let r2 = UnifiedTokenRecord(id: "a2", sourceId: "omp", timestamp: Date(), dayKey: "2026-05-15", sessionKey: "s2", projectFolder: nil, model: "m", provider: nil, inputTokens: 1000, outputTokens: 500, rawCostUSD: 0.05)

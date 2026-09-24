@@ -204,9 +204,11 @@ public final class DatabaseManager: @unchecked Sendable {
         -- scanned in group order, and the aggregate inputs (`total_tokens`,
         -- `cost_usd`) plus the filtered `timestamp` are covered, so
         -- fetchModelDistribution(sinceTimestamp:) / fetchProjectRankings(sinceTimestamp:)
-        -- become `SCAN ... USING COVERING INDEX` instead of a full table scan +
-        -- per-row table lookup. (A timestamp-leading variant was tried first and
-        -- was rejected by the planner: the ORDER BY on the aggregate still needs a
+        -- avoid a full table scan + per-row table lookup. Project rankings still
+        -- materialize every grouped folder spelling because canonical merging then
+        -- happens in Swift before the bounded public result is selected. (A
+        -- timestamp-leading variant was tried first and was rejected by the
+        -- planner: model distribution's ORDER BY on the aggregate still needs a
         -- TEMP B-TREE either way, so there was no reason to give up the already
         -- ordered single-column index.) Idempotent: existing databases pick these
         -- up on the next open.
@@ -962,6 +964,7 @@ public final class DatabaseManager: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
 
         let resultLimit = max(0, limit)
+        guard resultLimit > 0 else { return [] }
         var whereClauses = ["project_folder IS NOT NULL", "project_folder != ''"]
         var binds: [Any] = []
         if let sourceId = sourceId, !sourceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -985,9 +988,7 @@ public final class DatabaseManager: @unchecked Sendable {
         SELECT project_folder, SUM(total_tokens) AS sum_tokens, SUM(cost_usd) AS sum_cost
         FROM unified_token_records
         WHERE \(whereClauses.joined(separator: " AND "))
-        GROUP BY project_folder
-        ORDER BY sum_tokens DESC, sum_cost DESC, project_folder ASC
-        LIMIT ?;
+        GROUP BY project_folder;
         """
         let stmt = try cachedStatement(sql: sql, errorCode: 13, description: "project rankings statement")
 
@@ -1000,8 +1001,6 @@ public final class DatabaseManager: @unchecked Sendable {
             }
             bindIndex += 1
         }
-        sqlite3_bind_int64(stmt, bindIndex, Int64(resultLimit))
-
         var result: [(project: String, totalTokens: Int, costUSD: Double)] = []
         while true {
             let step = sqlite3_step(stmt)
@@ -1016,9 +1015,10 @@ public final class DatabaseManager: @unchecked Sendable {
                 throw NSError(domain: "DatabaseManager", code: 14, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch project rankings: \(lastErrorMessage())"])
             }
         }
-        // Merge canonical duplicates (trailing-slash / hyphen-split history)
-        // so counts stay stable across time ranges. The SQL LIMIT bounds the
-        // scan; merging only shrinks the list, then re-sorts and re-applies it.
+        // Canonicalization happens in Swift and an unbounded number of stored
+        // aliases may collapse to one project. Apply the bound only after all
+        // grouped raw candidates are merged, otherwise raw aliases can crowd a
+        // genuinely top-ranked canonical project out of the result.
         var merged: [String: (tokens: Int, cost: Double)] = [:]
         merged.reserveCapacity(result.count)
         for row in result {
