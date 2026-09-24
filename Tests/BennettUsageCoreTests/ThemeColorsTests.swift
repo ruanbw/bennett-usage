@@ -29,14 +29,14 @@ final class ThemeColorsTests: XCTestCase {
         }
     }
 
-    func testAllFifteenAgentsHaveDistinctBrandColors() {
+    func testAllSeventeenAgentsHaveDistinctBrandColors() {
         let agentIds = [
             "claude", "cursor", "codex", "gemini", "copilot",
             "trae", "dsh", "pi", "omp", "cline", "roo", "qwen",
-            "opencode", "antigravity", "continue", "goose"
+            "opencode", "antigravity", "continue", "goose", "crush"
         ]
 
-        XCTAssertEqual(agentIds.count, 15)
+        XCTAssertEqual(agentIds.count, 17)
         for agentId in agentIds {
             let color = AppTheme.Agent.knownColor(for: agentId)
             XCTAssertNotNil(color, "Missing color for agent \(agentId)")
@@ -45,7 +45,7 @@ final class ThemeColorsTests: XCTestCase {
 
         // Palette lookup via ChartPalette should return exact colors
         let paletteColors = ChartPalette.shared.colors(for: agentIds)
-        XCTAssertEqual(paletteColors.count, 15)
+        XCTAssertEqual(paletteColors.count, 17)
         for agentId in agentIds {
             XCTAssertNotNil(paletteColors[agentId])
         }

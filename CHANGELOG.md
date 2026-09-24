@@ -6,6 +6,9 @@
 
 - **Continue CLI**：解析 `~/.continue/sessions/<session UUID>.json` 中 `history[i].message.usage` 的逐条 assistant 用量；支持绝对路径 `CONTINUE_GLOBAL_DIR` 覆盖，忽略会话索引 `sessions.json`，并按文件修改时间、文件大小和文件身份维护增量游标。会话文件重写时使用不含 usage 的消息语义哈希作为稳定 ID，避免 usage 后补全或重复扫描造成重复消费。
 - **Goose**：新增只读 SQLite `usage_ledger` 适配器，支持 macOS 默认路径与绝对 `GOOSE_PATH_ROOT`；按数据库 identity + ledger row id 增量同步，schema 不兼容时安全跳过；忽略 `carried_forward`，用每会话 deterministic synthetic baseline 保留累计差额，避免重复计费。
+- **Crush**：从 `CRUSH_GLOBAL_DATA` / XDG / macOS 默认全局目录读取 `projects.json`，按项目枚举 `data_dir/crush.db`。SQLite 以只读、全互斥、`query_only` 和 busy timeout 打开，不执行迁移或修改 WAL。
+- 默认仅统计顶层 session 的累计 `prompt_tokens`、`completion_tokens` 与原始 `cost`；首次扫描输出全量快照，后续仅输出非负增长，同秒累计变化也通过内容指纹保持幂等。累计值重置或数据库 identity 改变时进入新 generation / 既有 databaseIdentity cutover，绝不输出负 token 或负 cost，reported zero cost 原样保留。
+- `projects.json` 中仍存在的项目数据目录会作为 auxiliary watch roots；项目路径用于映射排行，混合消息模型的 session 统一使用稳定的 `crush` 模型标识。
 
 ## v1.4.0 — 2026-09-21
 

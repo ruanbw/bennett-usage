@@ -275,6 +275,9 @@ public enum AppTheme {
         // 16. Goose: Golden Yellow
         public static let goose = Color.dynamic(lightHex: "#CA8A04", darkHex: "#FDE047")
 
+        // 17. Crush: Charm Magenta
+        public static let crush = Color.dynamic(lightHex: "#E34D8A", darkHex: "#F472B6")
+
         /// Lookup curated color by agent source ID.
         public static func knownColor(for id: String) -> Color? {
             switch id.lowercased() {
@@ -294,6 +297,7 @@ public enum AppTheme {
             case "antigravity": return antigravity
             case "continue": return `continue`
             case "goose": return goose
+            case "crush": return crush
             default: return nil
             }
         }
@@ -315,7 +319,8 @@ public enum AppTheme {
             "opencode": opencode,
             "antigravity": antigravity,
             "continue": `continue`,
-            "goose": goose
+            "goose": goose,
+            "crush": crush
         ]
 
         /// Infers agent brand color for arbitrary model names (e.g. claude-3-5-sonnet -> claude).

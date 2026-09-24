@@ -369,6 +369,7 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertTrue(ids.contains("roo"))
         XCTAssertTrue(ids.contains("cline"))
         XCTAssertTrue(ids.contains("qwen"))
+        XCTAssertTrue(ids.contains("crush"))
         XCTAssertTrue(ids.contains("copilot"))
         XCTAssertTrue(ids.contains("cursor"))
         XCTAssertTrue(ids.contains("trae"))

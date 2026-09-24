@@ -37,7 +37,8 @@ public struct AgentFilterBarView: View {
         "cursor": "Cursor",
         "trae": "Trae",
         "dsh": "DSH Harness",
-        "goose": "Goose"
+        "goose": "Goose",
+        "crush": "Crush"
     ]
 
     /// Every agent id this app can record.

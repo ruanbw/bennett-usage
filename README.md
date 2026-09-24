@@ -21,7 +21,7 @@
 
 ---
 
-A macOS menu bar app that aggregates token usage across **16 AI coding tools**: Claude Code, OpenAI Codex, Continue CLI, Gemini CLI, Goose, Qwen Code, OpenCode, Roo Code / Cline / Kilo (VS Code extensions), Cline (desktop & CLI), DSH Harness, Oh My Pi, Pi Agent, and Antigravity. Cursor, GitHub Copilot, and Trae are detected as installed (they bill in the cloud, so token counts need an API).
+A macOS menu bar app that aggregates token usage across **17 AI coding tools**: Claude Code, OpenAI Codex, Continue CLI, Gemini CLI, Goose, Crush, Qwen Code, OpenCode, Roo Code / Cline / Kilo (VS Code extensions), Cline (desktop & CLI), DSH Harness, Oh My Pi, Pi Agent, and Antigravity. Cursor, GitHub Copilot, and Trae are detected as installed (they bill in the cloud, so token counts need an API).
 
 Everything is parsed from local session stores — no API keys, no accounts, no data leaves your Mac.
 
@@ -33,7 +33,7 @@ Everything is parsed from local session stores — no API keys, no accounts, no 
 - **Dashboard** — 24 hours / today / 7 days / 30 days / past year / by year. Hourly token trend stacked by model (bar or line), spend share by tool and by model, annual heatmap (calendar or monthly trend), project leaderboard, and cache hit statistics.
 - **Settings** — General (language, refresh interval, automatic update checks), Agents (installed or not, rescan now), Pricing & FX (USD / CNY, custom rate), Data & Storage (database location, reset), About (check for updates).
 - **Update checks** — compares against GitHub Releases, automatic (once a day, can be turned off) or manual. New versions surface in the menu bar icon and popover, with the DMG for your architecture and an option to skip a version.
-- **16 data sources** — local session logs parsed directly. No API keys, plain SQLite storage, FSEvents file watching for automatic sync.
+- **17 data sources** — local session logs parsed directly. No API keys, plain SQLite storage, FSEvents file watching for automatic sync.
 - **English & Simplified Chinese** — or follow the system language.
 
 ![Menu bar popover](docs/screenshots/popover.png)
@@ -77,6 +77,7 @@ Any Mac can cross-compile both slices, so an Intel host still produces the arm64
 | Roo Code · Cline · Kilo (VS Code) | VS Code `globalStorage/*/tasks` | `api_conversation_history.json` |
 | Cline (desktop / CLI) | `~/.cline/data/sessions` | per-message assistant `metrics` in `messages.json`; override with `CLINE_DIR` / `CLINE_DATA_DIR` / `CLINE_SESSION_DATA_DIR` |
 | DSH Harness | `~/.dsh/sessions` (override with `DSH_HOME`) | `session.v3.jsonl.zstd`, falls back to projcache without zstd |
+| Crush | `~/Library/Application Support/crush` (override with `CRUSH_GLOBAL_DATA`; XDG fallback supported) | reads registered `projects.json` entries and each `data_dir/crush.db` read-only; cumulative top-level session deltas |
 | Oh My Pi | `~/.omp/agent/sessions` | also reads `~/.omp/stats.db` |
 | Pi Agent | `~/.pi/agent/sessions` | |
 | Antigravity | `~/.gemini/antigravity/conversations` | |

@@ -19,7 +19,8 @@ public enum AdapterCatalog {
             CursorAdapter(),
             TraeAdapter(),
             DshAdapter(),
-            GooseAdapter()
+            GooseAdapter(),
+            CrushAdapter()
         ]
     }
 }

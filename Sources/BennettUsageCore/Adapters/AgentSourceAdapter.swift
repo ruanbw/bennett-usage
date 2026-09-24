@@ -34,6 +34,7 @@ extension AgentSourceAdapter {
         case "trae": return "~/.trae"
         case "dsh": return "~/.dsh"
         case "goose": return "~/Library/Application Support/Block/goose/sessions/sessions.db"
+        case "crush": return "~/Library/Application Support/crush"
         default: return ""
         }
     }
@@ -85,6 +86,10 @@ extension AgentSourceAdapter {
             // Watch the sessions directory containing sessions.db, including
             // WAL/SHM lifecycle events, while Goose writes the canonical store.
             return GooseAdapter.sessionsRoot().path
+        case "crush":
+            // projects.json is the registry; each registered data_dir is added
+            // as an auxiliary watch root by the adapter.
+            return CrushAdapter.resolveGlobalRoot().path
         default:
             return nil
         }
