@@ -21,7 +21,7 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
 
     private static let requiredSchema: [String: Set<String>] = [
         "sessions": [
-            "id", "provider_name",
+            "id", "provider_name", "parent_session_id",
             "accumulated_input_tokens", "accumulated_output_tokens",
             "accumulated_total_tokens", "accumulated_cache_read_tokens",
             "accumulated_cache_write_tokens", "accumulated_cost"
@@ -86,8 +86,8 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
         let database = try Self.openReadOnlyDatabase(at: databaseURL)
         defer { sqlite3_close(database) }
 
-        let schemaFingerprint = try Self.validateSchemaAndFingerprint(database)
-        let identity = "\(Self.canonicalFileResourceIdentifier(databaseURL))|\(schemaFingerprint)"
+        let schema = try Self.validateSchemaAndFingerprint(database)
+        let identity = "\(Self.canonicalFileResourceIdentifier(databaseURL))|\(schema.fingerprint)"
 
         var startAfter: Int64 = 0
         var includeBaselines = true
@@ -112,7 +112,7 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
             after: startAfter)
         if includeBaselines {
             records.insert(
-                contentsOf: try Self.fetchSyntheticBaselines(database, identity: identity),
+                contentsOf: try Self.fetchSyntheticBaselines(database, identity: identity, schema: schema),
                 at: 0
             )
         }
@@ -147,8 +147,17 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
         return database
     }
 
-    private static func validateSchemaAndFingerprint(_ database: OpaquePointer) throws -> String {
+    private struct SchemaInfo {
+        let fingerprint: String
+        let hasParentSessionID: Bool
+        let hasCreatedAt: Bool
+        let hasUpdatedAt: Bool
+    }
+
+    private static func validateSchemaAndFingerprint(_ database: OpaquePointer) throws -> SchemaInfo {
         var signature = ""
+        var sessionColumns: Set<String> = []
+        let optionalSessionColumns: Set<String> = ["created_at", "updated_at"]
         for table in Self.requiredSchema.keys.sorted() {
             let rows = try query("PRAGMA table_xinfo(\(table));", on: database)
             var columns: Set<String> = []
@@ -161,7 +170,14 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
                     string(row[3]), row[4] ?? "", string(row[5])
                 ])
             }
-            let missing = Self.requiredSchema[table]!.subtracting(columns)
+            if table == "sessions" { sessionColumns = columns }
+            // parent_session_id was added after the first Goose schema. It is
+            // part of the canonical schema, but older databases remain valid;
+            // the baseline path treats every legacy session as a root.
+            let allowedMissing = table == "sessions"
+                ? Set(["parent_session_id"]).union(optionalSessionColumns)
+                : []
+            let missing = Self.requiredSchema[table]!.subtracting(columns).subtracting(allowedMissing)
             guard missing.isEmpty else {
                 throw adapterError(
                     code: 3,
@@ -172,7 +188,12 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
         }
 
         let digest = SHA256.hash(data: Data(signature.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        return SchemaInfo(
+            fingerprint: digest.map { String(format: "%02x", $0) }.joined(),
+            hasParentSessionID: sessionColumns.contains("parent_session_id"),
+            hasCreatedAt: sessionColumns.contains("created_at"),
+            hasUpdatedAt: sessionColumns.contains("updated_at")
+        )
     }
 
     private static func canonicalFileResourceIdentifier(_ url: URL) -> String {
@@ -203,8 +224,8 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
     ) throws -> [UnifiedTokenRecord] {
         let sql = """
         SELECT l.id, l.session_id, l.created_timestamp, l.model,
-               l.input_tokens, l.output_tokens, l.cache_read_tokens,
-               l.cache_write_tokens, l.cost, s.provider_name
+               l.input_tokens, l.output_tokens, l.total_tokens,
+               l.cache_read_tokens, l.cache_write_tokens, l.cost, s.provider_name
         FROM usage_ledger AS l
         LEFT JOIN sessions AS s ON s.id = l.session_id
         WHERE l.id > ? AND COALESCE(l.cost_source, '') != 'carried_forward'
@@ -227,13 +248,35 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
             let sessionId = columnText(statement, 1) ?? ""
             let timestamp = sqlite3_column_int64(statement, 2)
             let model = nonEmpty(columnText(statement, 3)) ?? "unknown"
-            let input = sqlite3_column_int64(statement, 4)
-            let output = sqlite3_column_int64(statement, 5)
-            let cacheRead = sqlite3_column_int64(statement, 6)
-            let cacheWrite = sqlite3_column_int64(statement, 7)
-            let cost: Double? = sqlite3_column_type(statement, 8) == SQLITE_NULL
-                ? nil : sqlite3_column_double(statement, 8)
-            let provider = nonEmpty(columnText(statement, 9))
+            let input: Int64? = sqlite3_column_type(statement, 4) == SQLITE_NULL
+                ? nil : sqlite3_column_int64(statement, 4)
+            let output: Int64? = sqlite3_column_type(statement, 5) == SQLITE_NULL
+                ? nil : sqlite3_column_int64(statement, 5)
+            let total: Int64? = sqlite3_column_type(statement, 6) == SQLITE_NULL
+                ? nil : sqlite3_column_int64(statement, 6)
+            let cacheRead: Int64? = sqlite3_column_type(statement, 7) == SQLITE_NULL
+                ? nil : sqlite3_column_int64(statement, 7)
+            let cacheWrite: Int64? = sqlite3_column_type(statement, 8) == SQLITE_NULL
+                ? nil : sqlite3_column_int64(statement, 8)
+            // A NULL token column means unknown, not zero. Do not create a
+            // synthetic zero-token ledger row when every usage field is NULL.
+            guard input != nil || output != nil || total != nil || cacheRead != nil || cacheWrite != nil else { continue }
+            let cost: Double? = sqlite3_column_type(statement, 9) == SQLITE_NULL
+                ? nil : sqlite3_column_double(statement, 9)
+            let provider = nonEmpty(columnText(statement, 10))
+            let knownInput = input ?? 0
+            let knownOutput = output ?? 0
+            let knownCacheRead = cacheRead ?? 0
+            let knownCacheWrite = cacheWrite ?? 0
+            // If Goose supplied only a total, retain that known usage rather
+            // than silently turning it into an empty record. Component NULLs
+            // remain zero, while available components are used as-is.
+            let freshInput: Int64
+            if input == nil && output == nil && cacheRead == nil && cacheWrite == nil {
+                freshInput = max(0, total ?? 0)
+            } else {
+                freshInput = max(0, knownInput - knownCacheRead - knownCacheWrite)
+            }
 
             records.append(UnifiedTokenRecord(
                 id: "goose|\(identity)|ledger|\(ledgerId)",
@@ -244,81 +287,172 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
                 projectFolder: nil,
                 model: model,
                 provider: provider,
-                inputTokens: Int(clamping: max(0, input - cacheRead - cacheWrite)),
-                outputTokens: Int(clamping: max(0, output)),
-                cacheReadTokens: Int(clamping: max(0, cacheRead)),
-                cacheWriteTokens: Int(clamping: max(0, cacheWrite)),
+                inputTokens: Int(clamping: freshInput),
+                outputTokens: Int(clamping: max(0, knownOutput)),
+                cacheReadTokens: Int(clamping: max(0, knownCacheRead)),
+                cacheWriteTokens: Int(clamping: max(0, knownCacheWrite)),
                 rawCostUSD: cost
             ))
         }
         return records
     }
 
+    private struct OrdinaryUsage {
+        var input: Int64 = 0
+        var output: Int64 = 0
+        var total: Int64 = 0
+        var cacheRead: Int64 = 0
+        var cacheWrite: Int64 = 0
+        var cost: Double = 0
+        var timestamp: Int64?
+    }
+
+    private struct SessionUsage {
+        let id: String
+        let parentID: String?
+        let provider: String?
+        let accumulatedInput: Int64
+        let accumulatedOutput: Int64
+        let accumulatedTotal: Int64
+        let accumulatedCacheRead: Int64
+        let accumulatedCacheWrite: Int64
+        let accumulatedCost: Double
+        let createdAt: Int64?
+        let updatedAt: Int64?
+        var ordinary: OrdinaryUsage
+    }
+
+    private static let safeBaselineTimestamp = Date(timeIntervalSinceReferenceDate: 0)
+
     private static func fetchSyntheticBaselines(
         _ database: OpaquePointer,
-        identity: String
+        identity: String,
+        schema: SchemaInfo
     ) throws -> [UnifiedTokenRecord] {
-        let sql = """
-        SELECT s.id, s.provider_name,
+        let parentExpression = schema.hasParentSessionID ? "s.parent_session_id" : "NULL"
+        let createdExpression = schema.hasCreatedAt ? "s.created_at" : "NULL"
+        let updatedExpression = schema.hasUpdatedAt ? "s.updated_at" : "NULL"
+        let sessionSQL = """
+        SELECT s.id, \(parentExpression), s.provider_name,
                COALESCE(s.accumulated_input_tokens, 0),
                COALESCE(s.accumulated_output_tokens, 0),
                COALESCE(s.accumulated_total_tokens, 0),
                COALESCE(s.accumulated_cache_read_tokens, 0),
                COALESCE(s.accumulated_cache_write_tokens, 0),
                COALESCE(s.accumulated_cost, 0),
-               COALESCE(SUM(CASE WHEN COALESCE(l.cost_source, '') != 'carried_forward'
-                                THEN COALESCE(l.input_tokens, 0) ELSE 0 END), 0),
-               COALESCE(SUM(CASE WHEN COALESCE(l.cost_source, '') != 'carried_forward'
-                                THEN COALESCE(l.output_tokens, 0) ELSE 0 END), 0),
-               COALESCE(SUM(CASE WHEN COALESCE(l.cost_source, '') != 'carried_forward'
-                                THEN COALESCE(l.total_tokens, 0) ELSE 0 END), 0),
-               COALESCE(SUM(CASE WHEN COALESCE(l.cost_source, '') != 'carried_forward'
-                                THEN COALESCE(l.cache_read_tokens, 0) ELSE 0 END), 0),
-               COALESCE(SUM(CASE WHEN COALESCE(l.cost_source, '') != 'carried_forward'
-                                THEN COALESCE(l.cache_write_tokens, 0) ELSE 0 END), 0),
-               COALESCE(SUM(CASE WHEN COALESCE(l.cost_source, '') != 'carried_forward'
-                                THEN COALESCE(l.cost, 0) ELSE 0 END), 0),
-               MIN(CASE WHEN COALESCE(l.cost_source, '') != 'carried_forward'
-                        THEN l.created_timestamp END)
+               \(createdExpression), \(updatedExpression)
         FROM sessions AS s
-        LEFT JOIN usage_ledger AS l ON l.session_id = s.id
-        GROUP BY s.id
         ORDER BY s.id ASC;
         """
-        let rows = try query(sql, on: database)
+        let sessionRows = try query(sessionSQL, on: database)
+        let ledgerSQL = """
+        SELECT session_id,
+               COALESCE(SUM(CASE WHEN \(Self.hasAnyLedgerUsage)
+                                THEN COALESCE(input_tokens, 0) ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN \(Self.hasAnyLedgerUsage)
+                                THEN COALESCE(output_tokens, 0) ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN \(Self.hasAnyLedgerUsage)
+                                THEN CASE WHEN total_tokens IS NOT NULL
+                                          THEN MAX(total_tokens, 0)
+                                          ELSE MAX(COALESCE(input_tokens, 0)
+                                                   - COALESCE(cache_read_tokens, 0)
+                                                   - COALESCE(cache_write_tokens, 0), 0)
+                                               + COALESCE(output_tokens, 0)
+                                               + COALESCE(cache_read_tokens, 0)
+                                               + COALESCE(cache_write_tokens, 0) END
+                                ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN \(Self.hasAnyLedgerUsage)
+                                THEN COALESCE(cache_read_tokens, 0) ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN \(Self.hasAnyLedgerUsage)
+                                THEN COALESCE(cache_write_tokens, 0) ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN \(Self.hasAnyLedgerUsage)
+                                THEN COALESCE(cost, 0) ELSE 0 END), 0),
+               MIN(CASE WHEN \(Self.hasAnyLedgerUsage) THEN created_timestamp END)
+        FROM usage_ledger
+        WHERE COALESCE(cost_source, '') != 'carried_forward'
+        GROUP BY session_id;
+        """
+        let ledgerRows = try query(ledgerSQL, on: database)
+        var ordinaryBySession: [String: OrdinaryUsage] = [:]
+        for row in ledgerRows {
+            guard let sessionID = row[0], !sessionID.isEmpty else { continue }
+            ordinaryBySession[sessionID] = OrdinaryUsage(
+                input: int64(row[1]), output: int64(row[2]), total: int64(row[3]),
+                cacheRead: int64(row[4]), cacheWrite: int64(row[5]), cost: double(row[6]),
+                timestamp: positiveInt64(row[7])
+            )
+        }
+
+        var sessions: [String: SessionUsage] = [:]
+        for row in sessionRows {
+            guard let id = row[0], !id.isEmpty else { continue }
+            sessions[id] = SessionUsage(
+                id: id, parentID: nonEmpty(row[1]), provider: nonEmpty(row[2]),
+                accumulatedInput: int64(row[3]), accumulatedOutput: int64(row[4]),
+                accumulatedTotal: int64(row[5]), accumulatedCacheRead: int64(row[6]),
+                accumulatedCacheWrite: int64(row[7]), accumulatedCost: double(row[8]),
+                createdAt: positiveInt64(row[9]), updatedAt: positiveInt64(row[10]),
+                ordinary: ordinaryBySession[id] ?? OrdinaryUsage()
+            )
+        }
+        var children: [String: [SessionUsage]] = [:]
+        for session in sessions.values {
+            if let parentID = session.parentID, sessions[parentID] != nil {
+                children[parentID, default: []].append(session)
+            }
+        }
+        for key in children.keys { children[key]?.sort { $0.id < $1.id } }
+        var subtreeOrdinary: [String: OrdinaryUsage] = [:]
+        var visited: Set<String> = []
+        func descendants(_ id: String, path: Set<String> = []) -> [SessionUsage] {
+            guard !path.contains(id) else { return [] }
+            let nextPath = path.union([id])
+            var result: [SessionUsage] = []
+            for child in children[id, default: []] where !nextPath.contains(child.id) {
+                result.append(child)
+                result.append(contentsOf: descendants(child.id, path: nextPath))
+            }
+            return result
+        }
+        func subtreeUsage(_ id: String) -> OrdinaryUsage {
+            if let cached = subtreeOrdinary[id] { return cached }
+            if visited.contains(id) { return sessions[id]!.ordinary }
+            visited.insert(id)
+            var value = sessions[id]!.ordinary
+            for child in children[id, default: []] {
+                let childValue = subtreeUsage(child.id)
+                value.input += childValue.input
+                value.output += childValue.output
+                value.total += childValue.total
+                value.cacheRead += childValue.cacheRead
+                value.cacheWrite += childValue.cacheWrite
+                value.cost += childValue.cost
+            }
+            subtreeOrdinary[id] = value
+            return value
+        }
+        for id in sessions.keys { _ = subtreeUsage(id) }
+        let allDescendants = Dictionary(uniqueKeysWithValues: sessions.keys.map { ($0, descendants($0)) })
         var records: [UnifiedTokenRecord] = []
-
-        for row in rows {
-            let sessionId = row[0] ?? ""
-            let provider = nonEmpty(row[1])
-            let accumulatedOutput = int64(row[3])
-            let accumulatedTotal = int64(row[4])
-            let accumulatedCacheRead = int64(row[5])
-            let accumulatedCacheWrite = int64(row[6])
-            let accumulatedCost = double(row[7])
-            let ordinaryOutput = int64(row[9])
-            let ordinaryTotal = int64(row[10])
-            let ordinaryCacheRead = int64(row[11])
-            let ordinaryCacheWrite = int64(row[12])
-            let ordinaryCost = double(row[13])
-            let timestamp = int64(row[14])
-
-            // The accumulated total is the authoritative zero-ledger gap. Split
-            // it using only real component differences; the remaining amount
-            // is fresh input. This also handles old databases where component
-            // columns are absent or inconsistent but the total is trustworthy.
-            let totalDelta = max(0, accumulatedTotal - ordinaryTotal)
+        for id in sessions.keys.sorted() {
+            let session = sessions[id]!
+            let coveredByAncestor = ancestors(of: session, sessions: sessions).contains { $0.accumulatedTotal >= session.accumulatedTotal }
+            if coveredByAncestor { continue }
+            let descendants = allDescendants[id, default: []]
+            let includesDescendants = descendants.allSatisfy { $0.accumulatedTotal <= session.accumulatedTotal }
+            let denominator = includesDescendants ? (subtreeOrdinary[id] ?? session.ordinary) : session.ordinary
+            let totalDelta = max(0, session.accumulatedTotal - denominator.total)
             var remaining = totalDelta
-            let cacheReadDelta = min(max(0, accumulatedCacheRead - ordinaryCacheRead), remaining)
+            let cacheReadDelta = min(max(0, session.accumulatedCacheRead - denominator.cacheRead), remaining)
             remaining -= cacheReadDelta
-            let cacheWriteDelta = min(max(0, accumulatedCacheWrite - ordinaryCacheWrite), remaining)
+            let cacheWriteDelta = min(max(0, session.accumulatedCacheWrite - denominator.cacheWrite), remaining)
             remaining -= cacheWriteDelta
-            let outputDelta = min(max(0, accumulatedOutput - ordinaryOutput), remaining)
-            let freshInputDelta = remaining - outputDelta
-            let costDelta = max(0, accumulatedCost - ordinaryCost)
+            let outputDelta = min(max(0, session.accumulatedOutput - denominator.output), remaining)
+            let inputDelta = remaining - outputDelta
+            let costDelta = max(0, session.accumulatedCost - denominator.cost)
             guard totalDelta > 0 || costDelta > 0 else { continue }
-
-            let encodedSession = Data(sessionId.utf8)
+            let timestamp = ordinaryTimestamp(for: session)
+            let encodedSession = Data(session.id.utf8)
                 .base64EncodedString()
                 .replacingOccurrences(of: "+", with: "-")
                 .replacingOccurrences(of: "/", with: "_")
@@ -326,13 +460,13 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
             records.append(UnifiedTokenRecord(
                 id: "goose|\(identity)|baseline|\(encodedSession)",
                 sourceId: "goose",
-                timestamp: Date(timeIntervalSince1970: Double(timestamp)),
+                timestamp: timestamp,
                 timestampSource: .event,
-                sessionKey: sessionId,
+                sessionKey: session.id,
                 projectFolder: nil,
                 model: "goose",
-                provider: provider,
-                inputTokens: Int(clamping: freshInputDelta),
+                provider: session.provider,
+                inputTokens: Int(clamping: inputDelta),
                 outputTokens: Int(clamping: outputDelta),
                 cacheReadTokens: Int(clamping: cacheReadDelta),
                 cacheWriteTokens: Int(clamping: cacheWriteDelta),
@@ -340,6 +474,26 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
             ))
         }
         return records
+    }
+
+    private static let hasAnyLedgerUsage =
+        "(input_tokens IS NOT NULL OR output_tokens IS NOT NULL OR total_tokens IS NOT NULL OR cache_read_tokens IS NOT NULL OR cache_write_tokens IS NOT NULL)"
+
+    private static func ancestors(of session: SessionUsage, sessions: [String: SessionUsage]) -> [SessionUsage] {
+        var result: [SessionUsage] = []
+        var parent = session.parentID.flatMap { sessions[$0] }
+        var visited: Set<String> = [session.id]
+        while let current = parent, !visited.contains(current.id) {
+            visited.insert(current.id); result.append(current); parent = current.parentID.flatMap { sessions[$0] }
+        }
+        return result
+    }
+
+    private static func ordinaryTimestamp(for session: SessionUsage) -> Date {
+        if let timestamp = session.ordinary.timestamp { return Date(timeIntervalSince1970: Double(timestamp)) }
+        if let created = session.createdAt { return Date(timeIntervalSince1970: Double(created)) }
+        if let updated = session.updatedAt { return Date(timeIntervalSince1970: Double(updated)) }
+        return safeBaselineTimestamp
     }
 
     // MARK: - SQLite value helpers
@@ -391,6 +545,10 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
     }
 
     private static func int64(_ value: String?) -> Int64 { Int64(value ?? "") ?? 0 }
+    private static func positiveInt64(_ value: String?) -> Int64? {
+        guard let value, let number = Int64(value), number > 0 else { return nil }
+        return number
+    }
     private static func double(_ value: String?) -> Double { Double(value ?? "") ?? 0 }
     private static func string(_ value: String?) -> String { value ?? "" }
 

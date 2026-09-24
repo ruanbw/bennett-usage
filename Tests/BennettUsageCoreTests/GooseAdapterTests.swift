@@ -87,6 +87,95 @@ final class GooseAdapterTests: XCTestCase {
         XCTAssertEqual(ordinary.totalTokens, 30)
     }
 
+    func testParentChildTreeDoesNotDoubleImportChildUsage() async throws {
+        let databaseURL = try makeFixture()
+        try execute("""
+        INSERT INTO sessions
+          (id, parent_session_id, provider_name, accumulated_input_tokens, accumulated_output_tokens,
+           accumulated_total_tokens, accumulated_cache_read_tokens, accumulated_cache_write_tokens,
+           accumulated_cost, created_at, updated_at)
+        VALUES
+          ('child', 's1', 'openai', 20, 0, 20, 0, 0, 0.01, 1780000100, 1780000100),
+          ('grandchild', 'child', 'openai', 10, 0, 10, 0, 0, 0.005, 1780000200, 1780000200);
+        INSERT INTO usage_ledger
+          (id, session_id, created_timestamp, model, input_tokens, output_tokens,
+           total_tokens, cache_read_tokens, cache_write_tokens, cost, cost_source, is_compaction)
+        VALUES
+          (2, 'child', 1780000100, 'child-model', 20, 0, 20, 0, 0, 0.01, 'estimated', 0),
+          (3, 'grandchild', 1780000200, 'grandchild-model', 10, 0, 10, 0, 0, 0.005, 'estimated', 0);
+        UPDATE sessions SET accumulated_input_tokens = 110,
+                            accumulated_output_tokens = 0,
+                            accumulated_total_tokens = 100,
+                            accumulated_cost = 0.03
+        WHERE id = 's1';
+        """, on: databaseURL)
+
+        let result = try await GooseAdapter().fetchIncrementalRecords(from: databaseURL, since: nil)
+        let baselines = result.records.filter { $0.model == "goose" }
+        XCTAssertEqual(baselines.count, 1)
+        XCTAssertEqual(baselines.first?.sessionKey, "s1")
+        XCTAssertEqual(result.records.filter { $0.model == "child-model" }.first?.sessionKey, "child")
+        XCTAssertEqual(result.records.filter { $0.model == "grandchild-model" }.first?.sessionKey, "grandchild")
+        XCTAssertEqual(result.records.reduce(0) { $0 + $1.totalTokens }, 60)
+    }
+
+    func testUnknownAndPartiallyNullLedgerUsage() async throws {
+        let databaseURL = try makeFixture()
+        try execute("""
+        INSERT INTO usage_ledger
+          (id, session_id, created_timestamp, model, input_tokens, output_tokens,
+           total_tokens, cache_read_tokens, cache_write_tokens, cost, cost_source, is_compaction)
+        VALUES
+          (2, 's1', 1780000010, 'unknown-model', NULL, NULL, NULL, NULL, NULL, 0.001, 'estimated', 0),
+          (3, 's1', 1780000020, 'partial-model', NULL, 5, 5, NULL, NULL, 0.002, 'estimated', 0);
+        UPDATE sessions SET accumulated_input_tokens = 35,
+                            accumulated_output_tokens = 10,
+                            accumulated_total_tokens = 40,
+                            accumulated_cost = 0.03;
+        """, on: databaseURL)
+
+        let result = try await GooseAdapter().fetchIncrementalRecords(from: databaseURL, since: nil)
+        XCTAssertEqual(result.records.filter { $0.model == "unknown-model" }.count, 0)
+        let partial = try XCTUnwrap(result.records.first(where: { $0.model == "partial-model" }))
+        XCTAssertEqual(partial.inputTokens, 0)
+        XCTAssertEqual(partial.outputTokens, 5)
+        XCTAssertEqual(partial.totalTokens, 5)
+    }
+
+    func testLegacyBaselineUsesSessionDateFallback() async throws {
+        let databaseURL = try makeFixture()
+        try execute("""
+        DELETE FROM usage_ledger;
+        UPDATE sessions SET accumulated_input_tokens = 10,
+                            accumulated_output_tokens = 0,
+                            accumulated_total_tokens = 10,
+                            accumulated_cost = 0.01,
+                            created_at = NULL,
+                            updated_at = 1780000999;
+        """, on: databaseURL)
+
+        let result = try await GooseAdapter().fetchIncrementalRecords(from: databaseURL, since: nil)
+        let baseline = try XCTUnwrap(result.records.first(where: { $0.model == "goose" }))
+        XCTAssertEqual(baseline.timestamp, Date(timeIntervalSince1970: 1_780_000_999))
+        XCTAssertNotEqual(baseline.timestamp, Date(timeIntervalSince1970: 0))
+    }
+
+    func testLegacySchemaWithoutParentOrSessionDatesFallsBackSafely() async throws {
+        let databaseURL = tempDirectory.appendingPathComponent("legacy.db")
+        try execute(Self.legacySchema, on: databaseURL)
+        try execute("""
+        INSERT INTO sessions (id, provider_name, accumulated_input_tokens, accumulated_output_tokens,
+                              accumulated_total_tokens, accumulated_cache_read_tokens,
+                              accumulated_cache_write_tokens, accumulated_cost)
+        VALUES ('legacy', 'openai', 4, 0, 4, 0, 0, 0.01);
+        """, on: databaseURL)
+
+        let result = try await GooseAdapter().fetchIncrementalRecords(from: databaseURL, since: nil)
+        let baseline = try XCTUnwrap(result.records.first)
+        XCTAssertEqual(baseline.totalTokens, 4)
+        XCTAssertNotEqual(baseline.timestamp, Date(timeIntervalSince1970: 0))
+    }
+
     func testSyntheticBaselineIsDeterministicAndDatabaseInsertIsIdempotent() async throws {
         let databaseURL = try makeFixture()
         let storeURL = tempDirectory.appendingPathComponent("usage.db")
@@ -211,8 +300,12 @@ final class GooseAdapterTests: XCTestCase {
         let url = databaseURL ?? tempDirectory.appendingPathComponent("sessions.db")
         try execute(Self.schema, on: url)
         try execute("""
-        INSERT INTO sessions VALUES
-          ('s1', 'openai', 30, 5, 35, 0, 0, 0.02);
+        INSERT INTO sessions
+          (id, parent_session_id, provider_name, accumulated_input_tokens, accumulated_output_tokens,
+           accumulated_total_tokens, accumulated_cache_read_tokens, accumulated_cache_write_tokens,
+           accumulated_cost, created_at, updated_at)
+        VALUES
+          ('s1', NULL, 'openai', 30, 5, 35, 0, 0, 0.02, 1780000000, 1780000000);
         INSERT INTO usage_ledger
           (id, session_id, created_timestamp, model, input_tokens, output_tokens,
            total_tokens, cache_read_tokens, cache_write_tokens, cost, cost_source, is_compaction)
@@ -240,6 +333,40 @@ final class GooseAdapterTests: XCTestCase {
     }
 
     private static let schema = """
+    CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        parent_session_id TEXT,
+        provider_name TEXT,
+        accumulated_input_tokens INTEGER,
+        accumulated_output_tokens INTEGER,
+        accumulated_total_tokens INTEGER,
+        accumulated_cache_read_tokens INTEGER,
+        accumulated_cache_write_tokens INTEGER,
+        accumulated_cost REAL,
+        created_at INTEGER,
+        updated_at INTEGER
+    );
+    CREATE TABLE messages (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL
+    );
+    CREATE TABLE usage_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        created_timestamp INTEGER NOT NULL,
+        model TEXT,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        total_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER,
+        cost REAL,
+        cost_source TEXT,
+        is_compaction INTEGER DEFAULT 0
+    );
+    """
+
+    private static let legacySchema = """
     CREATE TABLE sessions (
         id TEXT PRIMARY KEY,
         provider_name TEXT,
