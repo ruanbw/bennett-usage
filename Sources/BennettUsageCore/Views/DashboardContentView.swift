@@ -34,7 +34,6 @@ public struct DashboardContentView: View {
     @State private var cachedAgentColors: [String: Color] = [:]
     @State private var cachedModelColors: [String: Color] = [:]
     @State private var isProjectsExpanded: Bool = false
-    @State private var allTimeTotals: AllTimeTotals? = nil
     @State private var refreshTick = 0
     @State private var updateThrottle = TrailingThrottle(interval: 1.0)
     @State private var selectedHeatmapYear: Int = Calendar.current.component(.year, from: Date())
@@ -129,8 +128,8 @@ public struct DashboardContentView: View {
         .task(id: RefreshKey(scope: .annual, range: nil, year: selectedHeatmapYear, toolFilter: selectedToolFilter, tick: refreshTick)) {
             await loadAnnualSummaryData()
         }
-        .task(id: RefreshKey(scope: .totals, range: nil, year: nil, toolFilter: selectedToolFilter, tick: refreshTick)) {
-            await loadAllTimeData()
+        .task(id: Self.yearListRefreshKey(tick: refreshTick)) {
+            await loadAvailableYears()
         }
         .task {
             await autoRefreshLoop()
@@ -938,7 +937,7 @@ public struct DashboardContentView: View {
     //   • period  → selectedRange,       selectedToolFilter, refreshTick
     //   • agents  → selectedRange,                           refreshTick
     //   • annual  → selectedHeatmapYear, selectedToolFilter, refreshTick
-    //   • totals  →                      selectedToolFilter, refreshTick
+    //   • years   →                                         refreshTick
     //
     // `agentNames` (the range-scoped filter options) is derived from
     // `rangeActiveAgents` + `selectedToolFilter`, and the cached palettes are
@@ -953,19 +952,26 @@ public struct DashboardContentView: View {
     /// Scope discriminator for the dimension-scoped refresh tasks. A structured
     /// `Hashable` key (rather than a concatenated string) keeps each task's id
     /// free of unrelated dimensions and avoids per-body string interpolation.
-    private enum RefreshScope: Hashable {
+    enum RefreshScope: Hashable {
         case period
         case agents
         case annual
-        case totals
+        case years
     }
 
-    private struct RefreshKey: Hashable {
+    struct RefreshKey: Hashable {
         let scope: RefreshScope
         let range: TimeRangeOption?
         let year: Int?
         let toolFilter: String?
         let tick: Int
+    }
+
+    /// The available-year list is independent of both the active filter and the
+    /// selected range. Keeping the key construction here makes that contract
+    /// explicit and directly testable.
+    static func yearListRefreshKey(tick: Int) -> RefreshKey {
+        RefreshKey(scope: .years, range: nil, year: nil, toolFilter: nil, tick: tick)
     }
 
     /// Filter-bar options for one range: every agent that recorded usage in it,
@@ -1061,22 +1067,16 @@ public struct DashboardContentView: View {
         }
     }
 
-    /// `selectedToolFilter` dependents that are independent of both the selected
-    /// range and the heatmap year: the available-year list and all-time totals.
-    private func loadAllTimeData() async {
-        let toolFilter = selectedToolFilter
+    /// The available-year list is independent of the active tool filter, the
+    /// selected range, and the heatmap year.
+    private func loadAvailableYears() async {
         let years = (try? await aggregator.fetchAvailableYears()) ?? []
-        if Task.isCancelled { return }
-        let totals = try? await aggregator.fetchAllTimeTotals(toolFilter: toolFilter)
         if Task.isCancelled { return }
         if years != availableYears {
             availableYears = years
         }
         if !years.isEmpty && !years.contains(selectedHeatmapYear) {
             selectedHeatmapYear = years.first!
-        }
-        if totals != allTimeTotals {
-            allTimeTotals = totals
         }
     }
 
@@ -1086,7 +1086,7 @@ public struct DashboardContentView: View {
         await loadPeriodMetrics()
         await loadRangeActiveAgents()
         await loadAnnualSummaryData()
-        await loadAllTimeData()
+        await loadAvailableYears()
     }
 
     private func autoRefreshLoop() async {

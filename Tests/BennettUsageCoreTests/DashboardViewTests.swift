@@ -110,6 +110,17 @@ final class DashboardViewTests: XCTestCase {
     }
 
     @MainActor
+    func testDashboardYearListRefreshIsIndependentOfToolFilter() {
+        let key = DashboardContentView.yearListRefreshKey(tick: 7)
+
+        XCTAssertEqual(key.scope, .years)
+        XCTAssertNil(key.range)
+        XCTAssertNil(key.year)
+        XCTAssertNil(key.toolFilter)
+        XCTAssertEqual(key.tick, 7)
+    }
+
+    @MainActor
     func testAgentFilterOptionsFollowTheSelectedRange() {
         // Options are exactly the agents with usage in the range, so an agent
         // that was idle in it (e.g. Cline on a day it never ran) is not offered.
