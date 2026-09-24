@@ -82,6 +82,30 @@ final class MenuBarPopoverViewTests: XCTestCase {
     }
 
     @MainActor
+    func testDashboardAndPopoverObserveTheSamePricingEngine() throws {
+        let db = try DatabaseManager.inMemory()
+        let aggregator = MetricsAggregator(database: db)
+        let pricingEngine = PricingEngine()
+
+        let dashboard = DashboardContentView(
+            aggregator: aggregator,
+            pricingEngine: pricingEngine
+        )
+        let popover = MenuBarPopoverView(
+            model: StatusSummaryModel(summary: nil),
+            onOpenDashboard: {},
+            onSyncNow: {},
+            onQuit: {},
+            pricingEngine: pricingEngine
+        )
+
+        XCTAssertIdentical(dashboard.pricingEngine, pricingEngine)
+        XCTAssertIdentical(popover.pricingEngine, pricingEngine)
+        XCTAssertNotNil(dashboard.body)
+        XCTAssertNotNil(popover.body)
+    }
+
+    @MainActor
     func testPopoverMiniDistributionActiveTools() throws {
         let summary = TodaySummary(
             totalTokens: 100_000,

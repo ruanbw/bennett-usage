@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import BennettUsageCore
 
@@ -101,6 +102,45 @@ final class PricingEngineTests: XCTestCase {
         // With .usd: "$\(costUSD)"
         freshEngine.setPreferredCurrency(.usd)
         XCTAssertEqual(freshEngine.spendString(10.0), "$10.00")
+    }
+
+    @MainActor
+    func testPricingChangesPublishObjectWillChange() {
+        let originalRate = UserDefaults.standard.double(forKey: PricingEngine.rateUserDefaultsKey)
+        let originalCurrency = UserDefaults.standard.string(forKey: PricingEngine.currencyUserDefaultsKey)
+        defer {
+            if originalRate > 0 {
+                UserDefaults.standard.set(originalRate, forKey: PricingEngine.rateUserDefaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: PricingEngine.rateUserDefaultsKey)
+            }
+            if let originalCurrency {
+                UserDefaults.standard.set(originalCurrency, forKey: PricingEngine.currencyUserDefaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: PricingEngine.currencyUserDefaultsKey)
+            }
+        }
+
+        UserDefaults.standard.set(7.30, forKey: PricingEngine.rateUserDefaultsKey)
+        UserDefaults.standard.set(PreferredCurrency.usd.rawValue, forKey: PricingEngine.currencyUserDefaultsKey)
+        let engine = PricingEngine()
+        var changeCount = 0
+        let observation = engine.objectWillChange.sink { _ in
+            changeCount += 1
+        }
+        defer { observation.cancel() }
+
+        engine.setExchangeRate(7.25)
+        XCTAssertEqual(changeCount, 1)
+        XCTAssertEqual(engine.spendString(10.0), "$10.00")
+
+        engine.setPreferredCurrency(.cny)
+        XCTAssertEqual(changeCount, 2)
+        XCTAssertEqual(engine.spendString(10.0), "¥72.50")
+
+        engine.setPreferredCurrency(.usd)
+        XCTAssertEqual(changeCount, 3)
+        XCTAssertEqual(engine.spendString(10.0), "$10.00")
     }
 
     func testDefaultRulesCoverage() {

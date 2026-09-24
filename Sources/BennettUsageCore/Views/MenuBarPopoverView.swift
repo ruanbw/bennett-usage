@@ -15,6 +15,7 @@ public final class StatusSummaryModel: ObservableObject {
 public struct MenuBarPopoverView: View {
     @ObservedObject public var model: StatusSummaryModel
     @ObservedObject public var updateChecker: UpdateChecker
+    @ObservedObject var pricingEngine: PricingEngine
     public let onOpenDashboard: () -> Void
     public let onSyncNow: () -> Void
     public let onQuit: () -> Void
@@ -30,11 +31,13 @@ public struct MenuBarPopoverView: View {
         onOpenDashboard: @escaping () -> Void,
         onSyncNow: @escaping () -> Void,
         onQuit: @escaping () -> Void,
-        onOpenSettings: (() -> Void)? = nil
+        onOpenSettings: (() -> Void)? = nil,
+        pricingEngine: PricingEngine = .shared
     ) {
         self.model = model
         self.localization = localization
         self.updateChecker = updateChecker
+        self.pricingEngine = pricingEngine
         self.onOpenDashboard = onOpenDashboard
         self.onSyncNow = onSyncNow
         self.onQuit = onQuit
@@ -79,7 +82,7 @@ public struct MenuBarPopoverView: View {
                     Text(localization.localized(.estimatedCost))
                         .font(.caption)
                         .foregroundColor(AppTheme.Text.secondary)
-                    Text(PricingEngine.shared.spendString(summary?.totalCostUSD ?? 0.0))
+                    Text(pricingEngine.spendString(summary?.totalCostUSD ?? 0.0))
                         .font(.title2).bold()
                         .foregroundColor(AppTheme.Status.success)
                 }

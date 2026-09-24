@@ -19,6 +19,7 @@ public enum HeatmapDisplayMode: String, CaseIterable, Identifiable {
 public struct DashboardContentView: View {
     public let aggregator: MetricsAggregator
     @ObservedObject public var localization: LocalizationManager
+    @ObservedObject var pricingEngine: PricingEngine
     public let onOpenSettings: (() -> Void)?
 
     @State private var heatmapCells: [HeatmapDayCell] = []
@@ -46,10 +47,12 @@ public struct DashboardContentView: View {
         aggregator: MetricsAggregator,
         localization: LocalizationManager = .shared,
         initialRange: TimeRangeOption = .last24Hours,
-        onOpenSettings: (() -> Void)? = nil
+        onOpenSettings: (() -> Void)? = nil,
+        pricingEngine: PricingEngine = .shared
     ) {
         self.aggregator = aggregator
         self.localization = localization
+        self.pricingEngine = pricingEngine
         self._selectedRange = State(initialValue: initialRange)
         self.onOpenSettings = onOpenSettings
         if case .year(let y) = initialRange {
@@ -111,7 +114,8 @@ public struct DashboardContentView: View {
                     trendTitle: trendTitle,
                     rangeSubtitle: rangeSubtitle,
                     modelColors: cachedModelColors,
-                    localization: localization
+                    localization: localization,
+                    pricingEngine: pricingEngine
                 )
                 distributionChartsSection
                 heatmapSection
@@ -311,7 +315,7 @@ public struct DashboardContentView: View {
                     .font(.caption)
                     .foregroundColor(AppTheme.Text.secondary)
 
-                Text(PricingEngine.shared.spendString(periodMetrics?.totalCostUSD ?? 0.0))
+                Text(pricingEngine.spendString(periodMetrics?.totalCostUSD ?? 0.0))
                     .font(.system(size: 28, weight: .semibold, design: .rounded))
                     .foregroundColor(AppTheme.Status.success)
                     .monospacedDigit()
@@ -559,7 +563,8 @@ public struct DashboardContentView: View {
                 AnnualMonthlyTrendCard(
                     annualTrendPoints: annualTrendPoints,
                     selectedHeatmapYear: selectedHeatmapYear,
-                    localization: localization
+                    localization: localization,
+                    pricingEngine: pricingEngine
                 )
             }
         }
@@ -589,8 +594,8 @@ public struct DashboardContentView: View {
             // 2. Annual Cost
             annualStatItem(
                 title: localization.localized(.annualSpend),
-                value: PricingEngine.shared.spendString(summary.annualCostUSD),
-                subvalue: summary.annualCostUSD > 0 ? (PricingEngine.shared.preferredCurrency == .cny ? "CNY" : "USD") : "-",
+                value: pricingEngine.spendString(summary.annualCostUSD),
+                subvalue: summary.annualCostUSD > 0 ? (pricingEngine.preferredCurrency == .cny ? "CNY" : "USD") : "-",
                 icon: "dollarsign.circle.fill",
                 color: AppTheme.Status.success
             )
@@ -732,7 +737,8 @@ public struct DashboardContentView: View {
                 totalTokens: totalToolTokens,
                 localization: localization,
                 emptyMessage: localization.localized(.noToolData, arguments: rangeSubtitle),
-                emptyIcon: "wrench.and.screwdriver"
+                emptyIcon: "wrench.and.screwdriver",
+                pricingEngine: pricingEngine
             )
 
             let activeModels = modelDistribution.filter { $0.tokens > 0 }
@@ -754,7 +760,8 @@ public struct DashboardContentView: View {
                 totalTokens: totalModelTokens,
                 localization: localization,
                 emptyMessage: localization.localized(.noModelData, arguments: rangeSubtitle),
-                emptyIcon: "cpu"
+                emptyIcon: "cpu",
+                pricingEngine: pricingEngine
             )
         }
     }
@@ -822,7 +829,7 @@ public struct DashboardContentView: View {
                                     .monospacedDigit()
                                     .foregroundColor(AppTheme.Text.primary)
                                     .help("\(TokenFormatter.formatFull(item.totalTokens)) tokens")
-                                Text(PricingEngine.shared.spendString(item.costUSD))
+                                Text(pricingEngine.spendString(item.costUSD))
                                     .font(.caption)
                                     .monospacedDigit()
                                     .foregroundColor(AppTheme.Text.secondary)
@@ -1162,6 +1169,7 @@ private struct TrendChartCard: View {
     let rangeSubtitle: String
     var modelColors: [String: Color] = [:]
     @ObservedObject var localization: LocalizationManager
+    @ObservedObject var pricingEngine: PricingEngine
 
     @State private var trendChartType: TrendChartType = .bar
     @State private var hoveredTrendPeriod: String? = nil
@@ -1343,7 +1351,7 @@ private struct TrendChartCard: View {
                                             .font(.caption2.weight(.medium))
                                             .foregroundColor(AppTheme.Text.secondary)
                                         Spacer()
-                                        Text(PricingEngine.shared.spendString(point.costUSD))
+                                        Text(pricingEngine.spendString(point.costUSD))
                                             .font(.caption2.monospacedDigit().weight(.medium))
                                             .foregroundColor(AppTheme.Status.success)
                                     }
@@ -1535,6 +1543,7 @@ struct ProportionalDistributionCard: View {
     let items: [(id: String, name: String, tokens: Int, costUSD: Double, color: Color)]
     let totalTokens: Int
     @ObservedObject var localization: LocalizationManager
+    @ObservedObject var pricingEngine: PricingEngine
     var emptyMessage: String? = nil
     var emptyIcon: String = "chart.bar.xaxis"
 
@@ -1545,13 +1554,15 @@ struct ProportionalDistributionCard: View {
         totalTokens: Int,
         localization: LocalizationManager,
         emptyMessage: String? = nil,
-        emptyIcon: String = "chart.bar.xaxis"
+        emptyIcon: String = "chart.bar.xaxis",
+        pricingEngine: PricingEngine = .shared
     ) {
         self.title = title
         self.subtitle = subtitle
         self.items = items
         self.totalTokens = totalTokens
         self.localization = localization
+        self.pricingEngine = pricingEngine
         self.emptyMessage = emptyMessage
         self.emptyIcon = emptyIcon
     }
@@ -1645,13 +1656,13 @@ struct ProportionalDistributionCard: View {
                                     Text("·")
                                         .font(.caption)
                                         .foregroundColor(AppTheme.Text.tertiary)
-                                    Text(PricingEngine.shared.spendString(item.costUSD))
+                                    Text(pricingEngine.spendString(item.costUSD))
                                         .font(.subheadline)
                                         .monospacedDigit()
                                         .foregroundColor(AppTheme.Text.secondary)
                                 }
                             }
-                            .help("\(item.name)\n\(TokenFormatter.formatFull(item.tokens)) tokens · \(PricingEngine.shared.spendString(item.costUSD))")
+                            .help("\(item.name)\n\(TokenFormatter.formatFull(item.tokens)) tokens · \(pricingEngine.spendString(item.costUSD))")
                         }
                     }
                 }
@@ -1687,6 +1698,7 @@ private struct AnnualMonthlyTrendCard: View {
     let annualTrendPoints: [TrendPoint]
     let selectedHeatmapYear: Int
     @ObservedObject var localization: LocalizationManager
+    @ObservedObject var pricingEngine: PricingEngine
 
     @State private var hoveredAnnualMonth: String? = nil
     @State private var annualMonthHoverLocation: CGPoint? = nil
@@ -1759,7 +1771,7 @@ private struct AnnualMonthlyTrendCard: View {
                                         .foregroundColor(.secondary)
                                     Text("\(TokenFormatter.formatFull(point.tokens)) tokens")
                                         .font(.caption).bold()
-                                    Text(PricingEngine.shared.spendString(point.costUSD))
+                                    Text(pricingEngine.spendString(point.costUSD))
                                         .font(.caption2)
                                         .foregroundColor(AppTheme.Status.success)
                                 }

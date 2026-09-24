@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 public enum PreferredCurrency: String, Sendable, CaseIterable, Codable {
@@ -5,7 +6,7 @@ public enum PreferredCurrency: String, Sendable, CaseIterable, Codable {
     case cny
 }
 
-public final class PricingEngine: @unchecked Sendable {
+public final class PricingEngine: ObservableObject, @unchecked Sendable {
     public static let shared = PricingEngine()
     public static let rateUserDefaultsKey = "bennett_usd_to_cny_rate"
     public static let currencyUserDefaultsKey = "bennett_preferred_currency"
@@ -84,6 +85,7 @@ public final class PricingEngine: @unchecked Sendable {
         _usdToCnyRate = rate
         lock.unlock()
         UserDefaults.standard.set(rate, forKey: Self.rateUserDefaultsKey)
+        objectWillChange.send()
     }
 
     public func setPreferredCurrency(_ currency: PreferredCurrency) {
@@ -91,6 +93,7 @@ public final class PricingEngine: @unchecked Sendable {
         _preferredCurrency = currency
         lock.unlock()
         UserDefaults.standard.set(currency.rawValue, forKey: Self.currencyUserDefaultsKey)
+        objectWillChange.send()
     }
 
     /// Single-currency display honoring the preferred currency. Previously
