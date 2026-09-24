@@ -107,6 +107,77 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertGreaterThan(rollups[0].costUSD, 0.0)
     }
 
+    func testSyncPreservesReportedZeroCostAndPricesNilCost() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        let mock = MockSyncAdapter(sourceId: "mock_zero_cost", path: testDir)
+        mock.recordsToReturn = [
+            UnifiedTokenRecord(
+                id: "zero-claude",
+                sourceId: "mock_zero_cost",
+                timestamp: Date(),
+                dayKey: "2026-09-11",
+                sessionKey: "zero-claude",
+                projectFolder: nil,
+                model: "claude-3-5-sonnet-20241022",
+                provider: "anthropic",
+                inputTokens: 1_000_000,
+                outputTokens: 1_000_000,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                rawCostUSD: 0
+            ),
+            UnifiedTokenRecord(
+                id: "zero-gpt",
+                sourceId: "mock_zero_cost",
+                timestamp: Date(),
+                dayKey: "2026-09-11",
+                sessionKey: "zero-gpt",
+                projectFolder: nil,
+                model: "gpt-4o-2024-08-06",
+                provider: "openai",
+                inputTokens: 1_000_000,
+                outputTokens: 1_000_000,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                rawCostUSD: 0
+            ),
+            UnifiedTokenRecord(
+                id: "nil-gpt",
+                sourceId: "mock_zero_cost",
+                timestamp: Date(),
+                dayKey: "2026-09-11",
+                sessionKey: "nil-gpt",
+                projectFolder: nil,
+                model: "gpt-4o-2024-08-06",
+                provider: "openai",
+                inputTokens: 1_000_000,
+                outputTokens: 1_000_000,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                rawCostUSD: nil
+            )
+        ]
+        registry.register(mock)
+
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+        let count = try await coordinator.syncAll()
+        XCTAssertEqual(count, 3)
+
+        let recordsByID = Dictionary(uniqueKeysWithValues: try db.fetchRecords(sinceTimestamp: 0).map { ($0.id, $0) })
+        XCTAssertEqual(recordsByID["zero-claude"]?.rawCostUSD, 0)
+        XCTAssertEqual(recordsByID["zero-gpt"]?.rawCostUSD, 0)
+        guard let pricedNilCost = recordsByID["nil-gpt"]?.rawCostUSD else {
+            XCTFail("A nil source cost should be priced during sync")
+            return
+        }
+        XCTAssertGreaterThan(pricedNilCost, 0)
+    }
+
     func testFSEventsWatcherInitializationAndLifecycle() throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)

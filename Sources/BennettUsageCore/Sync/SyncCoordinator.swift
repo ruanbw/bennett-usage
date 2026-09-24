@@ -161,7 +161,7 @@ public actor SyncCoordinator {
                 // unpriced record copies all of its Strings field by field.
                 var pricedRecords = finalRecords
                 for i in pricedRecords.indices {
-                    guard pricedRecords[i].rawCostUSD == nil || pricedRecords[i].rawCostUSD == 0.0 else { continue }
+                    guard pricedRecords[i].rawCostUSD == nil else { continue }
                     pricedRecords[i].rawCostUSD = pricingEngine.calculateCost(
                         model: pricedRecords[i].model,
                         input: pricedRecords[i].inputTokens,
