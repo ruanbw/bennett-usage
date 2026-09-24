@@ -15,6 +15,7 @@ public struct DashboardView: View {
     public let aggregator: MetricsAggregator
     @ObservedObject public var localization: LocalizationManager
     @ObservedObject private var presentation: DashboardPresentationState
+    @AppStorage(AppThemeMode.storageKey) private var themeMode: AppThemeMode = .dark
     private let onOpenSettings: (() -> Void)?
 
     public init(
@@ -53,6 +54,7 @@ public struct DashboardView: View {
                 onDismiss: { presentation.isShowingSettings = false }
             )
         }
+        .preferredColorScheme(themeMode.colorScheme)
     }
 }
 

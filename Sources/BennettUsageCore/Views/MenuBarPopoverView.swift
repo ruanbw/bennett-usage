@@ -32,6 +32,7 @@ public struct MenuBarPopoverView: View {
     public let onQuit: () -> Void
     public let onOpenSettings: (() -> Void)?
     @ObservedObject public var localization: LocalizationManager
+    @AppStorage(AppThemeMode.storageKey) private var themeMode: AppThemeMode = .dark
 
     public var summary: TodaySummary? { model.summary }
 
@@ -89,6 +90,7 @@ public struct MenuBarPopoverView: View {
         .background(.regularMaterial)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(localization.localized(.quickGlance))
+        .preferredColorScheme(themeMode.colorScheme)
     }
 
     private var popoverHeader: some View {

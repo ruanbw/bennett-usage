@@ -46,6 +46,9 @@ final class AppCommandController: NSObject {
 }
 
 let app = NSApplication.shared
+let storedThemeMode = UserDefaults.standard.string(forKey: AppThemeMode.storageKey)
+let themeMode = storedThemeMode.flatMap(AppThemeMode.init(rawValue:)) ?? .dark
+app.appearance = themeMode.appearance
 app.setActivationPolicy(.accessory)
 
 let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
