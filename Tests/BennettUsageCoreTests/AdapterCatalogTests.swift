@@ -4,7 +4,7 @@ import XCTest
 final class AdapterCatalogTests: XCTestCase {
     private let expectedSourceIds = [
         "omp", "pi", "claude", "codex", "continue", "gemini", "antigravity", "opencode",
-        "roo", "cline", "qwen", "copilot", "cursor", "trae", "dsh", "goose", "crush"
+        "roo", "cline", "qwen", "copilot", "cursor", "trae", "dsh", "goose", "crush", "kimi"
     ]
 
     func testDefaultsPreserveBuiltInAdapterOrderAndCollection() {
@@ -12,7 +12,7 @@ final class AdapterCatalogTests: XCTestCase {
 
         XCTAssertEqual(sourceIds, expectedSourceIds)
         XCTAssertEqual(Set(sourceIds), Set(expectedSourceIds))
-        XCTAssertEqual(sourceIds.count, 17)
+        XCTAssertEqual(sourceIds.count, 18)
     }
 
     func testDefaultsReturnsIndependentAdapters() {

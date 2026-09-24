@@ -21,7 +21,7 @@
 
 ---
 
-A macOS menu bar app that aggregates token usage across **17 AI coding tools**: Claude Code, OpenAI Codex, Continue CLI, Gemini CLI, Goose, Crush, Qwen Code, OpenCode, Roo Code / Cline / Kilo (VS Code extensions), Cline (desktop & CLI), DSH Harness, Oh My Pi, Pi Agent, and Antigravity. Cursor, GitHub Copilot, and Trae are detected as installed (they bill in the cloud, so token counts need an API).
+A macOS menu bar app that aggregates token usage across **18 AI coding tools**: Claude Code, OpenAI Codex, Continue CLI, Gemini CLI, Goose, Crush, Kimi Code, Qwen Code, OpenCode, Roo Code / Cline / Kilo (VS Code extensions), Cline (desktop & CLI), DSH Harness, Oh My Pi, Pi Agent, and Antigravity. Cursor, GitHub Copilot, and Trae are detected as installed (they bill in the cloud, so token counts need an API).
 
 Everything is parsed from local session stores — no API keys, no accounts, no data leaves your Mac.
 
@@ -33,7 +33,7 @@ Everything is parsed from local session stores — no API keys, no accounts, no 
 - **Dashboard** — 24 hours / today / 7 days / 30 days / past year / by year. Hourly token trend stacked by model (bar or line), spend share by tool and by model, annual heatmap (calendar or monthly trend), project leaderboard, and cache hit statistics.
 - **Settings** — General (language, refresh interval, automatic update checks), Agents (installed or not, rescan now), Pricing & FX (USD / CNY, custom rate), Data & Storage (database location, reset), About (check for updates).
 - **Update checks** — compares against GitHub Releases, automatic (once a day, can be turned off) or manual. New versions surface in the menu bar icon and popover, with the DMG for your architecture and an option to skip a version.
-- **17 data sources** — local session logs parsed directly. No API keys, plain SQLite storage, FSEvents file watching for automatic sync.
+- **18 data sources** — local session logs parsed directly. No API keys, plain SQLite storage, FSEvents file watching for automatic sync.
 - **English & Simplified Chinese** — or follow the system language.
 
 ![Menu bar popover](docs/screenshots/popover.png)
@@ -73,6 +73,7 @@ Any Mac can cross-compile both slices, so an Intel host still produces the arm64
 | Continue CLI | `~/.continue/sessions` | per-assistant usage in session JSON; absolute `CONTINUE_GLOBAL_DIR` can relocate the store |
 | Gemini CLI | `~/.gemini/tmp` | session JSONL |
 | Qwen Code | `~/.qwen/tmp` (override with `QWEN_HOME`) | Gemini fork, same format |
+| Kimi Code | `~/.kimi-code/sessions` (override with `KIMI_CODE_HOME`) | current `sessions/**/agents/**/wire.jsonl` usage records; legacy `~/.kimi/context.jsonl` is not read |
 | OpenCode | `~/.local/share/opencode` | `opencode.db`; older versions use `storage/message` |
 | Roo Code · Cline · Kilo (VS Code) | VS Code `globalStorage/*/tasks` | `api_conversation_history.json` |
 | Cline (desktop / CLI) | `~/.cline/data/sessions` | per-message assistant `metrics` in `messages.json`; override with `CLINE_DIR` / `CLINE_DATA_DIR` / `CLINE_SESSION_DATA_DIR` |
@@ -92,7 +93,7 @@ Handy launch argument: `BennettUsage.app/Contents/MacOS/BennettUsageApp --dashbo
 
 ## Pricing
 
-Built-in per-model rates for input, output, cache reads, and cache writes, totalled in USD with a one-click switch to CNY (custom exchange rate). The price table will lag behind new model releases, so treat costs as estimates.
+Built-in per-model rates for input, output, cache reads, and cache writes, totalled in USD with a one-click switch to CNY (custom exchange rate). The price table will lag behind new model releases, so treat costs as estimates. Kimi Code's wire records do not report authoritative provider or cost metadata, so its costs come only from this local pricing table and are estimates, not billed amounts.
 
 ## Privacy
 

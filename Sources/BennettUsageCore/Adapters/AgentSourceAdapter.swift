@@ -39,6 +39,7 @@ extension AgentSourceAdapter {
         case "dsh": return "~/.dsh"
         case "goose": return "~/Library/Application Support/Block/goose/sessions/sessions.db"
         case "crush": return "~/Library/Application Support/crush"
+        case "kimi": return "~/.kimi-code"
         default: return ""
         }
     }
@@ -94,6 +95,10 @@ extension AgentSourceAdapter {
             // projects.json is the registry; each registered data_dir is added
             // as an auxiliary watch root by the adapter.
             return CrushAdapter.resolveGlobalRoot().path
+        case "kimi":
+            // KIMI_CODE_HOME-aware current wire tree. The legacy
+            // ~/.kimi/context.jsonl path is deliberately outside this root.
+            return KimiCodeAdapter.resolvedSessionsRoot().path
         default:
             return nil
         }

@@ -4,6 +4,7 @@
 
 ### 新增适配器
 
+- **Kimi Code**：解析当前 `$KIMI_CODE_HOME`（默认 `~/.kimi-code`）下 `sessions/**/agents/**/wire.jsonl` 的 `usage.record`；完整导入互斥的 `turn` / `session` 单次请求增量，独立映射 fresh input、输出与缓存读写字段。通过文件代际游标只读取完整换行，截断尾行留待下次，重写触发本地记录重建；不读取旧版 `~/.kimi/context.jsonl`。wire 未提供权威 provider、request id、reasoning 或费用，因此不猜测这些字段，费用仅由本地价格表估算。
 - **Continue CLI**：解析 `~/.continue/sessions/<session UUID>.json` 中 `history[i].message.usage` 的逐条 assistant 用量；支持绝对路径 `CONTINUE_GLOBAL_DIR` 覆盖，忽略会话索引 `sessions.json`，并按文件修改时间、文件大小和文件身份维护增量游标。会话文件重写时使用不含 usage 的消息语义哈希作为稳定 ID，避免 usage 后补全或重复扫描造成重复消费。
 - **Goose**：新增只读 SQLite `usage_ledger` 适配器，支持 macOS 默认路径与绝对 `GOOSE_PATH_ROOT`；按数据库 identity + ledger row id 增量同步，schema 不兼容时安全跳过；忽略 `carried_forward`，用每会话 deterministic synthetic baseline 保留累计差额，避免重复计费。
 - **Crush**：从 `CRUSH_GLOBAL_DATA` / XDG / macOS 默认全局目录读取 `projects.json`，按项目枚举 `data_dir/crush.db`。SQLite 以只读、全互斥、`query_only` 和 busy timeout 打开，不执行迁移或修改 WAL。

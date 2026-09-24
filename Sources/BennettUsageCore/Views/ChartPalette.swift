@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Unified color palette for chart segments, agents, and model distributions.
 ///
-/// Integrates curated brand colors from `AppTheme` for all 15 known agents,
+/// Integrates curated brand colors from `AppTheme` for all 18 known agents,
 /// brand-derived hues for standard model families, and a refined 16-color
 /// Things 3 harmonic wheel for arbitrary keys.
 public struct ChartPalette: Sendable {

@@ -38,7 +38,8 @@ public struct AgentFilterBarView: View {
         "trae": "Trae",
         "dsh": "DSH Harness",
         "goose": "Goose",
-        "crush": "Crush"
+        "crush": "Crush",
+        "kimi": "Kimi Code"
     ]
 
     /// Every agent id this app can record.

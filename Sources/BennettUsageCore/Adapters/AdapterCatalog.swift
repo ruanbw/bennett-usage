@@ -20,7 +20,8 @@ public enum AdapterCatalog {
             TraeAdapter(),
             DshAdapter(),
             GooseAdapter(),
-            CrushAdapter()
+            CrushAdapter(),
+            KimiCodeAdapter()
         ]
     }
 }
