@@ -71,7 +71,7 @@ final class ContinueAdapterTests: XCTestCase {
         XCTAssertEqual(cursorEntries(withIndex.newCursor)[file.path], cursorEntries(result.newCursor)[file.path])
     }
 
-    func testCacheReadSynonymsAreAlternativesAndFreshInputNeverGoesNegative() async throws {
+    func testCacheReadSynonymsAreAlternativesAndOversizedCacheUsageIsSkipped() async throws {
         try writeSession("""
         {
           "sessionId": "\(sessionId)",
@@ -85,8 +85,9 @@ final class ContinueAdapterTests: XCTestCase {
         """)
 
         let result = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
-        XCTAssertEqual(result.records.map(\.cacheReadTokens), [1_000, 900, 90])
-        XCTAssertEqual(result.records.map(\.inputTokens), [150, 280, 0])
+        XCTAssertEqual(result.records.count, 2)
+        XCTAssertEqual(result.records.map(\.cacheReadTokens), [1_000, 900])
+        XCTAssertEqual(result.records.map(\.inputTokens), [150, 280])
     }
 
     func testMissingOrMalformedUsageDoesNotCreateZeroRecords() async throws {
@@ -105,6 +106,35 @@ final class ContinueAdapterTests: XCTestCase {
 
         let result = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
         XCTAssertTrue(result.records.isEmpty)
+    }
+
+    func testRecordIDsAreNamespacedBySession() async throws {
+        let secondSessionId = "22222222-2222-4222-8222-222222222222"
+        let history = """
+        [{"message":{"role":"assistant","content":"same answer","usage":{"prompt_tokens":10,"completion_tokens":2,"prompt_tokens_details":{}}}}]
+        """
+        try #"{"sessionId":"\#(sessionId)","history":\#(history)}"#
+            .write(to: sessionsRoot.appendingPathComponent("\(sessionId).json"), atomically: true, encoding: .utf8)
+        try #"{"sessionId":"\#(secondSessionId)","history":\#(history)}"#
+            .write(to: sessionsRoot.appendingPathComponent("\(secondSessionId).json"), atomically: true, encoding: .utf8)
+
+        let result = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
+        XCTAssertEqual(result.records.count, 2)
+        XCTAssertEqual(Set(result.records.map(\.id)).count, 2)
+
+        let bySession = Dictionary(uniqueKeysWithValues: result.records.map { ($0.sessionKey, $0) })
+        for record in bySession.values {
+            let components = record.id.split(separator: "_", omittingEmptySubsequences: false)
+            XCTAssertEqual(components.count, 4)
+            XCTAssertEqual(components[0], "continue")
+            XCTAssertEqual(components[1].count, 64)
+            XCTAssertEqual(components[2].count, 64)
+            XCTAssertEqual(components[3], "0")
+            XCTAssertTrue(components.dropFirst().allSatisfy { component in
+                component.allSatisfy { $0.isHexDigit && !$0.isUppercase }
+            })
+        }
+        XCTAssertNotEqual(bySession[sessionId]?.id, bySession[secondSessionId]?.id)
     }
 
     func testMalformedJSONDoesNotAdvanceCheckpointAndRepairsLater() async throws {

@@ -142,6 +142,7 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
     ) -> [UnifiedTokenRecord] {
         var result: [UnifiedTokenRecord] = []
         var occurrences: [String: Int] = [:]
+        let namespacedSessionId = sha256Hex(Data(sessionId.utf8))
 
         for item in history {
             guard let message = item["message"] as? [String: Any],
@@ -154,7 +155,7 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
             occurrences[identity] = occurrence + 1
 
             result.append(UnifiedTokenRecord(
-                id: "continue_\(identity)_\(occurrence)",
+                id: "continue_\(namespacedSessionId)_\(identity)_\(occurrence)",
                 sourceId: "continue",
                 timestamp: timestamp,
                 sessionKey: sessionId,
@@ -267,6 +268,11 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
                 guard let parsed = rawModel as? String else { return nil }
                 model = parsed
             }
+
+            // Cache reads and writes are components of prompt_tokens, not usage
+            // in addition to it. A larger sum is malformed rather than zero
+            // fresh input.
+            guard cacheRead <= prompt, cacheWrite <= prompt - cacheRead else { return nil }
 
             self.prompt = prompt
             self.completion = completion
