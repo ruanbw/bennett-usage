@@ -56,14 +56,12 @@ final class ContinueAdapterTests: XCTestCase {
         XCTAssertEqual(record.timestamp.timeIntervalSince1970, modifiedAt.timeIntervalSince1970, accuracy: 0.001)
         XCTAssertEqual(record.timestampSource, .sourceModified)
 
-        let checkpoint = cursorEntries(result.newCursor)
-        let checkpointPath = try XCTUnwrap(checkpoint.keys.first {
-            $0.hasSuffix(".json") && !$0.contains("::")
-        })
-        XCTAssertEqual(checkpoint[checkpointPath], Int64(modifiedAt.timeIntervalSince1970 * 1_000))
-        XCTAssertNotNil(checkpoint[checkpointPath + "::size"])
-        XCTAssertNotNil(checkpoint[checkpointPath + "::fileIdentity"])
-        XCTAssertEqual(checkpoint.keys.filter { $0.hasPrefix(checkpointPath + "::contentHash") }.count, 4)
+        let checkpoint = generationEntries(result.newCursor)
+        let checkpointPath = try XCTUnwrap(checkpoint.keys.first { $0.hasSuffix(".json") })
+        let fileCheckpoint = try XCTUnwrap(checkpoint[checkpointPath])
+        XCTAssertEqual(fileCheckpoint.offset, Int64(try Data(contentsOf: file).count))
+        XCTAssertEqual(fileCheckpoint.size, fileCheckpoint.offset)
+        XCTAssertEqual(fileCheckpoint.generation.count, 64)
 
         // The index file is not a session and must never become a usage source.
         try #"{"history":[{"message":{"role":"assistant","usage":{"prompt_tokens":8,"completion_tokens":9,"prompt_tokens_details":{}}}}]}"#
@@ -71,7 +69,7 @@ final class ContinueAdapterTests: XCTestCase {
 
         let withIndex = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
         XCTAssertEqual(withIndex.records.count, 1)
-        XCTAssertEqual(cursorEntries(withIndex.newCursor)[file.path], cursorEntries(result.newCursor)[file.path])
+        XCTAssertEqual(generationEntries(withIndex.newCursor)[file.path], generationEntries(result.newCursor)[file.path])
     }
 
     func testCacheReadSynonymsAreAlternativesAndOversizedCacheUsageIsSkipped() async throws {
@@ -143,21 +141,21 @@ final class ContinueAdapterTests: XCTestCase {
     func testMalformedJSONDoesNotAdvanceCheckpointAndRepairsLater() async throws {
         let file = try writeSession(sessionWithoutUsageJSON(content: "before"))
         let first = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
-        let firstCursor = cursorEntries(first.newCursor)
+        let firstCursor = generationEntries(first.newCursor)
         XCTAssertTrue(first.records.isEmpty)
 
         try Data("{ broken".utf8).write(to: file)
         try setModificationDate(file, Date(timeIntervalSince1970: 2_000))
         let malformed = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: first.newCursor)
         XCTAssertTrue(malformed.records.isEmpty)
-        XCTAssertEqual(cursorEntries(malformed.newCursor), firstCursor)
+        XCTAssertEqual(generationEntries(malformed.newCursor), firstCursor)
 
         try validSessionJSON(content: "after", title: "changed size").write(to: file, atomically: true, encoding: .utf8)
         try setModificationDate(file, Date(timeIntervalSince1970: 3_000))
         let repaired = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: malformed.newCursor)
         XCTAssertEqual(repaired.records.count, 1)
         XCTAssertEqual(repaired.records[0].inputTokens, 20)
-        XCTAssertNotEqual(cursorEntries(repaired.newCursor), firstCursor)
+        XCTAssertNotEqual(generationEntries(repaired.newCursor), firstCursor)
     }
 
     func testSizeOrModificationTimeChangeReparsesWholeFileAndRepeatScanIsIdempotent() async throws {
@@ -175,10 +173,38 @@ final class ContinueAdapterTests: XCTestCase {
 
         let repeated = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: changed.newCursor)
         XCTAssertTrue(repeated.records.isEmpty)
-        XCTAssertEqual(cursorEntries(repeated.newCursor), cursorEntries(changed.newCursor))
+        XCTAssertEqual(generationEntries(repeated.newCursor), generationEntries(changed.newCursor))
     }
 
-    func testSameSizeAndModificationTimeContentRewriteIsReplayedAndCorrected() async throws {
+    func testRewriteAfterUnchangedPrefixChangesGeneration() async throws {
+        let modifiedAt = Date(timeIntervalSince1970: 5_500)
+        let firstHistory = """
+        {"message":{"role":"assistant","content":"stable","usage":{"prompt_tokens":10,"completion_tokens":1,"prompt_tokens_details":{}}}}
+        {"message":{"role":"assistant","content":"rewritten","usage":{"prompt_tokens":20,"completion_tokens":2,"prompt_tokens_details":{}}}}
+        """
+        let file = try writeSession(
+            "{\"sessionId\":\"\(sessionId)\",\"history\":[\(firstHistory)]}",
+            modifiedAt: modifiedAt
+        )
+        let first = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
+        let firstGeneration = try XCTUnwrap(generationEntries(first.newCursor)[file.path]).generation
+
+        let rewrittenHistory = firstHistory.replacingOccurrences(
+            of: #""completion_tokens":2"#,
+            with: #""completion_tokens":9"#
+        )
+        XCTAssertEqual(Data(rewrittenHistory.utf8).count, Data(firstHistory.utf8).count)
+        try Data("{\"sessionId\":\"\(sessionId)\",\"history\":[\(rewrittenHistory)]}".utf8).write(to: file)
+        try setModificationDate(file, modifiedAt)
+
+        let second = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: first.newCursor)
+        XCTAssertEqual(second.records.count, 2)
+        XCTAssertNotEqual(generationEntries(second.newCursor)[file.path]?.generation, firstGeneration)
+        XCTAssertEqual(second.records[0].id, first.records[0].id)
+        XCTAssertEqual(second.records[1].outputTokens, 9)
+    }
+
+    func testSameSizeAndModificationTimeContentRewriteChangesGeneration() async throws {
         let modifiedAt = Date(timeIntervalSince1970: 6_000)
         let file = try writeSession(
             validSessionJSON(content: "same", completionTokens: 5),
@@ -189,6 +215,7 @@ final class ContinueAdapterTests: XCTestCase {
         let first = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
         XCTAssertEqual(first.records.count, 1)
         XCTAssertEqual(first.records[0].outputTokens, 5)
+        let firstGeneration = try XCTUnwrap(generationEntries(first.newCursor)[file.path]).generation
 
         let rewritten = validSessionJSON(content: "same", completionTokens: 9)
         XCTAssertEqual(Data(rewritten.utf8).count, try Data(contentsOf: file).count)
@@ -202,38 +229,33 @@ final class ContinueAdapterTests: XCTestCase {
                        modifiedAt.timeIntervalSince1970,
                        accuracy: 0.001)
 
-        let corrected = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: first.newCursor)
-        XCTAssertEqual(corrected.records.count, 1)
-        XCTAssertEqual(corrected.records[0].id, first.records[0].id)
-        XCTAssertEqual(corrected.records[0].outputTokens, 9)
-
-        let database = try DatabaseManager.inMemory()
-        XCTAssertEqual(try database.insertRecords(first.records), 1)
-        XCTAssertEqual(try database.insertRecords(corrected.records, updateExisting: true), 1)
-        XCTAssertEqual(try database.insertRecords(corrected.records, updateExisting: true), 0)
-        let stored = try XCTUnwrap(try database.fetchRecords(sinceTimestamp: 0).first)
-        XCTAssertEqual(stored.outputTokens, 9)
+        let second = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: first.newCursor)
+        XCTAssertEqual(second.records.count, 1)
+        XCTAssertEqual(second.records[0].id, first.records[0].id)
+        XCTAssertEqual(second.records[0].outputTokens, 9)
+        let secondCheckpoint = try XCTUnwrap(generationEntries(second.newCursor)[file.path])
+        XCTAssertNotEqual(secondCheckpoint.generation, firstGeneration)
+        XCTAssertEqual(secondCheckpoint.size, secondCheckpoint.offset)
     }
 
-    func testLegacyOffsetCursorMigratesByScanningAndStoringContentHash() async throws {
-        try writeSession(validSessionJSON(content: "legacy"))
+    func testLegacyOffsetCursorMigratesOnceToFileGenerations() async throws {
+        let file = try writeSession(validSessionJSON(content: "legacy"))
         let initial = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
         XCTAssertEqual(initial.records.count, 1)
+        let initialGeneration = try XCTUnwrap(generationEntries(initial.newCursor)[file.path])
 
-        var legacy = cursorEntries(initial.newCursor)
-        legacy = legacy.filter { !$0.key.contains("::contentHash") }
         let migrated = try await adapter.fetchIncrementalRecords(
             from: sessionsRoot,
-            since: .fileOffsets(legacy)
+            since: .fileOffsets([file.path: 1])
         )
 
         XCTAssertEqual(migrated.records.count, 1)
         XCTAssertEqual(migrated.records[0].id, initial.records[0].id)
-        let migratedEntries = cursorEntries(migrated.newCursor)
-        XCTAssertEqual(migratedEntries.keys.filter { $0.contains("::contentHash") }.count, 4)
+        XCTAssertEqual(generationEntries(migrated.newCursor)[file.path], initialGeneration)
 
         let repeated = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: migrated.newCursor)
         XCTAssertTrue(repeated.records.isEmpty)
+        XCTAssertEqual(generationEntries(repeated.newCursor), generationEntries(migrated.newCursor))
     }
 
     func testRejectsInvalidUUIDAndMismatchedSessionID() async throws {
@@ -244,16 +266,16 @@ final class ContinueAdapterTests: XCTestCase {
 
         let result = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
         XCTAssertTrue(result.records.isEmpty)
-        XCTAssertTrue(cursorEntries(result.newCursor).isEmpty)
+        XCTAssertTrue(generationEntries(result.newCursor).isEmpty)
     }
 
-    func testSemanticDuplicatesGetOccurrenceIDsAndUsageCompletionKeepsID() async throws {
+    func testCompactionCutsOverInsteadOfCorrectingReusedOccurrenceID() async throws {
         let duplicate = """
         {"message":{"role":"assistant","content":[{"type":"text","text":"same"}],
           "toolCalls":[{"id":"call-1","type":"function","function":{"name":"read","arguments":"{\\"path\\":\\"README.md\\"}"}}],
           "usage":{"prompt_tokens":10,"completion_tokens":2,"prompt_tokens_details":{}}}}
         """
-        try writeSession("""
+        let file = try writeSession("""
         {"sessionId":"\(sessionId)","workspaceDirectory":"/workspace","history":[
           {"message":{"role":"assistant","content":"unique","usage":{"prompt_tokens":10,"completion_tokens":1,"prompt_tokens_details":{}}}},
           \(duplicate),
@@ -282,19 +304,31 @@ final class ContinueAdapterTests: XCTestCase {
         let second = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: first.newCursor)
         XCTAssertEqual(second.records.count, 2)
         XCTAssertEqual(second.records[1].id, first.records[1].id)
+        XCTAssertNotEqual(second.records[1].id, first.records[2].id)
         XCTAssertEqual(second.records[1].inputTokens, 25)
         XCTAssertEqual(second.records[1].outputTokens, 7)
+        XCTAssertNotEqual(generationEntries(second.newCursor)[file.path]?.generation,
+                          generationEntries(first.newCursor)[file.path]?.generation)
 
+        // Coordinator cutover semantics replace the complete source snapshot.
+        // In particular, old occurrence _1 must not survive beside the new _0.
         let database = try DatabaseManager.inMemory()
-        XCTAssertEqual(try database.insertRecords(first.records), 3)
-        // The file timestamp also changes, so both records returned by the
-        // corrected snapshot are real row changes; the completed usage is one.
-        XCTAssertEqual(try database.insertRecords(second.records, updateExisting: adapter.supportsRecordCorrections), 2)
-        XCTAssertEqual(try database.insertRecords(second.records, updateExisting: adapter.supportsRecordCorrections), 0)
-        XCTAssertEqual(try database.fetchTotalRecordCount(), 3)
-        let corrected = try XCTUnwrap(try database.fetchRecords(sinceTimestamp: 0).first { $0.id == second.records[1].id })
-        XCTAssertEqual(corrected.inputTokens, 25)
-        XCTAssertEqual(corrected.outputTokens, 7)
+        XCTAssertEqual(try database.insertRecords(
+            first.records,
+            updateCursorFor: adapter.sourceId,
+            cursor: first.newCursor
+        ), 3)
+        _ = try database.replaceSourceRecords(
+            second.records,
+            sourceId: adapter.sourceId,
+            cursor: second.newCursor
+        )
+        let stored = try database.fetchRecords(sinceTimestamp: 0)
+        XCTAssertEqual(Set(stored.map(\.id)), Set(second.records.map(\.id)))
+        XCTAssertFalse(stored.contains { $0.id == first.records[2].id })
+        let compacted = try XCTUnwrap(stored.first { $0.id == second.records[1].id })
+        XCTAssertEqual(compacted.inputTokens, 25)
+        XCTAssertEqual(compacted.outputTokens, 7)
     }
 
     func testContinueGlobalDirectoryOverrideMustBeAbsolute() {
@@ -317,7 +351,7 @@ final class ContinueAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.sourceId, "continue")
         XCTAssertEqual(adapter.displayName, "Continue CLI")
         XCTAssertEqual(adapter.defaultPath, "~/.continue/sessions")
-        XCTAssertTrue(adapter.supportsRecordCorrections)
+        XCTAssertFalse(adapter.supportsRecordCorrections)
         XCTAssertEqual(AgentFilterBarView.displayName(for: "continue"), "Continue CLI")
 
         try writeSession(validSessionJSON(content: "scan"))
@@ -375,8 +409,8 @@ final class ContinueAdapterTests: XCTestCase {
         return try XCTUnwrap(attributes[.modificationDate] as? Date)
     }
 
-    private func cursorEntries(_ cursor: SyncCursor) -> [String: Int64] {
-        guard case .fileOffsets(let entries) = cursor else { return [:] }
+    private func generationEntries(_ cursor: SyncCursor) -> [String: FileGeneration] {
+        guard case .fileGenerations(let entries) = cursor else { return [:] }
         return entries
     }
 }

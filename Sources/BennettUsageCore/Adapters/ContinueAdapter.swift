@@ -14,7 +14,7 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
     public let brandColorHex: String = "#3F8CFF"
     public let sfSymbolIcon: String = "terminal"
     public let defaultPath: String = "~/.continue/sessions"
-    public let supportsRecordCorrections: Bool = true
+    public let supportsRecordCorrections: Bool = false
 
     public init() {}
 
@@ -57,9 +57,9 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
         from directory: URL,
         since cursor: SyncCursor?
     ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
-        var previous: [String: Int64] = [:]
-        if case .fileOffsets(let entries) = cursor {
-            previous = entries
+        var previous: [String: FileGeneration] = [:]
+        if case .fileGenerations(let generations) = cursor {
+            previous = generations
         }
 
         let fileManager = FileManager.default
@@ -68,10 +68,10 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
             includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles]
         ) else {
-            return ([], .fileOffsets([:]))
+            return ([], .fileGenerations([:]))
         }
 
-        var checkpoints: [String: Int64] = [:]
+        var checkpoints: [String: FileGeneration] = [:]
         var records: [UnifiedTokenRecord] = []
 
         for fileURL in files.sorted(by: { $0.path < $1.path }) {
@@ -81,47 +81,35 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
                   let fileUUID = UUID(uuidString: stem) else { continue }
 
             let values = try? fileURL.resourceValues(forKeys: [
-                .isRegularFileKey, .fileSizeKey, .contentModificationDateKey,
+                .isRegularFileKey, .contentModificationDateKey,
             ])
             guard values?.isRegularFile == true,
-                  let byteCount = values?.fileSize,
                   let modifiedAt = values?.contentModificationDate,
-                  let identityHash = Self.fileIdentityHash(for: fileURL) else { continue }
+                  let identity = Self.fileIdentity(for: fileURL) else { continue }
 
-            let path = fileURL.path
-            let sizeKey = path + "::size"
-            let identityKey = path + "::fileIdentity"
-            let contentHashKeys = Self.contentHashKeys(for: path)
-            let mtimeMillis = Int64(modifiedAt.timeIntervalSince1970 * 1_000)
-
-            // Stat values are only a fast-path hint. Continue can rewrite a
-            // session in place without changing its size, mtime, or inode, so
-            // the complete bytes must be read and hashed before skipping it.
+            let path = fileURL.standardizedFileURL.path
+            // A generation is derived from the complete snapshot, rather than
+            // just the first line or stat metadata. Continue compacts and
+            // reorders history in place, which can change occurrence IDs while
+            // retaining a stable prefix. A full content hash makes every such
+            // rewrite a new generation for the Coordinator to cut over.
             guard let data = try? Data(contentsOf: fileURL) else {
-                Self.preserveCheckpoint(
-                    from: previous,
-                    to: &checkpoints,
-                    path: path,
-                    sizeKey: sizeKey,
-                    identityKey: identityKey,
-                    contentHashKeys: contentHashKeys
-                )
+                Self.preserveCheckpoint(from: previous, to: &checkpoints, path: path)
                 continue
             }
-            let contentHash = Self.contentHashValues(for: data)
-            let unchanged = previous[path] == mtimeMillis
-                && previous[sizeKey] == Int64(byteCount)
-                && previous[identityKey] == identityHash
-                && contentHashKeys.indices.allSatisfy {
-                    previous[contentHashKeys[$0]] == contentHash[$0]
-                }
-            if unchanged {
-                checkpoints[path] = mtimeMillis
-                checkpoints[sizeKey] = Int64(byteCount)
-                checkpoints[identityKey] = identityHash
-                for (key, value) in zip(contentHashKeys, contentHash) {
-                    checkpoints[key] = value
-                }
+            let size = Int64(data.count)
+            let offset = size
+            let contentHash = Self.sha256Hex(data)
+            let generation = Self.generation(
+                path: path,
+                identity: identity,
+                contentHash: contentHash,
+                size: size,
+                offset: offset
+            )
+            let checkpoint = FileGeneration(generation: generation, offset: offset, size: size)
+            if previous[path] == checkpoint {
+                checkpoints[path] = checkpoint
                 continue
             }
 
@@ -130,15 +118,8 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
                   UUID(uuidString: sessionId) == fileUUID,
                   let history = root["history"] as? [[String: Any]] else {
                 // A partial or corrupt writer snapshot must be retried. Preserve
-                // the prior checkpoint instead of advertising the bad file as scanned.
-                Self.preserveCheckpoint(
-                    from: previous,
-                    to: &checkpoints,
-                    path: path,
-                    sizeKey: sizeKey,
-                    identityKey: identityKey,
-                    contentHashKeys: contentHashKeys
-                )
+                // the prior generation instead of advertising the bad file as scanned.
+                Self.preserveCheckpoint(from: previous, to: &checkpoints, path: path)
                 continue
             }
 
@@ -150,16 +131,10 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
                 workspaceDirectory: workspace,
                 timestamp: modifiedAt
             ))
-
-            checkpoints[path] = mtimeMillis
-            checkpoints[sizeKey] = Int64(byteCount)
-            checkpoints[identityKey] = identityHash
-            for (key, value) in zip(contentHashKeys, contentHash) {
-                checkpoints[key] = value
-            }
+            checkpoints[path] = checkpoint
         }
 
-        return (records, .fileOffsets(checkpoints))
+        return (records, .fileGenerations(checkpoints))
     }
 
     private static func records(
@@ -240,45 +215,33 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func fileIdentityHash(for url: URL) -> Int64? {
+    private static func fileIdentity(for url: URL) -> String? {
         var info = stat()
         guard lstat(url.path, &info) == 0 else { return nil }
-        let hash = Self.sha256Hex(Data("\(info.st_dev):\(info.st_ino)".utf8))
-        return Int64(hash.prefix(15), radix: 16)
+        return "\(info.st_dev):\(info.st_ino)"
     }
 
-    // fileOffsets is an Int64 dictionary, so the 256-bit digest is stored as
-    // four big-endian Int64 words. These extra keys leave the old cursor
-    // entries readable while allowing a content-identical fast path.
-    private static func contentHashKeys(for path: String) -> [String] {
-        (0..<4).map { path + "::contentHash\($0)" }
-    }
-
-    private static func contentHashValues(for data: Data) -> [Int64] {
-        let bytes = Array(SHA256.hash(data: data))
-        return (0..<4).map { wordIndex in
-            let start = wordIndex * 8
-            var value: UInt64 = 0
-            for byte in bytes[start..<(start + 8)] {
-                value = (value << 8) | UInt64(byte)
-            }
-            return Int64(bitPattern: value)
-        }
+    /// Generation identity for a complete session snapshot. Including the
+    /// identity and both cursor positions makes the cursor self-describing,
+    /// while the full content hash catches in-place rewrites with unchanged
+    /// stat metadata.
+    static func generation(
+        path: String,
+        identity: String,
+        contentHash: String,
+        size: Int64,
+        offset: Int64
+    ) -> String {
+        sha256Hex(Data("continue-session-v1\n\(path)\n\(identity)\n\(contentHash)\n\(size)\n\(offset)".utf8))
     }
 
     private static func preserveCheckpoint(
-        from previous: [String: Int64],
-        to checkpoints: inout [String: Int64],
-        path: String,
-        sizeKey: String,
-        identityKey: String,
-        contentHashKeys: [String]
+        from previous: [String: FileGeneration],
+        to checkpoints: inout [String: FileGeneration],
+        path: String
     ) {
-        checkpoints[path] = previous[path]
-        checkpoints[sizeKey] = previous[sizeKey]
-        checkpoints[identityKey] = previous[identityKey]
-        for key in contentHashKeys {
-            checkpoints[key] = previous[key]
+        if let checkpoint = previous[path] {
+            checkpoints[path] = checkpoint
         }
     }
 
