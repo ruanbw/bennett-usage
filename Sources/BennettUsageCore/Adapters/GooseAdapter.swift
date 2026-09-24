@@ -8,8 +8,9 @@ import CryptoKit
 /// `input_tokens` value already contains cache reads and writes, while session
 /// accumulated values can also contain older usage represented by a
 /// `carried_forward` row. Ordinary rows are therefore imported incrementally,
-/// and a single deterministic baseline per session preserves any accumulated
-/// gap without adding the aggregates, ledger, and carry-forward row together.
+/// while a single deterministic baseline per session reconciles against that
+/// session's own ledger. Carry-forward rows contribute to reconciliation but
+/// are not emitted as provider invocations.
 public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
     public let sourceId: String = "goose"
     public let displayName: String = "Goose"
@@ -149,7 +150,6 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
 
     private struct SchemaInfo {
         let fingerprint: String
-        let hasParentSessionID: Bool
         let hasCreatedAt: Bool
         let hasUpdatedAt: Bool
     }
@@ -190,7 +190,6 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
         let digest = SHA256.hash(data: Data(signature.utf8))
         return SchemaInfo(
             fingerprint: digest.map { String(format: "%02x", $0) }.joined(),
-            hasParentSessionID: sessionColumns.contains("parent_session_id"),
             hasCreatedAt: sessionColumns.contains("created_at"),
             hasUpdatedAt: sessionColumns.contains("updated_at")
         )
@@ -297,7 +296,7 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
         return records
     }
 
-    private struct OrdinaryUsage {
+    private struct LedgerUsage {
         var input: Int64 = 0
         var output: Int64 = 0
         var total: Int64 = 0
@@ -309,7 +308,6 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
 
     private struct SessionUsage {
         let id: String
-        let parentID: String?
         let provider: String?
         let accumulatedInput: Int64
         let accumulatedOutput: Int64
@@ -319,7 +317,7 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
         let accumulatedCost: Double
         let createdAt: Int64?
         let updatedAt: Int64?
-        var ordinary: OrdinaryUsage
+        var ledger: LedgerUsage
     }
 
     private static let safeBaselineTimestamp = Date(timeIntervalSinceReferenceDate: 0)
@@ -329,11 +327,10 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
         identity: String,
         schema: SchemaInfo
     ) throws -> [UnifiedTokenRecord] {
-        let parentExpression = schema.hasParentSessionID ? "s.parent_session_id" : "NULL"
         let createdExpression = schema.hasCreatedAt ? "s.created_at" : "NULL"
         let updatedExpression = schema.hasUpdatedAt ? "s.updated_at" : "NULL"
         let sessionSQL = """
-        SELECT s.id, \(parentExpression), s.provider_name,
+        SELECT s.id, s.provider_name,
                COALESCE(s.accumulated_input_tokens, 0),
                COALESCE(s.accumulated_output_tokens, 0),
                COALESCE(s.accumulated_total_tokens, 0),
@@ -367,16 +364,17 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
                                 THEN COALESCE(cache_write_tokens, 0) ELSE 0 END), 0),
                COALESCE(SUM(CASE WHEN \(Self.hasAnyLedgerUsage)
                                 THEN COALESCE(cost, 0) ELSE 0 END), 0),
-               MIN(CASE WHEN \(Self.hasAnyLedgerUsage) THEN created_timestamp END)
+               MIN(CASE WHEN \(Self.hasAnyLedgerUsage)
+                              AND COALESCE(cost_source, '') != 'carried_forward'
+                        THEN created_timestamp END)
         FROM usage_ledger
-        WHERE COALESCE(cost_source, '') != 'carried_forward'
         GROUP BY session_id;
         """
         let ledgerRows = try query(ledgerSQL, on: database)
-        var ordinaryBySession: [String: OrdinaryUsage] = [:]
+        var ledgerBySession: [String: LedgerUsage] = [:]
         for row in ledgerRows {
             guard let sessionID = row[0], !sessionID.isEmpty else { continue }
-            ordinaryBySession[sessionID] = OrdinaryUsage(
+            ledgerBySession[sessionID] = LedgerUsage(
                 input: int64(row[1]), output: int64(row[2]), total: int64(row[3]),
                 cacheRead: int64(row[4]), cacheWrite: int64(row[5]), cost: double(row[6]),
                 timestamp: positiveInt64(row[7])
@@ -387,71 +385,28 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
         for row in sessionRows {
             guard let id = row[0], !id.isEmpty else { continue }
             sessions[id] = SessionUsage(
-                id: id, parentID: nonEmpty(row[1]), provider: nonEmpty(row[2]),
-                accumulatedInput: int64(row[3]), accumulatedOutput: int64(row[4]),
-                accumulatedTotal: int64(row[5]), accumulatedCacheRead: int64(row[6]),
-                accumulatedCacheWrite: int64(row[7]), accumulatedCost: double(row[8]),
-                createdAt: positiveInt64(row[9]), updatedAt: positiveInt64(row[10]),
-                ordinary: ordinaryBySession[id] ?? OrdinaryUsage()
+                id: id, provider: nonEmpty(row[1]),
+                accumulatedInput: int64(row[2]), accumulatedOutput: int64(row[3]),
+                accumulatedTotal: int64(row[4]), accumulatedCacheRead: int64(row[5]),
+                accumulatedCacheWrite: int64(row[6]), accumulatedCost: double(row[7]),
+                createdAt: positiveInt64(row[8]), updatedAt: positiveInt64(row[9]),
+                ledger: ledgerBySession[id] ?? LedgerUsage()
             )
         }
-        var children: [String: [SessionUsage]] = [:]
-        for session in sessions.values {
-            if let parentID = session.parentID, sessions[parentID] != nil {
-                children[parentID, default: []].append(session)
-            }
-        }
-        for key in children.keys { children[key]?.sort { $0.id < $1.id } }
-        var subtreeOrdinary: [String: OrdinaryUsage] = [:]
-        var visited: Set<String> = []
-        func descendants(_ id: String, path: Set<String> = []) -> [SessionUsage] {
-            guard !path.contains(id) else { return [] }
-            let nextPath = path.union([id])
-            var result: [SessionUsage] = []
-            for child in children[id, default: []] where !nextPath.contains(child.id) {
-                result.append(child)
-                result.append(contentsOf: descendants(child.id, path: nextPath))
-            }
-            return result
-        }
-        func subtreeUsage(_ id: String) -> OrdinaryUsage {
-            if let cached = subtreeOrdinary[id] { return cached }
-            if visited.contains(id) { return sessions[id]!.ordinary }
-            visited.insert(id)
-            var value = sessions[id]!.ordinary
-            for child in children[id, default: []] {
-                let childValue = subtreeUsage(child.id)
-                value.input += childValue.input
-                value.output += childValue.output
-                value.total += childValue.total
-                value.cacheRead += childValue.cacheRead
-                value.cacheWrite += childValue.cacheWrite
-                value.cost += childValue.cost
-            }
-            subtreeOrdinary[id] = value
-            return value
-        }
-        for id in sessions.keys { _ = subtreeUsage(id) }
-        let allDescendants = Dictionary(uniqueKeysWithValues: sessions.keys.map { ($0, descendants($0)) })
         var records: [UnifiedTokenRecord] = []
         for id in sessions.keys.sorted() {
             let session = sessions[id]!
-            let coveredByAncestor = ancestors(of: session, sessions: sessions).contains { $0.accumulatedTotal >= session.accumulatedTotal }
-            if coveredByAncestor { continue }
-            let descendants = allDescendants[id, default: []]
-            let includesDescendants = descendants.allSatisfy { $0.accumulatedTotal <= session.accumulatedTotal }
-            let denominator = includesDescendants ? (subtreeOrdinary[id] ?? session.ordinary) : session.ordinary
-            let totalDelta = max(0, session.accumulatedTotal - denominator.total)
+            let totalDelta = max(0, session.accumulatedTotal - session.ledger.total)
             var remaining = totalDelta
-            let cacheReadDelta = min(max(0, session.accumulatedCacheRead - denominator.cacheRead), remaining)
+            let cacheReadDelta = min(max(0, session.accumulatedCacheRead - session.ledger.cacheRead), remaining)
             remaining -= cacheReadDelta
-            let cacheWriteDelta = min(max(0, session.accumulatedCacheWrite - denominator.cacheWrite), remaining)
+            let cacheWriteDelta = min(max(0, session.accumulatedCacheWrite - session.ledger.cacheWrite), remaining)
             remaining -= cacheWriteDelta
-            let outputDelta = min(max(0, session.accumulatedOutput - denominator.output), remaining)
+            let outputDelta = min(max(0, session.accumulatedOutput - session.ledger.output), remaining)
             let inputDelta = remaining - outputDelta
-            let costDelta = max(0, session.accumulatedCost - denominator.cost)
+            let costDelta = max(0, session.accumulatedCost - session.ledger.cost)
             guard totalDelta > 0 || costDelta > 0 else { continue }
-            let timestamp = ordinaryTimestamp(for: session)
+            let timestamp = baselineTimestamp(for: session)
             let encodedSession = Data(session.id.utf8)
                 .base64EncodedString()
                 .replacingOccurrences(of: "+", with: "-")
@@ -479,18 +434,8 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
     private static let hasAnyLedgerUsage =
         "(input_tokens IS NOT NULL OR output_tokens IS NOT NULL OR total_tokens IS NOT NULL OR cache_read_tokens IS NOT NULL OR cache_write_tokens IS NOT NULL)"
 
-    private static func ancestors(of session: SessionUsage, sessions: [String: SessionUsage]) -> [SessionUsage] {
-        var result: [SessionUsage] = []
-        var parent = session.parentID.flatMap { sessions[$0] }
-        var visited: Set<String> = [session.id]
-        while let current = parent, !visited.contains(current.id) {
-            visited.insert(current.id); result.append(current); parent = current.parentID.flatMap { sessions[$0] }
-        }
-        return result
-    }
-
-    private static func ordinaryTimestamp(for session: SessionUsage) -> Date {
-        if let timestamp = session.ordinary.timestamp { return Date(timeIntervalSince1970: Double(timestamp)) }
+    private static func baselineTimestamp(for session: SessionUsage) -> Date {
+        if let timestamp = session.ledger.timestamp { return Date(timeIntervalSince1970: Double(timestamp)) }
         if let created = session.createdAt { return Date(timeIntervalSince1970: Double(created)) }
         if let updated = session.updatedAt { return Date(timeIntervalSince1970: Double(updated)) }
         return safeBaselineTimestamp

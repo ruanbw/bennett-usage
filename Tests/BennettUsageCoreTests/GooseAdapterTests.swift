@@ -45,6 +45,24 @@ final class GooseAdapterTests: XCTestCase {
         XCTAssertFalse(incrementalRecord.id.contains("carried_forward"))
     }
 
+    func testCarriedForwardParticipatesInReconciliationButIsNotImported() async throws {
+        let databaseURL = try makeFixture()
+        try execute("""
+        INSERT INTO usage_ledger
+          (id, session_id, created_timestamp, model, input_tokens, output_tokens,
+           total_tokens, cache_read_tokens, cache_write_tokens, cost, cost_source, is_compaction)
+        VALUES
+          (2, 's1', 1780000010, NULL, 5, 0, 5, 0, 0, 0.01, 'carried_forward', 0);
+        """, on: databaseURL)
+
+        let result = try await GooseAdapter().fetchIncrementalRecords(from: databaseURL, since: nil)
+        let ordinary = try XCTUnwrap(result.records.first(where: { $0.model == "gpt-x" }))
+        XCTAssertEqual(ordinary.totalTokens, 30)
+        XCTAssertEqual(result.records.filter { $0.model == "goose" }.count, 0)
+        XCTAssertEqual(result.records.count, 1)
+        XCTAssertEqual(result.records.reduce(0) { $0 + $1.totalTokens }, 30)
+    }
+
     func testSameSecondAndSameTokensRemainDistinctByLedgerId() async throws {
         let databaseURL = try makeFixture()
         try execute("""
@@ -87,7 +105,7 @@ final class GooseAdapterTests: XCTestCase {
         XCTAssertEqual(ordinary.totalTokens, 30)
     }
 
-    func testParentChildTreeDoesNotDoubleImportChildUsage() async throws {
+    func testParentChildTreeReconcilesEachSessionIndependently() async throws {
         let databaseURL = try makeFixture()
         try execute("""
         INSERT INTO sessions
@@ -103,7 +121,7 @@ final class GooseAdapterTests: XCTestCase {
         VALUES
           (2, 'child', 1780000100, 'child-model', 20, 0, 20, 0, 0, 0.01, 'estimated', 0),
           (3, 'grandchild', 1780000200, 'grandchild-model', 10, 0, 10, 0, 0, 0.005, 'estimated', 0);
-        UPDATE sessions SET accumulated_input_tokens = 110,
+        UPDATE sessions SET accumulated_input_tokens = 100,
                             accumulated_output_tokens = 0,
                             accumulated_total_tokens = 100,
                             accumulated_cost = 0.03
@@ -114,9 +132,12 @@ final class GooseAdapterTests: XCTestCase {
         let baselines = result.records.filter { $0.model == "goose" }
         XCTAssertEqual(baselines.count, 1)
         XCTAssertEqual(baselines.first?.sessionKey, "s1")
+        XCTAssertEqual(baselines.first?.totalTokens, 70)
         XCTAssertEqual(result.records.filter { $0.model == "child-model" }.first?.sessionKey, "child")
         XCTAssertEqual(result.records.filter { $0.model == "grandchild-model" }.first?.sessionKey, "grandchild")
-        XCTAssertEqual(result.records.reduce(0) { $0 + $1.totalTokens }, 60)
+        let ordinaryTotal = result.records.filter { $0.model != "goose" }.reduce(0) { $0 + $1.totalTokens }
+        XCTAssertEqual(ordinaryTotal, 60)
+        XCTAssertEqual(result.records.reduce(0) { $0 + $1.totalTokens }, 130)
     }
 
     func testUnknownAndPartiallyNullLedgerUsage() async throws {
