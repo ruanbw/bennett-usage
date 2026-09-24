@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### 新增适配器
+
+- **Continue CLI**：解析 `~/.continue/sessions/<session UUID>.json` 中 `history[i].message.usage` 的逐条 assistant 用量；支持绝对路径 `CONTINUE_GLOBAL_DIR` 覆盖，忽略会话索引 `sessions.json`，并按文件修改时间、文件大小和文件身份维护增量游标。会话文件重写时使用不含 usage 的消息语义哈希作为稳定 ID，避免 usage 后补全或重复扫描造成重复消费。
+
 ## v1.4.0 — 2026-09-21
 
 全新「极简」界面：仪表盘、菜单栏弹窗与设置页统一为 Things 3 风格的编辑式排版；同时修复 OpenCode V2 适配器读不到数据的问题。

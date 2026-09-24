@@ -7,6 +7,7 @@ public enum AdapterCatalog {
             PiAdapter(),
             ClaudeAdapter(),
             CodexAdapter(),
+            ContinueAdapter(),
             GeminiAdapter(),
             AntigravityAdapter(),
             OpenCodeAdapter(),

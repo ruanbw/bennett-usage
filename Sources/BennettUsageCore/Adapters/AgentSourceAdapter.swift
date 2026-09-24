@@ -22,6 +22,7 @@ extension AgentSourceAdapter {
         case "omp": return "~/.omp/stats.db"
         case "claude": return "~/.claude"
         case "codex": return "~/.codex"
+        case "continue": return "~/.continue/sessions"
         case "gemini": return "~/.gemini"
         case "antigravity": return "~/.gemini/antigravity/conversations"
         case "opencode": return "~/.local/share/opencode"
@@ -63,6 +64,9 @@ extension AgentSourceAdapter {
         case "codex":
             // Date-sharded rollout logs; the ~/.codex root holds auth/config.
             return "~/.codex/sessions"
+        case "continue":
+            // Only Continue's per-session JSON snapshots are watched.
+            return ContinueAdapter.resolvedSessionsRoot().path
         case "dsh":
             // Transcripts live under sessions/ and projcache lives under
             // storages/session_projcache/sessions/; both are under ~/.dsh.

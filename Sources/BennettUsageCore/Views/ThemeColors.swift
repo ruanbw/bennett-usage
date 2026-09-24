@@ -224,7 +224,7 @@ public enum AppTheme {
         )
     }
 
-    // MARK: - Agent Brand Palette (All 14 Agents)
+    // MARK: - Agent Brand Palette (All 15 Agents)
 
     public enum Agent {
         // 1. Claude (Anthropic): Terracotta Sienna
@@ -269,6 +269,9 @@ public enum AppTheme {
         // 14. Antigravity: Cosmic Orchid
         public static let antigravity = Color.dynamic(lightHex: "#9333EA", darkHex: "#D8B4FE")
 
+        // 15. Continue CLI: Signal Blue
+        public static let `continue` = Color.dynamic(lightHex: "#2563EB", darkHex: "#60A5FA")
+
         /// Lookup curated color by agent source ID.
         public static func knownColor(for id: String) -> Color? {
             switch id.lowercased() {
@@ -286,11 +289,12 @@ public enum AppTheme {
             case "qwen": return qwen
             case "opencode": return opencode
             case "antigravity": return antigravity
+            case "continue": return `continue`
             default: return nil
             }
         }
 
-        /// Map of all 14 curated agents.
+        /// Map of all 15 curated agents.
         public static let allMap: [String: Color] = [
             "claude": claude,
             "cursor": cursor,
@@ -305,7 +309,8 @@ public enum AppTheme {
             "roo": roo,
             "qwen": qwen,
             "opencode": opencode,
-            "antigravity": antigravity
+            "antigravity": antigravity,
+            "continue": `continue`
         ]
 
         /// Infers agent brand color for arbitrary model names (e.g. claude-3-5-sonnet -> claude).

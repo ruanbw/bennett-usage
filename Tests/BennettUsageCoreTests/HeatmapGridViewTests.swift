@@ -109,8 +109,9 @@ final class HeatmapGridViewTests: XCTestCase {
 
         // The filter bar colors come from a fixed all-agents universe, so a tool
         // keeps one color while the range-scoped pill list grows and shrinks.
-        XCTAssertEqual(AgentFilterBarView.knownAgentIds.count, 14)
-        XCTAssertEqual(Set(AgentFilterBarView.knownAgentIds).count, 14)
+        XCTAssertEqual(AgentFilterBarView.knownAgentIds.count, 15)
+        XCTAssertEqual(Set(AgentFilterBarView.knownAgentIds).count, 15)
+        XCTAssertTrue(AgentFilterBarView.knownAgentIds.contains("continue"))
         XCTAssertTrue(AgentFilterBarView.knownAgentIds.contains("cline"))
         for agentId in AgentFilterBarView.knownAgentIds {
             XCTAssertNotNil(AgentFilterBarView.colorMap[agentId], "missing palette color for '\(agentId)'")

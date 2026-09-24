@@ -21,7 +21,7 @@
 
 ---
 
-macOS 菜单栏常驻的 AI coding 助手 Token 用量统计，聚合 **14 个工具**：Claude Code、OpenAI Codex、Gemini CLI、Qwen Code、OpenCode、Roo Code / Cline / Kilo（VS Code 扩展）、Cline（桌面版 / CLI）、DSH Harness、Oh My Pi、Pi Agent、Antigravity。Cursor、GitHub Copilot、Trae 显示安装状态（云端计费，取数需 API）。
+macOS 菜单栏常驻的 AI coding 助手 Token 用量统计，聚合 **15 个工具**：Claude Code、OpenAI Codex、Continue CLI、Gemini CLI、Qwen Code、OpenCode、Roo Code / Cline / Kilo（VS Code 扩展）、Cline（桌面版 / CLI）、DSH Harness、Oh My Pi、Pi Agent、Antigravity。Cursor、GitHub Copilot、Trae 显示安装状态（云端计费，取数需 API）。
 
 全部从本机会话记录解析，无需 API Key、无需账号，数据不出本机。
 
@@ -33,7 +33,7 @@ macOS 菜单栏常驻的 AI coding 助手 Token 用量统计，聚合 **14 个�
 - **Dashboard**：24 小时 / 今日 / 7 天 / 30 天 / 过去一年 / 按年查看；小时级 Token 趋势（按模型堆叠，柱状 / 折线可切）；工具消耗占比、模型消耗占比；年度热力图（日历 / 月趋势可切）；项目排行；缓存命中统计。
 - **设置**：通用（语言、自动刷新频率、自动检查更新）、Agent 状态（是否已安装、立即重扫）、计价与汇率（USD / CNY、自定义汇率）、数据与存储（数据库位置、一键清空）、关于（检查更新）。
 - **检查更新**：读取 GitHub Releases 判断是否有新版本，自动检查（每天一次，可关闭）+ 手动检查；发现新版本时菜单栏图标与弹窗提示，并按本机架构给出对应 DMG 下载，可跳过某个版本。
-- **14 个数据源**：本地解析各工具会话记录，无需 API Key，纯本地 SQLite 存储，FSEvents 文件监听自动同步（Cursor / Copilot / Trae 为云端计费，仅检测安装状态）。
+- **15 个数据源**：本地解析各工具会话记录，无需 API Key，纯本地 SQLite 存储，FSEvents 文件监听自动同步（Cursor / Copilot / Trae 为云端计费，仅检测安装状态）。
 - **中英双语**：简体中文 / English / 跟随系统。
 
 ![菜单栏弹窗](docs/screenshots/popover.png)
@@ -70,6 +70,7 @@ swift test                          # 跑测试
 | --- | --- | --- |
 | Claude Code | `~/.claude/projects` | JSONL transcript，按 `message.id` 去重 |
 | OpenAI Codex | `~/.codex/sessions` | rollout JSONL 的 `token_count` 事件 |
+| Continue CLI | `~/.continue/sessions` | session JSON 中逐条 assistant usage；可用绝对路径 `CONTINUE_GLOBAL_DIR` 改目录 |
 | Gemini CLI | `~/.gemini/tmp` | session JSONL |
 | Qwen Code | `~/.qwen/tmp`（`QWEN_HOME` 可改） | Gemini 分叉，同格式 |
 | OpenCode | `~/.local/share/opencode` | `opencode.db`，老版本走 `storage/message` |

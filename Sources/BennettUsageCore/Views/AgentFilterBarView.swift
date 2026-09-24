@@ -26,6 +26,7 @@ public struct AgentFilterBarView: View {
         "omp": "Oh My Pi",
         "claude": "Claude Code",
         "codex": "OpenAI Codex",
+        "continue": "Continue CLI",
         "gemini": "Gemini CLI",
         "antigravity": "Antigravity",
         "opencode": "OpenCode",
