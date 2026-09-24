@@ -52,11 +52,13 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(manager.localized(.appName), "Bennett Usage")
         XCTAssertEqual(manager.localized(.syncNow), "Sync Now")
         XCTAssertEqual(manager.localized(.todaysTokens), "Today's Tokens")
+        XCTAssertEqual(manager.localized(.tokenUnit), "tokens")
 
         manager.setLanguage(.zh)
         XCTAssertEqual(manager.localized(.appName), "Bennett Usage")
         XCTAssertEqual(manager.localized(.syncNow), "立即同步")
         XCTAssertEqual(manager.localized(.todaysTokens), "今日 Token")
+        XCTAssertEqual(manager.localized(.tokenUnit), "Token")
     }
 
     func testTranslationWithArguments() {

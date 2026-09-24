@@ -879,6 +879,27 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertEqual(newest.modelTokens.values.reduce(0, +), 780)
     }
 
+    func testAnnualTrendMonthLabelsFollowLocalization() async throws {
+        let defaults = UserDefaults(suiteName: "AnnualTrendLocalizationTests_\(UUID().uuidString)")!
+        let localization = LocalizationManager(userDefaults: defaults)
+
+        localization.setLanguage(.en)
+        let english = try await aggregator.fetchPeriodMetrics(
+            range: .year(2020),
+            localization: localization
+        )
+        XCTAssertEqual(english.trendPoints.first?.label, "Jan")
+        XCTAssertEqual(english.trendPoints.last?.label, "Dec")
+
+        localization.setLanguage(.zh)
+        let chinese = try await aggregator.fetchPeriodMetrics(
+            range: .year(2020),
+            localization: localization
+        )
+        XCTAssertEqual(chinese.trendPoints.first?.label, "1月")
+        XCTAssertEqual(chinese.trendPoints.last?.label, "12月")
+    }
+
     func testPeriodMetricsModelTokensMonthlyYear() async throws {
         let records = [
             UnifiedTokenRecord(id: "y1", sourceId: "pi", timestamp: date("2026-03-05 12:00"), dayKey: nil, sessionKey: "s", projectFolder: nil, model: "claude-opus", provider: nil, inputTokens: 500, outputTokens: 0),

@@ -589,7 +589,11 @@ public final class MetricsAggregator: Sendable {
         return breakdowns
     }
 
-    public func fetchPeriodMetrics(range: TimeRangeOption, toolFilter: String? = nil) async throws -> PeriodMetrics {
+    public func fetchPeriodMetrics(
+        range: TimeRangeOption,
+        toolFilter: String? = nil,
+        localization: LocalizationManager = .shared
+    ) async throws -> PeriodMetrics {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone.current
         let now = Date()
@@ -826,6 +830,7 @@ public final class MetricsAggregator: Sendable {
             let topModels = Self.topModels(across: modelsByMonth)
 
             let monthFormatter = DateFormatter()
+            monthFormatter.locale = Locale(identifier: localization.effectiveLanguage.code)
             monthFormatter.dateFormat = "MMM yy"
             monthFormatter.timeZone = TimeZone.current
 
@@ -890,7 +895,6 @@ public final class MetricsAggregator: Sendable {
             }
             let topModels = Self.topModels(across: modelsByMonth)
 
-            let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
             // The current year only shows months that have started; past years
             // keep all twelve, future years none.
             let currentYear = calendar.component(.year, from: now)
@@ -902,12 +906,25 @@ public final class MetricsAggregator: Sendable {
             } else {
                 monthCount = 0
             }
+            let monthFormatter = DateFormatter()
+            monthFormatter.locale = Locale(identifier: localization.effectiveLanguage.code)
+            monthFormatter.dateFormat = "MMM"
+            monthFormatter.timeZone = TimeZone.current
+            var monthNames: [String] = []
+            if monthCount > 0 {
+                for m in 1...monthCount {
+                    guard let monthDate = calendar.date(from: DateComponents(year: year, month: m, day: 1)) else { continue }
+                    monthNames.append(monthFormatter.string(from: monthDate))
+                }
+            }
             var trendPoints: [TrendPoint] = []
-            for m in 1...12 where m <= monthCount {
-                let prefix = String(format: "%04d-%02d", year, m)
-                let mTokens = monthTotals[prefix]?.tokens ?? 0
-                let mCost = monthTotals[prefix]?.costUSD ?? 0.0
-                trendPoints.append(TrendPoint(label: monthNames[m - 1], tokens: mTokens, costUSD: mCost, modelTokens: Self.cappedModelTokens(modelsByMonth[prefix] ?? [:], top: topModels)))
+            if monthCount > 0 {
+                for m in 1...monthCount {
+                    let prefix = String(format: "%04d-%02d", year, m)
+                    let mTokens = monthTotals[prefix]?.tokens ?? 0
+                    let mCost = monthTotals[prefix]?.costUSD ?? 0.0
+                    trendPoints.append(TrendPoint(label: monthNames[m - 1], tokens: mTokens, costUSD: mCost, modelTokens: Self.cappedModelTokens(modelsByMonth[prefix] ?? [:], top: topModels)))
+                }
             }
             let modelDist = (try? database.fetchModelDistribution(limit: 10, sourceId: toolFilter, startDate: "\(year)-01-01", endDate: "\(year)-12-31")) ?? []
 

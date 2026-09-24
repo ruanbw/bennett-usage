@@ -1120,7 +1120,11 @@ public struct DashboardContentView: View {
     private func loadPeriodMetrics() async {
         let range = selectedRange
         let toolFilter = selectedToolFilter
-        let metrics = try? await aggregator.fetchPeriodMetrics(range: range, toolFilter: toolFilter)
+        let metrics = try? await aggregator.fetchPeriodMetrics(
+            range: range,
+            toolFilter: toolFilter,
+            localization: localization
+        )
         if Task.isCancelled { return }
         if metrics != periodMetrics {
             periodMetrics = metrics
@@ -1153,7 +1157,11 @@ public struct DashboardContentView: View {
         if Task.isCancelled { return }
         let summary = try? await aggregator.fetchAnnualSummary(year: year, toolFilter: toolFilter)
         if Task.isCancelled { return }
-        let annualMetrics = try? await aggregator.fetchPeriodMetrics(range: .year(year), toolFilter: toolFilter)
+        let annualMetrics = try? await aggregator.fetchPeriodMetrics(
+            range: .year(year),
+            toolFilter: toolFilter,
+            localization: localization
+        )
         if Task.isCancelled { return }
         if cells != heatmapCells {
             heatmapCells = cells
@@ -1464,7 +1472,7 @@ private struct TrendChartCard: View {
                                         Text(TokenFormatter.formatFull(point.tokens))
                                             .font(.caption.monospacedDigit().weight(.semibold))
                                             .foregroundColor(AppTheme.Text.primary)
-                                        Text("tokens")
+                                        Text(localization.localized(.tokenUnit))
                                             .font(.caption2)
                                             .foregroundColor(AppTheme.Text.tertiary)
                                     }

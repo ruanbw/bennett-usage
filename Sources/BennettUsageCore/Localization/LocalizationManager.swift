@@ -72,6 +72,7 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case calendarView
     case monthlyTrend
     case tokenActivity
+    case tokenUnit
     case activeDaysCount
     case activityOnDay
     case activityDetail
@@ -372,6 +373,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     .calendarView: "Calendar",
     .monthlyTrend: "Monthly Trend",
     .tokenActivity: "Token Activity (%@)",
+    .tokenUnit: "tokens",
     .activeDaysCount: "%d active days",
     .activityOnDay: "Activity on %@",
     .activityDetail: "Total Tokens: %@ · Cost: %@",
@@ -550,6 +552,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .calendarView: "日历视图",
     .monthlyTrend: "月度趋势",
     .tokenActivity: "Token 活跃度 (%@)",
+    .tokenUnit: "Token",
     .activeDaysCount: "%d 个活跃天数",
     .activityOnDay: "%@ 的活跃数据",
     .activityDetail: "总 Token: %@ · 费用: %@",
