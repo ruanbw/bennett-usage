@@ -8,6 +8,7 @@ private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
     let sfSymbolIcon: String = "hammer"
     let path: URL?
     var recordsToReturn: [UnifiedTokenRecord] = []
+    var receivedCursors: [SyncCursor?] = []
     var fetchCallCount = 0
     var newCursorToReturn: SyncCursor = .rowId(1)
     var onFetch: (@Sendable () async -> Void)? = nil
@@ -24,6 +25,7 @@ private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
 
     func fetchIncrementalRecords(from directory: URL, since cursor: SyncCursor?) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
         fetchCallCount += 1
+        receivedCursors.append(cursor)
         if let onFetch {
             await onFetch()
         }
@@ -32,6 +34,24 @@ private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
 }
 
 final class SyncCoordinatorTests: XCTestCase {
+    private func makeRecord(id: String, sourceId: String) -> UnifiedTokenRecord {
+        UnifiedTokenRecord(
+            id: id,
+            sourceId: sourceId,
+            timestamp: Date(),
+            dayKey: "2026-09-11",
+            sessionKey: "session",
+            projectFolder: nil,
+            model: "gpt-4o",
+            provider: nil,
+            inputTokens: 10,
+            outputTokens: 10,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            rawCostUSD: 0.01
+        )
+    }
+
     func testSyncSingleAdapterNoPathReturnsZero() async throws {
         let db = try DatabaseManager.inMemory()
         let registry = AdapterRegistry()
@@ -157,6 +177,76 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(count, 1)
 
         await fulfillment(of: [exp], timeout: 2.0)
+    }
+
+    func testDatabaseIdentityCursorCodableRoundTrip() throws {
+        let cursor = SyncCursor.databaseIdentity("source-db-v2", 42)
+        let data = try JSONEncoder().encode(cursor)
+        XCTAssertEqual(try JSONDecoder().decode(SyncCursor.self, from: data), cursor)
+    }
+
+    func testSyncAllPreservesWatermarkForSameDatabaseIdentity() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        try db.insertRecords([makeRecord(id: "old", sourceId: "identity_source")], updateCursorFor: "identity_source", cursor: .databaseIdentity("db-v1", 7))
+        let mock = MockSyncAdapter(sourceId: "identity_source", path: testDir)
+        mock.recordsToReturn = [makeRecord(id: "new", sourceId: "identity_source")]
+        mock.newCursorToReturn = .databaseIdentity("db-v1", 9)
+        registry.register(mock)
+
+        let count = try await SyncCoordinator(database: db, registry: registry).syncAll()
+
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(mock.receivedCursors, [.databaseIdentity("db-v1", 7)])
+        XCTAssertEqual(try db.fetchTotalRecordCount(), 2)
+        XCTAssertEqual(try db.fetchCursor(for: "identity_source"), .databaseIdentity("db-v1", 9))
+    }
+
+    func testSyncAllResetsAndRefetchesWhenDatabaseIdentityChanges() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        try db.insertRecords([makeRecord(id: "old", sourceId: "identity_source")], updateCursorFor: "identity_source", cursor: .databaseIdentity("db-v1", 7))
+        let mock = MockSyncAdapter(sourceId: "identity_source", path: testDir)
+        mock.recordsToReturn = [makeRecord(id: "new", sourceId: "identity_source")]
+        mock.newCursorToReturn = .databaseIdentity("db-v2", 1)
+        registry.register(mock)
+
+        let count = try await SyncCoordinator(database: db, registry: registry).syncAll()
+
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(mock.receivedCursors, [.databaseIdentity("db-v1", 7), nil])
+        XCTAssertEqual(try db.fetchTotalRecordCount(), 1)
+        XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0).map(\.id), ["new"])
+        XCTAssertEqual(try db.fetchCursor(for: "identity_source"), .databaseIdentity("db-v2", 1))
+    }
+
+    func testSyncAllCutsOverFromRowIdToDatabaseIdentity() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        try db.insertRecords([makeRecord(id: "old", sourceId: "identity_source")], updateCursorFor: "identity_source", cursor: .rowId(4))
+        let mock = MockSyncAdapter(sourceId: "identity_source", path: testDir)
+        mock.recordsToReturn = [makeRecord(id: "new", sourceId: "identity_source")]
+        mock.newCursorToReturn = .databaseIdentity("db-v1", 1)
+        registry.register(mock)
+
+        let count = try await SyncCoordinator(database: db, registry: registry).syncAll()
+
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(mock.receivedCursors, [.rowId(4), nil])
+        XCTAssertEqual(try db.fetchTotalRecordCount(), 1)
+        XCTAssertEqual(try db.fetchCursor(for: "identity_source"), .databaseIdentity("db-v1", 1))
     }
 
     func testSyncAllPerformsCursorCutoverWithoutDuplicates() async throws {

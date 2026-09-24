@@ -142,15 +142,7 @@ public actor SyncCoordinator {
             let adapter = fetch.adapter
             do {
                 let cursor = fetch.cursor
-                let isCutover: Bool
-                switch (cursor, fetch.newCursor) {
-                case (.rowId, .fileOffsets):
-                    isCutover = true
-                case (.fileOffsets, .rowId):
-                    isCutover = true
-                default:
-                    isCutover = false
-                }
+                let isCutover = Self.requiresCutover(from: cursor, to: fetch.newCursor)
 
                 let finalRecords: [UnifiedTokenRecord]
                 let finalCursor: SyncCursor
@@ -208,6 +200,22 @@ public actor SyncCoordinator {
             }
         }
         return totalIngested
+    }
+
+    /// A changed database identity invalidates an otherwise compatible
+    /// watermark. Cross-kind cursor changes are also unsafe: the old watermark
+    /// cannot describe the source represented by the new cursor kind.
+    private static func requiresCutover(from oldCursor: SyncCursor?, to newCursor: SyncCursor) -> Bool {
+        switch (oldCursor, newCursor) {
+        case (.databaseIdentity(let oldIdentity, _), .databaseIdentity(let newIdentity, _)):
+            return oldIdentity != newIdentity
+        case (.rowId, .fileOffsets), (.fileOffsets, .rowId),
+             (.rowId, .databaseIdentity), (.databaseIdentity, .rowId),
+             (.fileOffsets, .databaseIdentity), (.databaseIdentity, .fileOffsets):
+            return true
+        default:
+            return false
+        }
     }
 
     /// True when a changed path lies inside the adapter's watched root (or is
