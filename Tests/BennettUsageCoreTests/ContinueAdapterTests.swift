@@ -226,8 +226,14 @@ final class ContinueAdapterTests: XCTestCase {
 
         let database = try DatabaseManager.inMemory()
         XCTAssertEqual(try database.insertRecords(first.records), 3)
-        XCTAssertEqual(try database.insertRecords(second.records), 0)
+        // The file timestamp also changes, so both records returned by the
+        // corrected snapshot are real row changes; the completed usage is one.
+        XCTAssertEqual(try database.insertRecords(second.records, updateExisting: adapter.supportsRecordCorrections), 2)
+        XCTAssertEqual(try database.insertRecords(second.records, updateExisting: adapter.supportsRecordCorrections), 0)
         XCTAssertEqual(try database.fetchTotalRecordCount(), 3)
+        let corrected = try XCTUnwrap(try database.fetchRecords(sinceTimestamp: 0).first { $0.id == second.records[1].id })
+        XCTAssertEqual(corrected.inputTokens, 25)
+        XCTAssertEqual(corrected.outputTokens, 7)
     }
 
     func testContinueGlobalDirectoryOverrideMustBeAbsolute() {
@@ -250,6 +256,7 @@ final class ContinueAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.sourceId, "continue")
         XCTAssertEqual(adapter.displayName, "Continue CLI")
         XCTAssertEqual(adapter.defaultPath, "~/.continue/sessions")
+        XCTAssertTrue(adapter.supportsRecordCorrections)
         XCTAssertEqual(AgentFilterBarView.displayName(for: "continue"), "Continue CLI")
 
         try writeSession(validSessionJSON(content: "scan"))

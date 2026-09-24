@@ -13,10 +13,17 @@ private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
     var fetchCallCount = 0
     var newCursorToReturn: SyncCursor = .rowId(1)
     var onFetch: (@Sendable () async -> Void)? = nil
+    let supportsRecordCorrections: Bool
 
-    init(sourceId: String = "mock", path: URL? = nil, onFetch: (@Sendable () async -> Void)? = nil) {
+    init(
+        sourceId: String = "mock",
+        path: URL? = nil,
+        supportsRecordCorrections: Bool = false,
+        onFetch: (@Sendable () async -> Void)? = nil
+    ) {
         self.sourceId = sourceId
         self.path = path
+        self.supportsRecordCorrections = supportsRecordCorrections
         self.onFetch = onFetch
     }
 
@@ -253,6 +260,105 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(count, 1)
 
         await fulfillment(of: [exp], timeout: 2.0)
+    }
+
+    func testCorrectionCapableAdapterUpdatesExistingRecordAndSuppressesEqualRepeatNotification() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        func record(input: Int, output: Int, cost: Double) -> UnifiedTokenRecord {
+            UnifiedTokenRecord(
+                id: "same-id",
+                sourceId: "correctable",
+                timestamp: Date(timeIntervalSince1970: 1_000),
+                dayKey: "2026-09-11",
+                sessionKey: "session",
+                projectFolder: nil,
+                model: "model",
+                provider: nil,
+                inputTokens: input,
+                outputTokens: output,
+                rawCostUSD: cost
+            )
+        }
+
+        let original = record(input: 10, output: 2, cost: 0.20)
+        let corrected = record(input: 25, output: 7, cost: 0.70)
+        try db.insertRecords([original])
+
+        let mock = MockSyncAdapter(
+            sourceId: "correctable",
+            path: testDir,
+            supportsRecordCorrections: true
+        )
+        mock.recordsToReturn = [corrected]
+        mock.newCursorToReturn = .rowId(2)
+        registry.register(mock)
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+
+        let notificationExpectation = expectation(description: "correction notification")
+        let observer = NotificationCenter.default.addObserver(
+            forName: .bennettUsageDataDidUpdate,
+            object: nil,
+            queue: .main
+        ) { notification in
+            XCTAssertEqual(notification.userInfo?["ingested"] as? Int, 1)
+            notificationExpectation.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let changedCount = try await coordinator.syncAll()
+        XCTAssertEqual(changedCount, 1)
+        await fulfillment(of: [notificationExpectation], timeout: 2.0)
+
+        mock.newCursorToReturn = .rowId(2)
+        let repeatedCount = try await coordinator.syncAll()
+        XCTAssertEqual(repeatedCount, 0)
+        XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0), [corrected])
+        let rollup = try XCTUnwrap(try db.fetchDailyRollups(forYear: 2026).first)
+        XCTAssertEqual(rollup.totalTokens, 32)
+        XCTAssertEqual(rollup.costUSD, 0.70, accuracy: 0.000_001)
+    }
+
+    func testImmutableAdapterDoesNotCorrectExistingRecord() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        let original = makeRecord(id: "same-id", sourceId: "immutable")
+        let replacement = UnifiedTokenRecord(
+            id: "same-id",
+            sourceId: "immutable",
+            timestamp: original.timestamp,
+            dayKey: original.dayKey,
+            sessionKey: original.sessionKey,
+            projectFolder: nil,
+            model: "replacement",
+            provider: nil,
+            inputTokens: 25,
+            outputTokens: 7,
+            rawCostUSD: 0.70
+        )
+        try db.insertRecords([original])
+
+        let mock = MockSyncAdapter(sourceId: "immutable", path: testDir)
+        mock.recordsToReturn = [replacement]
+        mock.newCursorToReturn = .rowId(2)
+        registry.register(mock)
+
+        let changedCount = try await SyncCoordinator(database: db, registry: registry).syncAll()
+        XCTAssertEqual(changedCount, 0)
+        let saved = try XCTUnwrap(try db.fetchRecords(sinceTimestamp: 0).first)
+        XCTAssertEqual(saved.id, original.id)
+        XCTAssertEqual(saved.model, original.model)
+        XCTAssertEqual(saved.inputTokens, original.inputTokens)
+        XCTAssertEqual(saved.outputTokens, original.outputTokens)
+        XCTAssertEqual(saved.rawCostUSD, original.rawCostUSD)
     }
 
     func testDatabaseIdentityCursorCodableRoundTrip() throws {

@@ -50,6 +50,22 @@ public final class DatabaseManager: @unchecked Sendable {
     private static let insertChunkRows = 50
     /// Primary-key probe used to learn which of a batch's records are new.
     private static let recordExistsSQL = "SELECT 1 FROM unified_token_records WHERE id = ?;"
+    /// Full existing row used only by explicitly correction-capable adapters.
+    private static let existingRecordSQL = """
+    SELECT source_id, timestamp, day_key, session_key, project_folder, model, provider,
+           input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd
+    FROM unified_token_records WHERE id = ?;
+    """
+    /// Parameter numbers deliberately match `bindRecord`, allowing correction
+    /// rows to reuse the same binding helper and column ordering as inserts.
+    private static let updateRecordSQL = """
+    UPDATE unified_token_records SET
+        source_id = ?2, timestamp = ?3, day_key = ?4, session_key = ?5,
+        project_folder = ?6, model = ?7, provider = ?8,
+        input_tokens = ?9, output_tokens = ?10, cache_read_tokens = ?11,
+        cache_write_tokens = ?12, total_tokens = ?13, cost_usd = ?14
+    WHERE id = ?1;
+    """
     /// Constant-shape upserts routed through `cachedStatement` instead of
     /// prepare/finalize on every `insertRecords` call.
     private static let rollupUpsertSQL = """
@@ -265,15 +281,67 @@ public final class DatabaseManager: @unchecked Sendable {
         return prepared
     }
 
-    /// Inserts records with `INSERT OR IGNORE` and returns the number of rows
-    /// that were *actually* inserted into `unified_token_records` (duplicates
-    /// already present are not counted). Callers use this to suppress data-did-
-    /// change notifications when a sync re-parsed an unchanged file.
+    private static func rollupDelta(
+        for record: UnifiedTokenRecord,
+        multiplier: Int64 = 1
+    ) -> RollupDelta {
+        RollupDelta(
+            totalTokens: Int64(record.totalTokens) * multiplier,
+            inputTokens: Int64(record.inputTokens) * multiplier,
+            outputTokens: Int64(record.outputTokens) * multiplier,
+            cacheTokens: Int64(record.cacheReadTokens + record.cacheWriteTokens) * multiplier,
+            costUSD: (record.rawCostUSD ?? 0.0) * Double(multiplier)
+        )
+    }
+
+    private static func record(from stmt: OpaquePointer) -> UnifiedTokenRecord {
+        let timestampMillis = sqlite3_column_int64(stmt, 1)
+        return UnifiedTokenRecord(
+            id: "",
+            sourceId: String(cString: sqlite3_column_text(stmt, 0)),
+            timestamp: Date(timeIntervalSince1970: Double(timestampMillis) / 1000.0),
+            dayKey: String(cString: sqlite3_column_text(stmt, 2)),
+            sessionKey: String(cString: sqlite3_column_text(stmt, 3)),
+            projectFolder: sqlite3_column_type(stmt, 4) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(stmt, 4)),
+            model: String(cString: sqlite3_column_text(stmt, 5)),
+            provider: sqlite3_column_type(stmt, 6) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(stmt, 6)),
+            inputTokens: Int(sqlite3_column_int(stmt, 7)),
+            outputTokens: Int(sqlite3_column_int(stmt, 8)),
+            cacheReadTokens: Int(sqlite3_column_int(stmt, 9)),
+            cacheWriteTokens: Int(sqlite3_column_int(stmt, 10)),
+            rawCostUSD: sqlite3_column_double(stmt, 12)
+        )
+    }
+
+    private static func recordsHaveSameStorageValues(
+        _ lhs: UnifiedTokenRecord,
+        _ rhs: UnifiedTokenRecord
+    ) -> Bool {
+        Int64(lhs.timestamp.timeIntervalSince1970 * 1000) == Int64(rhs.timestamp.timeIntervalSince1970 * 1000)
+            && lhs.sourceId == rhs.sourceId
+            && lhs.dayKey == rhs.dayKey
+            && lhs.sessionKey == rhs.sessionKey
+            && lhs.projectFolder == rhs.projectFolder
+            && lhs.model == rhs.model
+            && lhs.provider == rhs.provider
+            && lhs.inputTokens == rhs.inputTokens
+            && lhs.outputTokens == rhs.outputTokens
+            && lhs.cacheReadTokens == rhs.cacheReadTokens
+            && lhs.cacheWriteTokens == rhs.cacheWriteTokens
+            && (lhs.rawCostUSD ?? 0.0) == (rhs.rawCostUSD ?? 0.0)
+    }
+
+    /// Inserts records and returns the number that actually changed. By
+    /// default, existing IDs use the efficient `INSERT OR IGNORE` behavior.
+    /// When `updateExisting` is true, a different existing row is corrected and
+    /// its old values are subtracted from `daily_rollups` before the new values
+    /// are added. Equal repeats remain no-ops.
     @discardableResult
     public func insertRecords(
         _ records: [UnifiedTokenRecord],
         updateCursorFor sourceId: String? = nil,
-        cursor: SyncCursor? = nil
+        cursor: SyncCursor? = nil,
+        updateExisting: Bool = false
     ) throws -> Int {
         guard !records.isEmpty || cursor != nil else { return 0 }
         // Codec + clock work happens before the global lock: the critical
@@ -286,7 +354,8 @@ public final class DatabaseManager: @unchecked Sendable {
         let nowMillis = Int64(Date().timeIntervalSince1970 * 1000)
         lock.lock(); defer { lock.unlock() }
 
-        var insertedCount = 0
+        var changedCount = 0
+        var rollupsChanged = false
         try execute(sql: "BEGIN TRANSACTION;")
         do {
             if !records.isEmpty {
@@ -296,30 +365,21 @@ public final class DatabaseManager: @unchecked Sendable {
                 // (day, source) pairs, so upserting per record executed tens of
                 // thousands of redundant statement steps.
                 var rollupDeltas: [RollupKey: RollupDelta] = [:]
+                var seenIds = Set<String>()
+                seenIds.reserveCapacity(records.count)
                 var index = 0
                 while index < records.count {
                     let chunkCount = min(Self.insertChunkRows, records.count - index)
 
-                    // Ask which of the chunk's primary keys are already stored.
-                    // `INSERT OR IGNORE` would silently drop those, and the rollup
-                    // deltas below must cover only genuinely new rows. Probing
-                    // first also means a batch that is entirely duplicate — the
-                    // shape a re-sync of unchanged files produces — performs no
-                    // writes at all. Measured ~2x faster than stepping an
-                    // `INSERT OR IGNORE` per duplicate row at 46k rows, and
-                    // faster than reading the accepted rows back with `RETURNING`.
+                    // Probe first so duplicate batches do no writes and rollup
+                    // deltas cover exactly the rows that changed.
                     let probe = try cachedStatement(
-                        sql: Self.recordExistsSQL,
+                        sql: updateExisting ? Self.existingRecordSQL : Self.recordExistsSQL,
                         errorCode: 3,
-                        description: "record existence statement"
+                        description: updateExisting ? "existing record statement" : "record existence statement"
                     )
                     var freshRecords: [UnifiedTokenRecord] = []
                     freshRecords.reserveCapacity(chunkCount)
-                    // A repeated id inside one batch must behave like the old
-                    // per-record `INSERT OR IGNORE`: only the first occurrence is
-                    // stored, so only it may contribute a rollup delta.
-                    var seenIds = Set<String>()
-                    seenIds.reserveCapacity(chunkCount)
                     for offset in 0..<chunkCount {
                         let record = records[index + offset]
                         guard seenIds.insert(record.id).inserted else { continue }
@@ -327,7 +387,60 @@ public final class DatabaseManager: @unchecked Sendable {
                         let step = sqlite3_step(probe)
                         if step == SQLITE_DONE {
                             freshRecords.append(record)
-                        } else if step != SQLITE_ROW {
+                        } else if step == SQLITE_ROW {
+                            guard updateExisting else {
+                                sqlite3_reset(probe)
+                                continue
+                            }
+                            let existing = Self.record(from: probe)
+                            sqlite3_reset(probe)
+                            guard !Self.recordsHaveSameStorageValues(existing, record) else { continue }
+
+                            let update = try cachedStatement(
+                                sql: Self.updateRecordSQL,
+                                errorCode: 7,
+                                description: "record update statement"
+                            )
+                            Self.bindRecord(update, baseParameter: 0, record)
+                            guard sqlite3_step(update) == SQLITE_DONE,
+                                  sqlite3_changes(db) == 1 else {
+                                throw NSError(domain: "DatabaseManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "Failed to update record '\(record.id)': \(lastErrorMessage())"])
+                            }
+                            changedCount += 1
+
+                            // A metadata-only correction does not affect a rollup.
+                            // Otherwise subtract from the old (day, source) and add
+                            // to the new one, including when either key changed.
+                            let rollupValuesChanged = existing.totalTokens != record.totalTokens
+                                || existing.inputTokens != record.inputTokens
+                                || existing.outputTokens != record.outputTokens
+                                || existing.cacheReadTokens != record.cacheReadTokens
+                                || existing.cacheWriteTokens != record.cacheWriteTokens
+                                || (existing.rawCostUSD ?? 0.0) != (record.rawCostUSD ?? 0.0)
+                            if rollupValuesChanged {
+                                rollupsChanged = true
+                                let oldKey = RollupKey(dayKey: existing.dayKey, sourceId: existing.sourceId)
+                                var oldDelta = rollupDeltas[oldKey] ?? RollupDelta()
+                                let subtraction = Self.rollupDelta(for: existing, multiplier: -1)
+                                oldDelta.totalTokens += subtraction.totalTokens
+                                oldDelta.inputTokens += subtraction.inputTokens
+                                oldDelta.outputTokens += subtraction.outputTokens
+                                oldDelta.cacheTokens += subtraction.cacheTokens
+                                oldDelta.costUSD += subtraction.costUSD
+                                rollupDeltas[oldKey] = oldDelta
+
+                                let newKey = RollupKey(dayKey: record.dayKey, sourceId: record.sourceId)
+                                var newDelta = rollupDeltas[newKey] ?? RollupDelta()
+                                let addition = Self.rollupDelta(for: record)
+                                newDelta.totalTokens += addition.totalTokens
+                                newDelta.inputTokens += addition.inputTokens
+                                newDelta.outputTokens += addition.outputTokens
+                                newDelta.cacheTokens += addition.cacheTokens
+                                newDelta.costUSD += addition.costUSD
+                                rollupDeltas[newKey] = newDelta
+                            }
+                        } else {
+                            sqlite3_reset(probe)
                             throw NSError(domain: "DatabaseManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "Failed to look up record '\(record.id)': \(lastErrorMessage())"])
                         }
                         sqlite3_reset(probe)
@@ -350,18 +463,18 @@ public final class DatabaseManager: @unchecked Sendable {
                         guard sqlite3_step(stmt) == SQLITE_DONE else {
                             throw NSError(domain: "DatabaseManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "Failed to insert records: \(lastErrorMessage())"])
                         }
-                        insertedCount += Int(sqlite3_changes(db))
+                        changedCount += Int(sqlite3_changes(db))
+                        rollupsChanged = true
 
-                        // Same accumulation order per key as the previous
-                        // per-record `ON CONFLICT ... DO UPDATE SET x = x + excluded.x`.
                         for record in freshRecords {
                             let key = RollupKey(dayKey: record.dayKey, sourceId: record.sourceId)
+                            let addition = Self.rollupDelta(for: record)
                             var delta = rollupDeltas[key] ?? RollupDelta()
-                            delta.totalTokens += Int64(record.totalTokens)
-                            delta.inputTokens += Int64(record.inputTokens)
-                            delta.outputTokens += Int64(record.outputTokens)
-                            delta.cacheTokens += Int64(record.cacheReadTokens + record.cacheWriteTokens)
-                            delta.costUSD += record.rawCostUSD ?? 0.0
+                            delta.totalTokens += addition.totalTokens
+                            delta.inputTokens += addition.inputTokens
+                            delta.outputTokens += addition.outputTokens
+                            delta.cacheTokens += addition.cacheTokens
+                            delta.costUSD += addition.costUSD
                             rollupDeltas[key] = delta
                         }
                     }
@@ -413,16 +526,15 @@ public final class DatabaseManager: @unchecked Sendable {
             }
 
             try execute(sql: "COMMIT;")
-            // Only a real insert changes `daily_rollups`. A batch that was fully
-            // deduped by `INSERT OR IGNORE` leaves the rollup table untouched, so
-            // bumping the revision here would needlessly invalidate
-            // `yearlyRollupsCache` and force a rollup refetch (U-12).
-            if insertedCount > 0 { rollupsRevision += 1 }
+            // Equal duplicates and metadata-only corrections do not invalidate
+            // the memoized aggregate. `changedCount` separately controls the
+            // coordinator's change notification.
+            if rollupsChanged { rollupsRevision += 1 }
         } catch {
             try? execute(sql: "ROLLBACK;")
             throw error
         }
-        return insertedCount
+        return changedCount
     }
 
     public func fetchDailyRollups(forYear year: Int) throws -> [DailyRollup] {

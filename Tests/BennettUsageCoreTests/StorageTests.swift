@@ -81,6 +81,101 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(rollups[0].totalTokens, 300)
     }
 
+    func testCorrectionUpdatesRecordAndRollupByDifference() throws {
+        let original = UnifiedTokenRecord(
+            id: "corrected",
+            sourceId: "continue",
+            timestamp: Date(timeIntervalSince1970: 1_000),
+            dayKey: "2026-09-11",
+            sessionKey: "session-old",
+            projectFolder: "/old",
+            model: "old-model",
+            provider: "old-provider",
+            inputTokens: 10,
+            outputTokens: 2,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            rawCostUSD: 0.20
+        )
+        let corrected = UnifiedTokenRecord(
+            id: "corrected",
+            sourceId: "continue",
+            timestamp: Date(timeIntervalSince1970: 90_000),
+            dayKey: "2026-09-12",
+            sessionKey: "session-new",
+            projectFolder: "/new",
+            model: "new-model",
+            provider: "new-provider",
+            inputTokens: 25,
+            outputTokens: 7,
+            cacheReadTokens: 3,
+            cacheWriteTokens: 2,
+            rawCostUSD: 0.70
+        )
+
+        XCTAssertEqual(try db.insertRecords([original]), 1)
+        XCTAssertEqual(try db.insertRecords([corrected], updateExisting: true), 1)
+        XCTAssertEqual(try db.insertRecords([corrected], updateExisting: true), 0)
+
+        let saved = try XCTUnwrap(try db.fetchRecords(sinceTimestamp: 0).first)
+        XCTAssertEqual(saved.sourceId, corrected.sourceId)
+        XCTAssertEqual(saved.timestamp.timeIntervalSince1970, corrected.timestamp.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(saved.dayKey, corrected.dayKey)
+        XCTAssertEqual(saved.sessionKey, corrected.sessionKey)
+        XCTAssertEqual(saved.projectFolder, corrected.projectFolder)
+        XCTAssertEqual(saved.model, corrected.model)
+        XCTAssertEqual(saved.provider, corrected.provider)
+        XCTAssertEqual(saved.inputTokens, corrected.inputTokens)
+        XCTAssertEqual(saved.outputTokens, corrected.outputTokens)
+        XCTAssertEqual(saved.cacheReadTokens, corrected.cacheReadTokens)
+        XCTAssertEqual(saved.cacheWriteTokens, corrected.cacheWriteTokens)
+        XCTAssertEqual(saved.rawCostUSD, corrected.rawCostUSD)
+
+        let rollups = try db.fetchDailyRollups(forYear: 2026)
+        XCTAssertEqual(rollups.count, 2)
+        let oldRollup = try XCTUnwrap(rollups.first { $0.dayKey == original.dayKey })
+        XCTAssertEqual(oldRollup.totalTokens, 0)
+        XCTAssertEqual(oldRollup.inputTokens, 0)
+        XCTAssertEqual(oldRollup.outputTokens, 0)
+        XCTAssertEqual(oldRollup.cacheTokens, 0)
+        XCTAssertEqual(oldRollup.costUSD, 0)
+        let newRollup = try XCTUnwrap(rollups.first { $0.dayKey == corrected.dayKey })
+        XCTAssertEqual(newRollup.totalTokens, 37)
+        XCTAssertEqual(newRollup.inputTokens, 25)
+        XCTAssertEqual(newRollup.outputTokens, 7)
+        XCTAssertEqual(newRollup.cacheTokens, 5)
+        XCTAssertEqual(newRollup.costUSD, 0.70, accuracy: 0.000_001)
+    }
+
+    func testImmutableInsertModeKeepsExistingRecordAndRollup() throws {
+        let original = makeRollupTestRecord(input: 10, output: 2, cost: 0.20)
+        let replacement = makeRollupTestRecord(input: 25, output: 7, cost: 0.70)
+
+        XCTAssertEqual(try db.insertRecords([original]), 1)
+        XCTAssertEqual(try db.insertRecords([replacement]), 0)
+
+        XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0), [original])
+        let rollup = try XCTUnwrap(try db.fetchDailyRollups(forYear: 2026).first)
+        XCTAssertEqual(rollup.totalTokens, 12)
+        XCTAssertEqual(rollup.costUSD, 0.20, accuracy: 0.000_001)
+    }
+
+    private func makeRollupTestRecord(input: Int, output: Int, cost: Double) -> UnifiedTokenRecord {
+        UnifiedTokenRecord(
+            id: "immutable",
+            sourceId: "immutable-source",
+            timestamp: Date(timeIntervalSince1970: 1_000),
+            dayKey: "2026-09-11",
+            sessionKey: "session",
+            projectFolder: nil,
+            model: "model",
+            provider: nil,
+            inputTokens: input,
+            outputTokens: output,
+            rawCostUSD: cost
+        )
+    }
+
     func testRollupUpsertAccumulation() throws {
         let now = Date()
         let record1 = UnifiedTokenRecord(

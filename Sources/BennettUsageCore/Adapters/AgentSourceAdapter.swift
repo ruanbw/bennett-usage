@@ -6,6 +6,10 @@ public protocol AgentSourceAdapter: Sendable {
     var brandColorHex: String { get }
     var sfSymbolIcon: String { get }
     var defaultPath: String { get }
+    /// Whether records with the same stable ID can receive a corrected snapshot.
+    /// Defaults to `false` so adapters whose records are immutable retain the
+    /// efficient insert-and-ignore persistence path.
+    var supportsRecordCorrections: Bool { get }
 
     func detectDefaultPath() -> URL?
     func auxiliaryWatchRoots(for dataRoot: URL) -> [URL]
@@ -98,6 +102,8 @@ extension AgentSourceAdapter {
     /// Additional source trees that should trigger synchronization without
     /// replacing the primary data root passed to `fetchIncrementalRecords`.
     public func auxiliaryWatchRoots(for dataRoot: URL) -> [URL] { [] }
+
+    public var supportsRecordCorrections: Bool { false }
 
     /// `true` marks adapters whose `fetchIncrementalRecords` is a stub
     /// (returns no records); the coordinator then skips syncing and watching

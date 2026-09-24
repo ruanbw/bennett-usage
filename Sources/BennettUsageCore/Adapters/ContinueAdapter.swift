@@ -14,6 +14,7 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
     public let brandColorHex: String = "#3F8CFF"
     public let sfSymbolIcon: String = "terminal"
     public let defaultPath: String = "~/.continue/sessions"
+    public let supportsRecordCorrections: Bool = true
 
     public init() {}
 

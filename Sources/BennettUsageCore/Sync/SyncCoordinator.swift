@@ -171,21 +171,19 @@ public actor SyncCoordinator {
                     )
                 }
 
-                // Persist and count only the rows actually inserted (U-12).
-                // `INSERT OR IGNORE` drops re-parsed duplicates, so the parsed
-                // count would over-report and post a no-op refresh notification
-                // (a full ~194 ms dashboard recompute) even when nothing
-                // changed. No new records and an unchanged cursor → nothing to
-                // persist (inserted stays 0).
-                var inserted = 0
+                // Persist and count only rows that actually changed. Immutable
+                // adapters keep insert-and-ignore semantics; adapters that
+                // explicitly opt in may correct an existing stable ID.
+                var changed = 0
                 if !pricedRecords.isEmpty || finalCursor != cursor {
-                    inserted = try database.insertRecords(
+                    changed = try database.insertRecords(
                         pricedRecords,
                         updateCursorFor: adapter.sourceId,
-                        cursor: finalCursor
+                        cursor: finalCursor,
+                        updateExisting: adapter.supportsRecordCorrections
                     )
                 }
-                totalIngested += inserted
+                totalIngested += changed
             } catch {
                 print("Error syncing adapter \(adapter.sourceId): \(error)")
             }
