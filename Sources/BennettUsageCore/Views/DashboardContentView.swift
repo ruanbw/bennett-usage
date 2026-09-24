@@ -64,6 +64,8 @@ public struct DashboardContentView: View {
     @State private var annualTrendPoints: [TrendPoint] = []
     @State private var heatmapDisplayMode: HeatmapDisplayMode = .calendar
     @State private var isSettingsHovered: Bool = false
+    @State private var todaySummary: TodaySummary?
+    @State private var lastDataRefreshAt: Date?
 
     public init(
         aggregator: MetricsAggregator,
@@ -120,7 +122,7 @@ public struct DashboardContentView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: AppTheme.Layout.sectionSpacing) {
                 headerSection
                 agentFilterSection
                 heroSection
@@ -132,12 +134,15 @@ public struct DashboardContentView: View {
                     localization: localization,
                     pricingEngine: pricingEngine
                 )
+                todayFocusSection
                 distributionChartsSection
                 heatmapSection
                 projectsSection
+                dataFreshnessFooter
             }
-            .padding(24)
+            .padding(AppTheme.Layout.canvasPadding)
         }
+        .background(AppTheme.Canvas.background)
         .task(id: RefreshKey(scope: .period, range: selectedRange, year: nil, toolFilter: selectedToolFilter, tick: refreshTick)) {
             await loadPeriodMetrics()
         }
@@ -150,10 +155,14 @@ public struct DashboardContentView: View {
         .task(id: Self.yearListRefreshKey(tick: refreshTick)) {
             await loadAvailableYears()
         }
+        .task(id: RefreshKey(scope: .today, range: .today, year: nil, toolFilter: selectedToolFilter, tick: refreshTick)) {
+            await loadTodaySummary()
+        }
         .task {
             await autoRefreshLoop()
         }
         .onReceive(NotificationCenter.default.publisher(for: .bennettUsageDataDidUpdate)) { _ in
+            lastDataRefreshAt = Date()
             guard dashboardWindowIsVisible() else { return }
             Task { await loadDataThrottled() }
         }
@@ -280,8 +289,9 @@ public struct DashboardContentView: View {
                     Image(systemName: "calendar.badge.clock")
                         .font(.system(size: 11))
                     Text(localization.localized(.viewingAnnualDashboard, arguments: String(y)))
-                        .font(.caption)
+                        .font(AppTheme.Typography.caption)
                         .fontWeight(.medium)
+                        .lineLimit(1)
                     Button {
                         selectedRange = .last30Days
                     } label: {
@@ -291,26 +301,25 @@ public struct DashboardContentView: View {
                     .buttonStyle(.plain)
                     .help(localization.localized(.exitAnnualDashboard))
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.control, style: .continuous)
                         .fill(AppTheme.Surface.selected)
                 )
                 .foregroundColor(AppTheme.Status.accent)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             if let onOpenSettings = onOpenSettings {
                 Button(action: onOpenSettings) {
                     Image(systemName: "gearshape")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: AppTheme.Control.icon, weight: .medium))
                         .foregroundColor(isSettingsHovered ? AppTheme.Text.primary : AppTheme.Text.secondary)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
+                        .frame(width: AppTheme.Control.compactHeight, height: AppTheme.Control.compactHeight)
                         .background(
-                            RoundedRectangle(cornerRadius: 6)
+                            RoundedRectangle(cornerRadius: AppTheme.Radius.control, style: .continuous)
                                 .fill(isSettingsHovered ? AppTheme.Surface.hover : Color.clear)
                         )
                 }
@@ -319,6 +328,7 @@ public struct DashboardContentView: View {
                     isSettingsHovered = hovering
                 }
                 .help(localization.localized(.settings))
+                .accessibilityLabel(localization.localized(.settings))
             }
         }
     }
@@ -342,144 +352,207 @@ public struct DashboardContentView: View {
         VStack(spacing: 16) {
             heroTopRow
 
-            Divider()
-                .opacity(0.3)
+            AppTheme.Border.divider
+                .frame(height: AppTheme.Layout.hairline)
 
             heroMetricsRibbon
         }
         .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: AppTheme.Radius.card, style: .continuous)
                 .fill(AppTheme.Surface.primary)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: AppTheme.Radius.card, style: .continuous)
+                .stroke(AppTheme.Border.subtle, lineWidth: AppTheme.Layout.hairline)
         )
     }
 
     private var heroTopRow: some View {
-        HStack(alignment: .bottom) {
-            // Left: Agent identity dot (6pt) + agent name / "所有 Agent 用量" + large tabular token count + compact badge
-            let agentDotColor = selectedToolFilter.flatMap { AgentFilterBarView.colorMap[$0] ?? cachedAgentColors[$0] } ?? AppTheme.Status.accent
-            let agentTitle = selectedToolFilter != nil
-                ? AgentFilterBarView.displayName(for: selectedToolFilter!)
-                : localization.localized(.allAgentsUsage)
-            let totalTokens = periodMetrics?.totalTokens ?? 0
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(agentDotColor)
-                        .frame(width: 6, height: 6)
-
-                    Text(agentTitle)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(AppTheme.Text.secondary)
-                }
-
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(TokenFormatter.formatFull(totalTokens))
-                        .font(.system(size: 32, weight: .semibold, design: .rounded))
-                        .foregroundColor(AppTheme.Text.primary)
-                        .monospacedDigit()
-
-                    Text("≈ \(TokenFormatter.formatCompact(totalTokens))")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(AppTheme.Text.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(AppTheme.Surface.subtle)
-                        .cornerRadius(6)
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 20) {
+                heroTotalMetric
+                Spacer(minLength: 12)
+                heroSpendMetric
             }
-            .help("\(TokenFormatter.formatFull(totalTokens)) tokens")
-
-            Spacer()
-
-            // Right: Period spend in font(.system(size: 28, weight: .semibold, design: .rounded)) and AppTheme.Status.success with period subtitle above
-            VStack(alignment: .trailing, spacing: 6) {
-                Text(localization.localized(.spendSuffix, arguments: rangeSubtitle))
-                    .font(.caption)
-                    .foregroundColor(AppTheme.Text.secondary)
-
-                Text(pricingEngine.spendString(periodMetrics?.totalCostUSD ?? 0.0))
-                    .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    .foregroundColor(AppTheme.Status.success)
-                    .monospacedDigit()
+            VStack(alignment: .leading, spacing: 14) {
+                heroTotalMetric
+                heroSpendMetric
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
-    private var heroMetricsRibbon: some View {
-        HStack(alignment: .center, spacing: 12) {
-            ribbonMetricColumn(
-                label: localization.localized(.freshInput),
-                value: TokenFormatter.formatCompact(periodMetrics?.inputTokens ?? 0),
-                fullTokens: periodMetrics?.inputTokens ?? 0
-            )
+    private var heroTotalMetric: some View {
+        let agentDotColor = selectedToolFilter.flatMap { AgentFilterBarView.colorMap[$0] ?? cachedAgentColors[$0] } ?? AppTheme.Status.accent
+        let agentTitle = selectedToolFilter.map { AgentFilterBarView.displayName(for: $0) }
+            ?? localization.localized(.allAgentsUsage)
+        let totalTokens = periodMetrics?.totalTokens ?? 0
 
-            Divider().frame(height: 24).opacity(0.3)
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(agentDotColor)
+                    .frame(width: 7, height: 7)
+                Text(agentTitle)
+                    .font(AppTheme.Typography.label)
+                    .fontWeight(.medium)
+                    .foregroundColor(AppTheme.Text.secondary)
+                    .lineLimit(1)
+            }
 
-            ribbonMetricColumn(
-                label: localization.localized(.modelOutput),
-                value: TokenFormatter.formatCompact(periodMetrics?.outputTokens ?? 0),
-                fullTokens: periodMetrics?.outputTokens ?? 0
-            )
+            Text(TokenFormatter.formatCompact(totalTokens))
+                .font(AppTheme.Typography.heroMetric)
+                .foregroundColor(AppTheme.Text.primary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .contentTransition(.numericText())
 
-            Divider().frame(height: 24).opacity(0.3)
-
-            ribbonMetricColumn(
-                label: localization.localized(.cacheWrite),
-                value: TokenFormatter.formatCompact(periodMetrics?.cacheWriteTokens ?? 0),
-                fullTokens: periodMetrics?.cacheWriteTokens ?? 0
-            )
-
-            Divider().frame(height: 24).opacity(0.3)
-
-            ribbonMetricColumn(
-                label: localization.localized(.cacheRead),
-                value: TokenFormatter.formatCompact(periodMetrics?.cacheReadTokens ?? 0),
-                fullTokens: periodMetrics?.cacheReadTokens ?? 0
-            )
-
-            Divider().frame(height: 24).opacity(0.3)
-
-            ribbonCacheHitRateColumn
+            Text("\(TokenFormatter.formatFull(totalTokens)) \(localization.localized(.tokenUnit))")
+                .font(AppTheme.Typography.exactValue)
+                .foregroundColor(AppTheme.Text.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
+        .help("\(TokenFormatter.formatFull(totalTokens)) \(localization.localized(.tokenUnit))")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(agentTitle), \(TokenFormatter.formatFull(totalTokens)) \(localization.localized(.tokenUnit))")
+    }
+
+    private var heroSpendMetric: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            Text(localization.localized(.spendSuffix, arguments: rangeSubtitle))
+                .font(AppTheme.Typography.caption)
+                .foregroundColor(AppTheme.Text.secondary)
+                .lineLimit(1)
+
+            Text(pricingEngine.spendString(periodMetrics?.totalCostUSD ?? 0.0))
+                .font(AppTheme.Typography.heroSpend)
+                .foregroundColor(AppTheme.Status.success)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.control, style: .continuous)
+                .fill(AppTheme.Surface.subtle.opacity(0.72))
+        )
+        .accessibilityElement(children: .combine)
+    }
+
+    private var heroMetricsRibbon: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .center, spacing: 12) {
+                ribbonMetricColumn(
+                    label: localization.localized(.freshInput),
+                    value: TokenFormatter.formatCompact(periodMetrics?.inputTokens ?? 0),
+                    fullTokens: periodMetrics?.inputTokens ?? 0
+                )
+
+                Divider().frame(height: 24).opacity(0.3)
+
+                ribbonMetricColumn(
+                    label: localization.localized(.modelOutput),
+                    value: TokenFormatter.formatCompact(periodMetrics?.outputTokens ?? 0),
+                    fullTokens: periodMetrics?.outputTokens ?? 0
+                )
+
+                Divider().frame(height: 24).opacity(0.3)
+
+                ribbonMetricColumn(
+                    label: localization.localized(.cacheWrite),
+                    value: TokenFormatter.formatCompact(periodMetrics?.cacheWriteTokens ?? 0),
+                    fullTokens: periodMetrics?.cacheWriteTokens ?? 0
+                )
+
+                Divider().frame(height: 24).opacity(0.3)
+
+                ribbonMetricColumn(
+                    label: localization.localized(.cacheRead),
+                    value: TokenFormatter.formatCompact(periodMetrics?.cacheReadTokens ?? 0),
+                    fullTokens: periodMetrics?.cacheReadTokens ?? 0
+                )
+
+                Divider().frame(height: 24).opacity(0.3)
+
+                ribbonCacheHitRateColumn
+            }
+            tokenCompositionBar
+        }
+    }
+
+    /// Token composition is derived exclusively from the four first-class
+    /// PeriodMetrics counters. It intentionally does not reuse the model
+    /// distribution, whose rows may represent a top-N subset.
+    private var tokenCompositionBar: some View {
+        let input = periodMetrics?.inputTokens ?? 0
+        let output = periodMetrics?.outputTokens ?? 0
+        let cacheRead = periodMetrics?.cacheReadTokens ?? 0
+        let cacheWrite = periodMetrics?.cacheWriteTokens ?? 0
+        let total = max(0, input + output + cacheRead + cacheWrite)
+        let segments: [(id: String, tokens: Int, color: Color)] = [
+            ("input", input, AppTheme.Status.accent),
+            ("output", output, AppTheme.Agent.claude),
+            ("cacheRead", cacheRead, AppTheme.Status.success),
+            ("cacheWrite", cacheWrite, AppTheme.Agent.copilot)
+        ]
+
+        return GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(AppTheme.Surface.subtle)
+                HStack(spacing: 0) {
+                    ForEach(segments, id: \.id) { segment in
+                        if segment.tokens > 0, total > 0 {
+                            Rectangle()
+                                .fill(segment.color)
+                                .frame(width: proxy.size.width * CGFloat(segment.tokens) / CGFloat(total))
+                        }
+                    }
+                }
+                .clipShape(Capsule())
+            }
+        }
+        .frame(height: 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(localization.localized(.rangeTokens, arguments: TokenFormatter.formatFull(total)))
     }
 
     private func ribbonMetricColumn(label: String, value: String, fullTokens: Int) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.caption)
+                .font(AppTheme.Typography.caption)
                 .foregroundColor(AppTheme.Text.secondary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.8)
 
             Text(value)
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .font(AppTheme.Typography.metricValue)
                 .foregroundColor(AppTheme.Text.primary)
                 .monospacedDigit()
                 .lineLimit(1)
+                .minimumScaleFactor(0.8)
 
             Color.clear
                 .frame(height: 3)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .help("\(TokenFormatter.formatFull(fullTokens)) tokens")
+        .help("\(TokenFormatter.formatFull(fullTokens)) \(localization.localized(.tokenUnit))")
     }
 
     private var ribbonCacheHitRateColumn: some View {
         let hitRate = periodMetrics?.cacheHitRate ?? 0.0
         return VStack(alignment: .leading, spacing: 4) {
             Text(localization.localized(.cacheHitRate))
-                .font(.caption)
+                .font(AppTheme.Typography.caption)
                 .foregroundColor(AppTheme.Text.secondary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.8)
 
             Text(String(format: "%.1f%%", hitRate * 100))
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .font(AppTheme.Typography.metricValue)
                 .foregroundColor(AppTheme.Text.primary)
                 .monospacedDigit()
                 .lineLimit(1)
@@ -813,56 +886,223 @@ public struct DashboardContentView: View {
         )
     }
 
+    // MARK: - Today Focus
+
+    private var todayFocusSection: some View {
+        let summary = todaySummary
+        let activeTools = MenuBarPopoverView.activeTools(for: summary)
+        let topAgent = activeTools.first
+        let totalTokens = summary?.totalTokens ?? 0
+        let totalCost = summary?.totalCostUSD ?? 0.0
+
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 0) {
+                todayFocusMetric(
+                    title: localization.localized(.todaysTokens),
+                    value: TokenFormatter.formatCompact(totalTokens),
+                    detail: TokenFormatter.formatFull(totalTokens),
+                    symbol: "sparkles",
+                    color: AppTheme.Status.accent
+                )
+                focusDivider
+                todayFocusMetric(
+                    title: localization.localized(.estimatedCost),
+                    value: pricingEngine.spendString(totalCost),
+                    detail: nil,
+                    symbol: "dollarsign.circle",
+                    color: AppTheme.Status.success
+                )
+                focusDivider
+                todayFocusMetric(
+                    title: localization.localized(.mostActiveAgent),
+                    value: topAgent.map { AgentFilterBarView.displayName(for: $0.id) } ?? localization.localized(.none),
+                    detail: topAgent.map { TokenFormatter.formatCompact($0.tokens) },
+                    symbol: "bolt.fill",
+                    color: topAgent.flatMap { cachedAgentColors[$0.id] } ?? AppTheme.Text.secondary
+                )
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                todayFocusMetric(
+                    title: localization.localized(.todaysTokens),
+                    value: TokenFormatter.formatCompact(totalTokens),
+                    detail: TokenFormatter.formatFull(totalTokens),
+                    symbol: "sparkles",
+                    color: AppTheme.Status.accent
+                )
+                focusDivider
+                todayFocusMetric(
+                    title: localization.localized(.estimatedCost),
+                    value: pricingEngine.spendString(totalCost),
+                    detail: nil,
+                    symbol: "dollarsign.circle",
+                    color: AppTheme.Status.success
+                )
+                focusDivider
+                todayFocusMetric(
+                    title: localization.localized(.mostActiveAgent),
+                    value: topAgent.map { AgentFilterBarView.displayName(for: $0.id) } ?? localization.localized(.none),
+                    detail: topAgent.map { TokenFormatter.formatCompact($0.tokens) },
+                    symbol: "bolt.fill",
+                    color: topAgent.flatMap { cachedAgentColors[$0.id] } ?? AppTheme.Text.secondary
+                )
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.card, style: .continuous)
+                .fill(AppTheme.Surface.primary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.card, style: .continuous)
+                .stroke(AppTheme.Border.subtle, lineWidth: AppTheme.Layout.hairline)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(localization.localized(.todaysTokens))
+    }
+
+    private var focusDivider: some View {
+        AppTheme.Border.divider
+            .frame(width: AppTheme.Layout.hairline, height: 42)
+    }
+
+    private func todayFocusMetric(
+        title: String,
+        value: String,
+        detail: String?,
+        symbol: String,
+        color: Color
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(color)
+                .frame(width: 30, height: 30)
+                .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(AppTheme.Typography.caption)
+                    .foregroundColor(AppTheme.Text.secondary)
+                    .lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(value)
+                        .font(AppTheme.Typography.metricValue)
+                        .foregroundColor(AppTheme.Text.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    if let detail {
+                        Text(detail)
+                            .font(.caption2)
+                            .foregroundColor(AppTheme.Text.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            Spacer(minLength: 4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 6)
+        .accessibilityElement(children: .combine)
+    }
+
     // MARK: - Distribution Charts
 
     private var distributionChartsSection: some View {
-        HStack(alignment: .top, spacing: 16) {
-            let activeTools = toolDistribution.filter { $0.tokens > 0 }
-            let toolItems: [ProportionalDistributionCard.Item] = activeTools.map { item in
-                (
-                    id: item.tool,
-                    name: AgentFilterBarView.displayName(for: item.tool),
-                    tokens: item.tokens,
-                    costUSD: item.costUSD,
-                    color: cachedAgentColors[item.tool] ?? .gray
-                )
-            }
-            let totalToolTokens = toolItems.reduce(0) { $0 + $1.tokens }
-
-            ProportionalDistributionCard(
-                title: localization.localized(.toolDistribution),
-                subtitle: rangeSubtitle,
-                items: toolItems,
-                totalTokens: totalToolTokens,
-                localization: localization,
-                emptyMessage: localization.localized(.noToolData, arguments: rangeSubtitle),
-                emptyIcon: "wrench.and.screwdriver",
-                pricingEngine: pricingEngine
-            )
-
-            let activeModels = modelDistribution.filter { $0.tokens > 0 }
-            let modelItems: [ProportionalDistributionCard.Item] = activeModels.map { item in
-                (
-                    id: item.model,
-                    name: item.model,
-                    tokens: item.tokens,
-                    costUSD: item.costUSD,
-                    color: cachedModelColors[item.model] ?? .gray
-                )
-            }
-            let totalModelTokens = modelItems.reduce(0) { $0 + $1.tokens }
-
-            ProportionalDistributionCard(
-                title: localization.localized(.modelDistribution),
-                subtitle: rangeSubtitle,
-                items: modelItems,
-                totalTokens: totalModelTokens,
-                localization: localization,
-                emptyMessage: localization.localized(.noModelData, arguments: rangeSubtitle),
-                emptyIcon: "cpu",
-                pricingEngine: pricingEngine
+        let activeTools = toolDistribution.filter { $0.tokens > 0 }
+        let toolItems: [ProportionalDistributionCard.Item] = activeTools.map { item in
+            (
+                id: item.tool,
+                name: AgentFilterBarView.displayName(for: item.tool),
+                tokens: item.tokens,
+                costUSD: item.costUSD,
+                color: cachedAgentColors[item.tool] ?? .gray
             )
         }
+        let totalToolTokens = toolItems.reduce(0) { $0 + $1.tokens }
+
+        let activeModels = modelDistribution.filter { $0.tokens > 0 }
+        let modelItems: [ProportionalDistributionCard.Item] = activeModels.map { item in
+            (
+                id: item.model,
+                name: item.model,
+                tokens: item.tokens,
+                costUSD: item.costUSD,
+                color: cachedModelColors[item.model] ?? .gray
+            )
+        }
+        let totalModelTokens = modelItems.reduce(0) { $0 + $1.tokens }
+
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) {
+                ProportionalDistributionCard(
+                    title: localization.localized(.toolDistribution),
+                    subtitle: rangeSubtitle,
+                    items: toolItems,
+                    totalTokens: totalToolTokens,
+                    localization: localization,
+                    emptyMessage: localization.localized(.noToolData, arguments: rangeSubtitle),
+                    emptyIcon: "wrench.and.screwdriver",
+                    pricingEngine: pricingEngine
+                )
+                ProportionalDistributionCard(
+                    title: localization.localized(.modelDistribution),
+                    subtitle: rangeSubtitle,
+                    items: modelItems,
+                    totalTokens: totalModelTokens,
+                    localization: localization,
+                    emptyMessage: localization.localized(.noModelData, arguments: rangeSubtitle),
+                    emptyIcon: "cpu",
+                    pricingEngine: pricingEngine
+                )
+            }
+            VStack(spacing: 16) {
+                ProportionalDistributionCard(
+                    title: localization.localized(.toolDistribution),
+                    subtitle: rangeSubtitle,
+                    items: toolItems,
+                    totalTokens: totalToolTokens,
+                    localization: localization,
+                    emptyMessage: localization.localized(.noToolData, arguments: rangeSubtitle),
+                    emptyIcon: "wrench.and.screwdriver",
+                    pricingEngine: pricingEngine
+                )
+                ProportionalDistributionCard(
+                    title: localization.localized(.modelDistribution),
+                    subtitle: rangeSubtitle,
+                    items: modelItems,
+                    totalTokens: totalModelTokens,
+                    localization: localization,
+                    emptyMessage: localization.localized(.noModelData, arguments: rangeSubtitle),
+                    emptyIcon: "cpu",
+                    pricingEngine: pricingEngine
+                )
+            }
+        }
+    }
+
+    private var dataFreshnessFooter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 10, weight: .semibold))
+            Text(dataFreshnessText)
+                .font(.caption2)
+            Spacer(minLength: 0)
+        }
+        .foregroundColor(AppTheme.Text.tertiary)
+        .padding(.top, -8)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var dataFreshnessText: String {
+        guard let lastDataRefreshAt else {
+            return localization.localized(.noTokenUsage, arguments: rangeSubtitle)
+        }
+        let minutes = max(0, Int(Date().timeIntervalSince(lastDataRefreshAt) / 60))
+        if minutes == 0 {
+            return localization.localized(.syncedJustNow)
+        }
+        return String(format: localization.localized(.syncedMinutesAgo), minutes)
     }
 
     // MARK: - Top Projects
@@ -1063,6 +1303,7 @@ public struct DashboardContentView: View {
         case agents
         case annual
         case years
+        case today
     }
 
     struct RefreshKey: Hashable {
@@ -1194,6 +1435,16 @@ public struct DashboardContentView: View {
         }
     }
 
+    /// Today's focus is intentionally independent of the selected dashboard
+    /// range. It is a quick operational summary, while the hero and charts
+    /// continue to represent the active range/filter.
+    private func loadTodaySummary() async {
+        let summary = try? await aggregator.fetchTodaySummary()
+        if Task.isCancelled { return }
+        todaySummary = summary
+        lastDataRefreshAt = Date()
+    }
+
     /// Full refresh used by the throttled data-update notification path. Reuses
     /// the four dimension-scoped pipelines so there is a single code path.
     private func loadData() async {
@@ -1201,6 +1452,7 @@ public struct DashboardContentView: View {
         await loadRangeActiveAgents()
         await loadAnnualSummaryData()
         await loadAvailableYears()
+        await loadTodaySummary()
     }
 
     private func autoRefreshLoop() async {

@@ -67,50 +67,56 @@ public struct AgentFilterBarView: View {
     public var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                // "All Agents" pill
-                Button {
+                filterPill(
+                    title: localization.localized(.filterAllAgents),
+                    color: AppTheme.Status.accent,
+                    isSelected: isAllSelected
+                ) {
                     onSelect(nil)
-                } label: {
-                    Text(localization.localized(.filterAllAgents))
-                        .font(.caption)
-                        .fontWeight(isAllSelected ? .medium : .regular)
-                        .foregroundColor(isAllSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            Capsule()
-                                .fill(isAllSelected ? AppTheme.Surface.selected : Color.clear)
-                        )
                 }
-                .buttonStyle(.plain)
 
-                // Individual agent pills
                 ForEach(availableAgents, id: \.self) { agent in
-                    let isSelected = selectedAgent?.lowercased() == agent.lowercased()
-                    let color = Self.colorMap[agent] ?? .gray
-
-                    Button {
+                    filterPill(
+                        title: Self.displayName(for: agent),
+                        color: Self.colorMap[agent] ?? AppTheme.Harmonic.color(for: agent),
+                        isSelected: selectedAgent?.lowercased() == agent.lowercased()
+                    ) {
                         onSelect(agent)
-                    } label: {
-                        HStack(spacing: 5) {
-                            Circle()
-                                .fill(color)
-                                .frame(width: 6, height: 6)
-                            Text(Self.displayName(for: agent))
-                                .font(.caption)
-                                .fontWeight(isSelected ? .medium : .regular)
-                                .foregroundColor(isSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            Capsule()
-                                .fill(isSelected ? color.opacity(0.12) : Color.clear)
-                        )
                     }
-                    .buttonStyle(.plain)
                 }
             }
+            .padding(.vertical, 1)
         }
+        .accessibilityLabel(localization.localized(.filterAllAgents))
+    }
+
+    private func filterPill(
+        title: String,
+        color: Color,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 7, height: 7)
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .foregroundColor(isSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(isSelected ? color.opacity(0.12) : Color.clear)
+            )
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

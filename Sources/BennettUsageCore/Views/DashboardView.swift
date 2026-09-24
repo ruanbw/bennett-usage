@@ -34,7 +34,8 @@ public struct DashboardView: View {
             localization: localization,
             onOpenSettings: { presentation.isShowingSettings = true }
         )
-        .frame(minWidth: 960, minHeight: 680)
+        .frame(minWidth: 960, idealWidth: 1080, minHeight: 680, idealHeight: 740)
+        .background(AppTheme.Canvas.background)
         .sheet(isPresented: $presentation.isShowingSettings) {
             SettingsSheetView(
                 aggregator: aggregator,

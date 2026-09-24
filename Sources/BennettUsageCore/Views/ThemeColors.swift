@@ -49,6 +49,44 @@ extension Color {
 /// - Non-fatiguing, low-saturation, calm, editorial contrast.
 public enum AppTheme {
 
+    // MARK: - Semantic Typography
+
+    /// Shared type ramp for the menu-bar and dashboard surfaces. Keeping these
+    /// roles semantic makes it possible to tune density without changing the
+    /// information hierarchy of an individual screen.
+    public enum Typography {
+        public static let heroMetric = Font.system(size: 36, weight: .semibold, design: .rounded)
+        public static let heroSpend = Font.system(size: 24, weight: .semibold, design: .rounded)
+        public static let sectionTitle = Font.system(size: 16, weight: .semibold)
+        public static let metricValue = Font.system(size: 15, weight: .semibold, design: .rounded)
+        public static let exactValue = Font.system(size: 12, weight: .medium, design: .monospaced)
+        public static let label = Font.system(size: 11, weight: .medium)
+        public static let caption = Font.system(size: 11)
+    }
+
+    // MARK: - Layout & Controls
+
+    /// Density tokens shared by all three native surfaces.
+    public enum Layout {
+        public static let canvasPadding: CGFloat = 24
+        public static let sectionSpacing: CGFloat = 20
+        public static let cardPadding: CGFloat = 16
+        public static let compactSpacing: CGFloat = 10
+        public static let hairline: CGFloat = 0.5
+    }
+
+    public enum Radius {
+        public static let card: CGFloat = 12
+        public static let control: CGFloat = 8
+        public static let pill: CGFloat = 999
+    }
+
+    public enum Control {
+        public static let compactHeight: CGFloat = 28
+        public static let regularHeight: CGFloat = 32
+        public static let icon: CGFloat = 13
+    }
+
     // MARK: - Canvas & Surfaces
 
     public enum Canvas {

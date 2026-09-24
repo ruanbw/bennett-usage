@@ -159,29 +159,22 @@ public struct SettingsContentView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 0) {
-            // Left Sidebar
-            sidebarView
-                .frame(width: 200)
-
-            AppTheme.Border.divider
-                .frame(width: 0.5)
-
-            // Right Detail Content Area
-            VStack(spacing: 0) {
-                detailHeaderView
+        GeometryReader { proxy in
+            HStack(spacing: 0) {
+                if proxy.size.width < 680 {
+                    compactCategoryStrip
+                } else {
+                    sidebarView
+                        .frame(width: 190)
+                }
 
                 AppTheme.Border.divider
-                    .frame(height: 0.5)
+                    .frame(width: AppTheme.Layout.hairline)
 
-                ScrollView(.vertical, showsIndicators: true) {
-                    detailContentView
-                        .padding(24)
-                }
+                detailColumn
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(AppTheme.Canvas.background)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppTheme.Canvas.background)
         .alert(localization.localized(.clearRecordsConfirmTitle), isPresented: $isShowingClearAlert) {
             Button(localization.localized(.clearAllRecords), role: .destructive) {
@@ -208,31 +201,28 @@ public struct SettingsContentView: View {
     // MARK: - Sidebar View
     private var sidebarView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Sidebar Header
             HStack(spacing: 8) {
                 Image(systemName: "gearshape.2.fill")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(AppTheme.Status.accent)
                 Text(localization.localized(.settings))
                     .font(.headline.weight(.semibold))
                     .foregroundColor(AppTheme.Text.primary)
                 Spacer()
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 20)
-            .padding(.bottom, 14)
+            .padding(.horizontal, 14)
+            .padding(.top, 16)
+            .padding(.bottom, 10)
 
-            // Category Items
-            VStack(spacing: 4) {
+            VStack(spacing: 3) {
                 ForEach(SettingsCategory.allCases) { category in
                     categoryRow(category)
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 8)
 
             Spacer()
 
-            // Sidebar Footer: Active agents summary
             HStack(spacing: 6) {
                 Circle()
                     .fill(isAnyAgentConnected ? AppTheme.Status.success : AppTheme.Text.quaternary)
@@ -240,12 +230,88 @@ public struct SettingsContentView: View {
                 Text(String(format: localization.localized(.agentsConnected), connectedAgentCount))
                     .font(.caption2)
                     .foregroundColor(AppTheme.Text.secondary)
-                Spacer()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
         }
         .background(AppTheme.Surface.subtle.opacity(0.4))
+    }
+
+    private var compactCategoryStrip: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 4) {
+                ForEach(SettingsCategory.allCases) { category in
+                    Button {
+                        selectedCategory = category
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: category.systemImage)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(selectedCategory == category ? category.iconColor : AppTheme.Text.secondary)
+                            Text(category.title(localization: localization))
+                                .font(.system(size: 9, weight: selectedCategory == category ? .semibold : .regular))
+                                .foregroundColor(selectedCategory == category ? AppTheme.Text.primary : AppTheme.Text.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(selectedCategory == category ? AppTheme.Surface.selected : Color.clear)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(category.title(localization: localization))
+                    .accessibilityAddTraits(selectedCategory == category ? .isSelected : [])
+                }
+            }
+            .padding(6)
+        }
+        .frame(width: 82)
+        .background(AppTheme.Surface.subtle.opacity(0.4))
+    }
+
+    private var detailColumn: some View {
+        VStack(spacing: 0) {
+            detailHeaderView
+
+            AppTheme.Border.divider
+                .frame(height: AppTheme.Layout.hairline)
+
+            ScrollView(.vertical, showsIndicators: true) {
+                detailContentView
+                    .padding(24)
+            }
+
+            AppTheme.Border.divider
+                .frame(height: AppTheme.Layout.hairline)
+
+            privacyFooter
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppTheme.Canvas.background)
+    }
+
+    private var privacyFooter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(AppTheme.Status.success)
+            Text(localization.localized(.localFirstPrivate))
+                .font(.caption2)
+                .foregroundColor(AppTheme.Text.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 8)
+        .background(AppTheme.Surface.subtle.opacity(0.55))
+        .accessibilityElement(children: .combine)
     }
 
     private func categoryRow(_ category: SettingsCategory) -> some View {
@@ -282,8 +348,8 @@ public struct SettingsContentView: View {
                 .help(localization.localized(.done))
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 13)
         .background(AppTheme.Canvas.background)
     }
 
