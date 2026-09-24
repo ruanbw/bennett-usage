@@ -285,6 +285,33 @@ final class CrushAdapterTests: XCTestCase {
         XCTAssertEqual(partial.records.count, 1)
     }
 
+    func testCompleteSnapshotRejectsUnavailableRegistryAndMissingRegisteredDatabase() async throws {
+        let adapter = CrushAdapter()
+        let missing = tempDir.appendingPathComponent("missing-global", isDirectory: true)
+
+        let lenient = try await adapter.fetchIncrementalRecords(from: missing, since: nil)
+        XCTAssertTrue(lenient.records.isEmpty)
+        do {
+            _ = try await adapter.fetchCompleteSnapshot(from: missing)
+            XCTFail("A cutover snapshot must reject an unavailable projects.json")
+        } catch {}
+
+        let global = tempDir.appendingPathComponent("global", isDirectory: true)
+        try FileManager.default.createDirectory(at: global, withIntermediateDirectories: true)
+        try Data("{projects:[".utf8).write(to: global.appendingPathComponent("projects.json"))
+        do {
+            _ = try await adapter.fetchCompleteSnapshot(from: global)
+            XCTFail("A cutover snapshot must reject malformed projects.json")
+        } catch {}
+
+        let missingData = tempDir.appendingPathComponent("missing-data", isDirectory: true)
+        try writeProjects(global, [(tempDir.appendingPathComponent("project").path, missingData.path)])
+        do {
+            _ = try await adapter.fetchCompleteSnapshot(from: global)
+            XCTFail("A cutover snapshot must reject a registered database that is missing")
+        } catch {}
+    }
+
     func testDeletingSessionDoesNotEmitNegativeRecord() async throws {
         let global = tempDir.appendingPathComponent("global")
         let data = tempDir.appendingPathComponent("data")

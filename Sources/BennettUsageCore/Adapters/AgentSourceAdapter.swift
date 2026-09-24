@@ -17,6 +17,13 @@ public protocol AgentSourceAdapter: Sendable {
         from directory: URL,
         since cursor: SyncCursor?
     ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor)
+
+    /// Fetches a complete, authoritative snapshot for a source cutover.
+    /// Adapters may override this to make transiently unreadable or incomplete
+    /// source state fail closed. The default preserves historical behavior.
+    func fetchCompleteSnapshot(
+        from directory: URL
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor)
 }
 
 extension AgentSourceAdapter {
@@ -46,6 +53,12 @@ extension AgentSourceAdapter {
 }
 
 extension AgentSourceAdapter {
+    public func fetchCompleteSnapshot(
+        from directory: URL
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        try await fetchIncrementalRecords(from: directory, since: nil)
+    }
+
     /// Statically known data root for the sync infrastructure, when it is
     /// narrower than `defaultPath` (keeps FSEvents quiet on unrelated writes
     /// and avoids overlapping trees between adapters). `nil` (the default)

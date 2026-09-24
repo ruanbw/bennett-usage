@@ -18,6 +18,11 @@ public struct KimiCodeAdapter: AgentSourceAdapter, @unchecked Sendable {
     public let sfSymbolIcon: String = "moon.stars.fill"
     public let defaultPath: String = "~/.kimi-code"
 
+    private enum SnapshotError: Error {
+        case unavailable(String)
+        case malformedLine(String)
+    }
+
     public init() {}
 
     public static func resolvedHome(
@@ -61,6 +66,20 @@ public struct KimiCodeAdapter: AgentSourceAdapter, @unchecked Sendable {
         from rootDirectory: URL,
         since cursor: SyncCursor?
     ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        try await fetchRecords(from: rootDirectory, since: cursor, requireCompleteSnapshot: false)
+    }
+
+    public func fetchCompleteSnapshot(
+        from rootDirectory: URL
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        try await fetchRecords(from: rootDirectory, since: nil, requireCompleteSnapshot: true)
+    }
+
+    private func fetchRecords(
+        from rootDirectory: URL,
+        since cursor: SyncCursor?,
+        requireCompleteSnapshot: Bool
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
         let sessionsRoot = Self.sessionsRoot(under: rootDirectory)
         var previous: [String: FileGeneration] = [:]
         if case .fileGenerations(let generations) = cursor {
@@ -69,27 +88,51 @@ public struct KimiCodeAdapter: AgentSourceAdapter, @unchecked Sendable {
 
         var checkpoints: [String: FileGeneration] = [:]
         var records: [UnifiedTokenRecord] = []
+        var isDirectory: ObjCBool = false
+        let rootIsDirectory = FileManager.default.fileExists(
+            atPath: sessionsRoot.path,
+            isDirectory: &isDirectory
+        ) && isDirectory.boolValue
+        if requireCompleteSnapshot, !rootIsDirectory {
+            throw SnapshotError.unavailable(sessionsRoot.path)
+        }
         guard let enumerator = FileManager.default.enumerator(
             at: sessionsRoot,
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
         ) else {
+            if requireCompleteSnapshot {
+                throw SnapshotError.unavailable(sessionsRoot.path)
+            }
             return (records, .fileGenerations(checkpoints))
         }
 
         while let fileURL = enumerator.nextObject() as? URL {
-            guard fileURL.lastPathComponent == "wire.jsonl",
-                  let sessionKey = Self.sessionKey(for: fileURL, under: sessionsRoot),
-                  let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-                  values.isRegularFile == true,
-                  let byteCount = values.fileSize else { continue }
+            guard fileURL.lastPathComponent == "wire.jsonl" else { continue }
+            guard let sessionKey = Self.sessionKey(for: fileURL, under: sessionsRoot) else { continue }
+
+            let values: URLResourceValues
+            do {
+                values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            } catch {
+                if requireCompleteSnapshot { throw error }
+                continue
+            }
+            guard values.isRegularFile == true, let byteCount = values.fileSize else {
+                if requireCompleteSnapshot {
+                    throw SnapshotError.unavailable(fileURL.path)
+                }
+                continue
+            }
 
             let path = Self.canonicalPath(for: fileURL)
             let oldCheckpoint = previous[path]
             do {
                 let data = try Data(contentsOf: fileURL)
-                guard data.count == byteCount,
-                      let identity = Self.fileIdentity(for: fileURL) else {
+                guard data.count == byteCount else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                guard let identity = Self.fileIdentity(for: fileURL) else {
                     throw CocoaError(.fileReadCorruptFile)
                 }
 
@@ -114,6 +157,9 @@ public struct KimiCodeAdapter: AgentSourceAdapter, @unchecked Sendable {
                     sourceId: sourceId
                 )
                 guard parsed.didParse else {
+                    if requireCompleteSnapshot {
+                        throw SnapshotError.malformedLine(path)
+                    }
                     if let oldCheckpoint { checkpoints[path] = oldCheckpoint }
                     continue
                 }
@@ -125,6 +171,7 @@ public struct KimiCodeAdapter: AgentSourceAdapter, @unchecked Sendable {
                     size: Int64(data.count)
                 )
             } catch {
+                if requireCompleteSnapshot { throw error }
                 if let oldCheckpoint { checkpoints[path] = oldCheckpoint }
             }
         }

@@ -152,7 +152,7 @@ public actor SyncCoordinator {
                     // Never delete the old source state before a complete fresh
                     // snapshot has been read and priced. Persistence below swaps
                     // records, rollups, and cursor in one transaction.
-                    (finalRecords, finalCursor) = try await Self.fetchOffActor(adapter, from: fetch.path, since: nil)
+                    (finalRecords, finalCursor) = try await Self.fetchCompleteSnapshotOffActor(adapter, from: fetch.path)
                 } else {
                     finalRecords = fetch.records
                     finalCursor = fetch.newCursor
@@ -320,6 +320,15 @@ public actor SyncCoordinator {
     ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
         try await Task.detached(priority: .userInitiated) {
             try await adapter.fetchIncrementalRecords(from: path, since: cursor)
+        }.value
+    }
+
+    private nonisolated static func fetchCompleteSnapshotOffActor(
+        _ adapter: AgentSourceAdapter,
+        from path: URL
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        try await Task.detached(priority: .userInitiated) {
+            try await adapter.fetchCompleteSnapshot(from: path)
         }.value
     }
 

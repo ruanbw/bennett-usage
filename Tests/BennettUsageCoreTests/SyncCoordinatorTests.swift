@@ -1,6 +1,51 @@
 import XCTest
 @testable import BennettUsageCore
 
+private final class CompleteSnapshotMockAdapter: AgentSourceAdapter, @unchecked Sendable {
+    let sourceId: String
+    let displayName: String = "Complete Snapshot Mock"
+    let brandColorHex: String = "#FF0000"
+    let sfSymbolIcon: String = "arrow.triangle.2.circlepath"
+    let path: URL
+    let snapshotRecords: [UnifiedTokenRecord]
+    let completeFetchError: Bool
+    private(set) var completeFetchCallCount = 0
+
+    init(
+        sourceId: String,
+        path: URL,
+        snapshotRecords: [UnifiedTokenRecord],
+        completeFetchError: Bool = false
+    ) {
+        self.sourceId = sourceId
+        self.path = path
+        self.snapshotRecords = snapshotRecords
+        self.completeFetchError = completeFetchError
+    }
+
+    func detectDefaultPath() -> URL? { path }
+    func fetchIncrementalRecords(
+        from directory: URL,
+        since cursor: SyncCursor?
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        ([], .databaseIdentity("db-v2", 1))
+    }
+
+    func fetchCompleteSnapshot(
+        from directory: URL
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        completeFetchCallCount += 1
+        if completeFetchError {
+            throw FetchError.expected
+        }
+        return (snapshotRecords, .databaseIdentity("db-v2", 0))
+    }
+
+    private enum FetchError: Error {
+        case expected
+    }
+}
+
 private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
     let sourceId: String
     let displayName: String = "Mock Tool"
@@ -492,6 +537,67 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(mock.receivedCursors, [oldCursor, nil])
         XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0).map(\.id), ["new"])
         XCTAssertEqual(try db.fetchCursor(for: "generation_source"), mock.newCursorToReturn)
+    }
+
+    func testCutoverUsesCompleteSnapshotHook() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        let oldCursor = SyncCursor.databaseIdentity("db-v1", 0)
+        try db.insertRecords(
+            [makeRecord(id: "old", sourceId: "complete_hook")],
+            updateCursorFor: "complete_hook",
+            cursor: oldCursor
+        )
+        let replacement = makeRecord(id: "replacement", sourceId: "complete_hook")
+        let mock = CompleteSnapshotMockAdapter(
+            sourceId: "complete_hook",
+            path: testDir,
+            snapshotRecords: [replacement]
+        )
+        registry.register(mock)
+
+        let count = try await SyncCoordinator(database: db, registry: registry).syncAll()
+
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(mock.completeFetchCallCount, 1)
+        XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0).map(\.id), [replacement.id])
+        XCTAssertEqual(try db.fetchCursor(for: "complete_hook"), .databaseIdentity("db-v2", 0))
+    }
+
+    func testCompleteSnapshotFailurePreservesOldRecordsRollupsAndCursor() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        let oldCursor = SyncCursor.databaseIdentity("db-v1", 0)
+        let oldRecord = makeRecord(id: "old", sourceId: "complete_hook_failure")
+        try db.insertRecords(
+            [oldRecord],
+            updateCursorFor: "complete_hook_failure",
+            cursor: oldCursor
+        )
+        let mock = CompleteSnapshotMockAdapter(
+            sourceId: "complete_hook_failure",
+            path: testDir,
+            snapshotRecords: [],
+            completeFetchError: true
+        )
+        registry.register(mock)
+
+        let count = try await SyncCoordinator(database: db, registry: registry).syncAll()
+
+        XCTAssertEqual(count, 0)
+        XCTAssertEqual(mock.completeFetchCallCount, 1)
+        XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0).map(\.id), [oldRecord.id])
+        XCTAssertEqual(try db.fetchCursor(for: "complete_hook_failure"), oldCursor)
+        let rollup = try XCTUnwrap(try db.fetchDailyRollups(forYear: 2026).first { $0.sourceId == "complete_hook_failure" })
+        XCTAssertEqual(rollup.totalTokens, oldRecord.totalTokens)
     }
 
     func testCutoverFetchFailurePreservesOldRecordsRollupsAndCursor() async throws {

@@ -43,6 +43,11 @@ public struct CrushAdapter: AgentSourceAdapter, @unchecked Sendable {
     private static let identityKey = "crush.identity"
     private static let sessionPrefix = "crush.session."
 
+    private enum SnapshotError: Error {
+        case unavailable(String)
+        case unreadableDatabase(URL)
+    }
+
     public init() {}
 
     // MARK: - Global and project paths
@@ -168,12 +173,31 @@ public struct CrushAdapter: AgentSourceAdapter, @unchecked Sendable {
         from directory: URL,
         since cursor: SyncCursor?
     ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        try await fetchRecords(from: directory, since: cursor, requireCompleteSnapshot: false)
+    }
+
+    public func fetchCompleteSnapshot(
+        from directory: URL
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        try await fetchRecords(from: directory, since: nil, requireCompleteSnapshot: true)
+    }
+
+    private func fetchRecords(
+        from directory: URL,
+        since cursor: SyncCursor?,
+        requireCompleteSnapshot: Bool
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
         var offsets: [String: Int64] = [:]
         if case .fileOffsets(let stored) = cursor { offsets = stored }
 
-        guard let projects = parseProjects(at: Self.projectsFileURL(under: directory)) else {
-            // projects.json can be replaced while Crush is writing it. Keep the
-            // prior state until the registry can be parsed again.
+        let projectsFile = Self.projectsFileURL(under: directory)
+        guard let projects = parseProjects(at: projectsFile) else {
+            // projects.json can be replaced while Crush is writing it. An
+            // ordinary scan keeps the prior state, but a cutover must not treat
+            // a missing or malformed registry as a valid empty source.
+            if requireCompleteSnapshot {
+                throw SnapshotError.unavailable(projectsFile.path)
+            }
             return ([], .fileOffsets(offsets))
         }
 
@@ -203,6 +227,9 @@ public struct CrushAdapter: AgentSourceAdapter, @unchecked Sendable {
                     sessions: sessions
                 ))
             } else {
+                if requireCompleteSnapshot {
+                    throw SnapshotError.unreadableDatabase(databaseURL)
+                }
                 // A missing data_dir, locked database, or in-flight replacement
                 // remains part of the aggregate. Reuse its last known identity
                 // when available so a transient absence is not a source-wide

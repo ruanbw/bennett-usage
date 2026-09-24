@@ -209,6 +209,41 @@ final class KimiCodeAdapterTests: XCTestCase {
         try? FileManager.default.removeItem(at: legacy)
     }
 
+    func testCompleteSnapshotRejectsUnavailableRootAndMalformedCompleteLine() async throws {
+        let adapter = KimiCodeAdapter()
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-kimi-\(UUID().uuidString)", isDirectory: true)
+
+        let incremental = try await adapter.fetchIncrementalRecords(from: missing, since: nil)
+        XCTAssertTrue(incremental.records.isEmpty)
+        do {
+            _ = try await adapter.fetchCompleteSnapshot(from: missing)
+            XCTFail("A cutover snapshot must reject an unavailable sessions root")
+        } catch {}
+
+        try Data("{not-json}\n".utf8).write(to: mainWire)
+        let lenient = try await adapter.fetchIncrementalRecords(from: home, since: nil)
+        XCTAssertTrue(lenient.records.isEmpty)
+        do {
+            _ = try await adapter.fetchCompleteSnapshot(from: home)
+            XCTFail("A cutover snapshot must reject a malformed complete JSONL line")
+        } catch {}
+    }
+
+    func testCompleteSnapshotAllowsTruncatedFinalLine() async throws {
+        let valid = try jsonLine(usage(
+            agentId: "main",
+            scope: "turn",
+            time: 1_700_000_000_000
+        ))
+        try Data((valid + "{\"type\":\"usage.record\"").utf8).write(to: mainWire)
+
+        let result = try await KimiCodeAdapter().fetchCompleteSnapshot(from: home)
+
+        XCTAssertEqual(result.records.count, 1)
+        XCTAssertEqual(result.records.first?.outputTokens, 2)
+    }
+
     func testKimiCodeHomeOverrideAndDefaultResolution() {
         let userHome = URL(fileURLWithPath: "/Users/test", isDirectory: true)
         let defaultRoot = KimiCodeAdapter.resolvedHome(environment: [:], homeDirectory: userHome)
