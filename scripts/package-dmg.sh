@@ -110,10 +110,63 @@ has_slice() {  # <archs-list> <arch>
     return 1
 }
 
+# Back-deployment shim for a truncated toolchain.
+#
+# SwiftUI's availability-gated generics (`.task(id:)`, `.tag(_:)`) reference
+# `__isPlatformVersionAtLeast`, which the linker takes from the macOS
+# back-deployment archive in the toolchain's clang resource directory. On some
+# Xcode installs that archive is a thin x86_64 slice, so an arm64 cross-build
+# dies with a single undefined symbol even though the SDK and the project are
+# fine. The Command Line Tools ship the same archive complete, so when the
+# active toolchain's copy is missing a slice we hand the linker a good one
+# instead of telling the user to reinstall a multi-gigabyte IDE.
+backdeploy_flag() {  # <arch> -> echoes linker args, or nothing
+    local arch="$1"
+    local active
+    active="$(xcrun --show-sdk-path 2>/dev/null >/dev/null; \
+        xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang"
+    local version
+    version="$(ls "$active" 2>/dev/null | grep -E '^[0-9]+(\.[0-9]+)*$' | sort -V | tail -1)"
+    [ -n "$version" ] || return 0
+
+    local lib="$active/$version/lib/darwin/libclang_rt.osx.a"
+    if [ ! -f "$lib" ]; then
+        return 0
+    fi
+    # Nothing to do if the active archive already carries the slice we need.
+    if lipo -archs "$lib" 2>/dev/null | tr ' ' '\n' | grep -qx "$arch"; then
+        return 0
+    fi
+
+    local candidate
+    for candidate in \
+        /Library/Developer/CommandLineTools/usr/lib/clang/*/lib/darwin/libclang_rt.osx.a
+    do
+        [ -f "$candidate" ] || continue
+        if lipo -archs "$candidate" 2>/dev/null | tr ' ' '\n' | grep -qx "$arch"; then
+            echo "==> note: toolchain back-deployment archive lacks $arch;" \
+                 "linking against $(basename "$(dirname "$(dirname "$(dirname "$candidate")")")") copy"
+            printf -- '-Xlinker\n%s\n' "$candidate"
+            return 0
+        fi
+    done
+}
+
 for arch in arm64 x86_64; do
     needs_arch "$arch" || continue
     echo "==> Building BennettUsageApp (release, $arch)"
-    swift build -c release --arch "$arch" --product BennettUsageApp
+
+    # Shell-split the shim's output so its paths with spaces survive.
+    shim=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && shim+=("$line")
+    done < <(backdeploy_flag "$arch" | tail -n +2)
+
+    # `${shim[@]+...}` keeps an empty array from tripping `set -u` on the
+    # bash 3.2 that ships with macOS, where `${shim[@]}` on an empty array is
+    # an unbound-variable error rather than an empty expansion.
+    swift build -c release --arch "$arch" --product BennettUsageApp \
+        ${shim[@]+"${shim[@]}"}
     bin_dir="$(swift build -c release --arch "$arch" --show-bin-path)"
     bin="$bin_dir/BennettUsageApp"
     [ -f "$bin" ] || { echo "error: missing binary at $bin" >&2; exit 1; }
