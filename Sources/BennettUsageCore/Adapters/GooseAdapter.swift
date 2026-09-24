@@ -416,7 +416,7 @@ public struct GooseAdapter: AgentSourceAdapter, @unchecked Sendable {
                 id: "goose|\(identity)|baseline|\(encodedSession)",
                 sourceId: "goose",
                 timestamp: timestamp,
-                timestampSource: .event,
+                timestampSource: .unknown,
                 sessionKey: session.id,
                 projectFolder: nil,
                 model: "goose",

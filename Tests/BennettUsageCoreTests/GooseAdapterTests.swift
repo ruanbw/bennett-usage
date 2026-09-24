@@ -22,8 +22,10 @@ final class GooseAdapterTests: XCTestCase {
         XCTAssertEqual(initial.records.reduce(0) { $0 + $1.totalTokens }, 35)
         XCTAssertEqual(initial.records.filter { $0.model == "goose" }.count, 1)
         XCTAssertEqual(initial.records.first(where: { $0.model == "goose" })?.totalTokens, 5)
+        XCTAssertEqual(initial.records.first(where: { $0.model == "goose" })?.timestampSource, .unknown)
         XCTAssertEqual(initial.records.first(where: { $0.model == "gpt-x" })?.totalTokens, 30)
         XCTAssertEqual(initial.records.first(where: { $0.model == "gpt-x" })?.provider, "openai")
+        XCTAssertEqual(initial.records.first(where: { $0.model == "gpt-x" })?.timestampSource, .event)
         try execute("""
         INSERT INTO usage_ledger
           (id, session_id, created_timestamp, model, input_tokens, output_tokens,

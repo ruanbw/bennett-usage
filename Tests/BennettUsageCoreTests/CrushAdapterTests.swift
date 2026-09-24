@@ -72,6 +72,7 @@ final class CrushAdapterTests: XCTestCase {
         XCTAssertEqual(Set(result.records.map(\.id)).count, 2)
         XCTAssertEqual(Set(result.records.map(\.projectFolder)), [projectA.path, projectB.path])
         XCTAssertEqual(Set(result.records.map(\.inputTokens)), [10, 20])
+        XCTAssertTrue(result.records.allSatisfy { $0.timestampSource == .unknown })
     }
 
     func testSymlinkAliasesImportOneDatabaseWithStableProjectMapping() async throws {
