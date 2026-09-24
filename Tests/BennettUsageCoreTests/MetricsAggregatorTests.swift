@@ -48,6 +48,12 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertEqual(summary.toolCosts["omp"] ?? 0.0, 0.10, accuracy: 0.0001)
     }
 
+    private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
+        return calendar.date(from: DateComponents(year: year, month: month, day: day))!
+    }
+
     func testProjectRankings() async throws {
         let r1 = UnifiedTokenRecord(id: "p1", sourceId: "pi", timestamp: Date(), dayKey: "2026-03-01", sessionKey: "s1", projectFolder: "/Users/dev/projectA", model: "m", provider: nil, inputTokens: 1000, outputTokens: 2000, rawCostUSD: 0.10)
         let r2 = UnifiedTokenRecord(id: "p2", sourceId: "pi", timestamp: Date(), dayKey: "2026-03-02", sessionKey: "s2", projectFolder: "/Users/dev/projectA", model: "m", provider: nil, inputTokens: 500, outputTokens: 500, rawCostUSD: 0.05)
@@ -138,22 +144,23 @@ final class MetricsAggregatorTests: XCTestCase {
         let r1 = UnifiedTokenRecord(id: "a1", sourceId: "pi", timestamp: Date(), dayKey: "2026-04-10", sessionKey: "s1", projectFolder: nil, model: "m", provider: nil, inputTokens: 3000, outputTokens: 2000, rawCostUSD: 0.25)
         let r2 = UnifiedTokenRecord(id: "a2", sourceId: "omp", timestamp: Date(), dayKey: "2026-05-15", sessionKey: "s2", projectFolder: nil, model: "m", provider: nil, inputTokens: 1000, outputTokens: 500, rawCostUSD: 0.05)
         let r3 = UnifiedTokenRecord(id: "a3", sourceId: "claude", timestamp: Date(), dayKey: "2026-06-20", sessionKey: "s3", projectFolder: nil, model: "m", provider: nil, inputTokens: 200, outputTokens: 100, rawCostUSD: 0.01)
-        try db.insertRecords([r1, r2, r3])
+        let r4 = UnifiedTokenRecord(id: "a4", sourceId: "zero", timestamp: Date(), dayKey: "2026-07-01", sessionKey: "s4", projectFolder: nil, model: "m", provider: nil, inputTokens: 0, outputTokens: 0, rawCostUSD: 0.0)
+        try db.insertRecords([r1, r2, r3, r4])
 
-        let summary = try await aggregator.fetchAnnualSummary(year: 2026)
+        let summary = try await aggregator.fetchAnnualSummary(year: 2026, now: date(2027, 1, 1))
         XCTAssertEqual(summary.annualTokens, 6800)
         XCTAssertEqual(summary.annualCostUSD, 0.31, accuracy: 0.0001)
         XCTAssertEqual(summary.mostActiveTool, "pi")
         XCTAssertEqual(summary.activeDays, 3)
         XCTAssertEqual(summary.totalDays, 365)
 
-        let filteredSummary = try await aggregator.fetchAnnualSummary(year: 2026, toolFilter: "pi")
+        let filteredSummary = try await aggregator.fetchAnnualSummary(year: 2026, toolFilter: "pi", now: date(2027, 1, 1))
         XCTAssertEqual(filteredSummary.annualTokens, 5000)
         XCTAssertEqual(filteredSummary.annualCostUSD, 0.25, accuracy: 0.0001)
         XCTAssertEqual(filteredSummary.mostActiveTool, "pi")
         XCTAssertEqual(filteredSummary.activeDays, 1)
         let distribution = try await aggregator.fetchToolDistribution(year: 2026)
-        XCTAssertEqual(distribution.count, 3)
+        XCTAssertEqual(distribution.count, 4)
         XCTAssertEqual(distribution[0].tool, "pi")
         XCTAssertEqual(distribution[0].tokens, 5000)
         XCTAssertEqual(distribution[0].costUSD, 0.25, accuracy: 0.0001)
@@ -162,6 +169,25 @@ final class MetricsAggregatorTests: XCTestCase {
         XCTAssertEqual(distribution[1].tokens, 1500)
         XCTAssertEqual(distribution[2].tool, "claude")
         XCTAssertEqual(distribution[2].tokens, 300)
+        XCTAssertEqual(distribution[3].tool, "zero")
+        XCTAssertEqual(distribution[3].tokens, 0)
+    }
+
+    func testAnnualSummaryTotalDaysUsesElapsedCalendarDays() async throws {
+        let cases: [(year: Int, now: Date, expected: Int)] = [
+            (2026, date(2026, 1, 1), 1),
+            (2026, date(2026, 2, 28), 59),
+            (2028, date(2028, 2, 29), 60),
+            (2026, date(2026, 12, 31), 365),
+            (2025, date(2026, 1, 1), 365),
+            (2024, date(2026, 1, 1), 366),
+            (2027, date(2026, 12, 31), 0)
+        ]
+
+        for testCase in cases {
+            let summary = try await aggregator.fetchAnnualSummary(year: testCase.year, now: testCase.now)
+            XCTAssertEqual(summary.totalDays, testCase.expected, "year: \(testCase.year), now: \(testCase.now)")
+        }
     }
 
     func testFetchPeriodMetricsLast24Hours() async throws {

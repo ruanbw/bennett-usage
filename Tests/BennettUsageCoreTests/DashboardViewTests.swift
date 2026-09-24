@@ -227,7 +227,10 @@ final class DashboardViewTests: XCTestCase {
         )
         XCTAssertNotNil(contentView.body)
 
-        let summary = try await aggregator.fetchAnnualSummary(year: 2026)
+        var historicalCalendar = Calendar(identifier: .gregorian)
+        historicalCalendar.timeZone = TimeZone.current
+        let historicalNow = historicalCalendar.date(from: DateComponents(year: 2027, month: 1, day: 1))!
+        let summary = try await aggregator.fetchAnnualSummary(year: 2026, now: historicalNow)
         XCTAssertEqual(summary.annualTokens, 12000)
         XCTAssertEqual(summary.annualCostUSD, 0.05, accuracy: 0.0001)
         XCTAssertEqual(summary.mostActiveTool, "pi")

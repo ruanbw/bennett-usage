@@ -361,7 +361,7 @@ public final class MetricsAggregator: Sendable {
         return healthInfos
     }
 
-    public func fetchAnnualSummary(year: Int, toolFilter: String? = nil) async throws -> (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String, activeDays: Int, totalDays: Int) {
+    public func fetchAnnualSummary(year: Int, toolFilter: String? = nil, now: Date = Date()) async throws -> (annualTokens: Int, annualCostUSD: Double, mostActiveTool: String, activeDays: Int, totalDays: Int) {
         let rollups = filteredByTool(try database.fetchDailyRollups(forYear: year), toolFilter: toolFilter)
         var annualTokens = 0
         var annualCostUSD = 0.0
@@ -381,16 +381,23 @@ public final class MetricsAggregator: Sendable {
         }
         let activeDays = dayTokens.filter { $0.value > 0 }.count
 
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone.current
-        let comps = DateComponents(year: year, month: 1, day: 1)
-        let totalDays: Int
-        if let startDate = calendar.date(from: comps) {
-            totalDays = calendar.range(of: .day, in: .year, for: startDate)?.count ?? 365
-        } else {
-            totalDays = 365
-        }
+        let totalDays = Self.totalDaysElapsed(inYear: year, now: now)
         return (annualTokens: annualTokens, annualCostUSD: annualCostUSD, mostActiveTool: mostActiveTool, activeDays: activeDays, totalDays: totalDays)
+    }
+
+    /// Returns the elapsed calendar days for the requested year, including today
+    /// when `year` is the current year. Historical years include the full year,
+    /// while future years have no elapsed days yet.
+    static func totalDaysElapsed(inYear year: Int, now: Date, calendar: Calendar = Calendar(identifier: .gregorian)) -> Int {
+        var calendar = calendar
+        calendar.timeZone = .current
+
+        let yearLength = calendar.date(from: DateComponents(year: year, month: 1, day: 1))
+            .flatMap { calendar.range(of: .day, in: .year, for: $0)?.count } ?? 365
+        let currentYear = calendar.component(.year, from: now)
+        if year < currentYear { return yearLength }
+        if year > currentYear { return 0 }
+        return max(1, calendar.ordinality(of: .day, in: .year, for: now) ?? 1)
     }
 
     public func fetchToolDistribution(year: Int) async throws -> [(tool: String, tokens: Int, costUSD: Double)] {
