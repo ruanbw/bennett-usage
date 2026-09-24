@@ -43,6 +43,30 @@ public struct HeatmapGridView: View {
         return result
     }
 
+    /// Value announced with a day's date label for VoiceOver.
+    public static func accessibilityValue(
+        for cell: HeatmapDayCell,
+        localization: LocalizationManager = .shared
+    ) -> String {
+        guard cell.totalTokens > 0 else {
+            // `noTokenUsage` includes the date in its visible tooltip format. The
+            // date is already the accessibility label, so omit that prefix here.
+            let noUsage = localization.localized(.noTokenUsage, arguments: cell.dayKey)
+            return String(noUsage.dropFirst(cell.dayKey.count).drop(while: { $0 == ":" || $0 == "：" || $0 == " " }))
+        }
+        let formattedTokens = "\(TokenFormatter.formatCompact(cell.totalTokens)) (\(TokenFormatter.formatFull(cell.totalTokens)))"
+        return localization.localized(
+            .activityDetail,
+            arguments: formattedTokens,
+            String(format: "%.3f", cell.costUSD)
+        )
+    }
+
+    /// Traits applied to a day button when it is selected in the dashboard.
+    public static func accessibilityTraits(isSelected: Bool) -> AccessibilityTraits {
+        isSelected ? .isSelected : []
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             grid
@@ -120,23 +144,30 @@ private struct HeatmapDayCellView: View {
     }
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 2.5)
-            .fill(colorFor(intensity: cell.intensityLevel))
-            .frame(width: 11, height: 11)
-            .overlay {
-                if isSelected || isHovered {
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .stroke(
-                            isSelected ? AppTheme.Status.accent : AppTheme.Text.primary,
-                            lineWidth: isSelected ? 1.5 : 1
-                        )
+        Button {
+            onSelect(cell)
+        } label: {
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(colorFor(intensity: cell.intensityLevel))
+                .frame(width: 11, height: 11)
+                .overlay {
+                    if isSelected || isHovered {
+                        RoundedRectangle(cornerRadius: 2.5)
+                            .stroke(
+                                isSelected ? AppTheme.Status.accent : AppTheme.Text.primary,
+                                lineWidth: isSelected ? 1.5 : 1
+                            )
+                    }
                 }
-            }
-            .onHover { isHovered = $0 }
-            .onTapGesture { onSelect(cell) }
-            // Formatted lazily: only the hovered square builds its tooltip
-            // string; every other square carries an empty (never-shown) one.
-            .help(isHovered ? tooltipText(for: cell) : "")
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(cell.dayKey)
+        .accessibilityValue(HeatmapGridView.accessibilityValue(for: cell, localization: localization))
+        .accessibilityAddTraits(HeatmapGridView.accessibilityTraits(isSelected: isSelected))
+        // Formatted lazily: only the hovered square builds its tooltip
+        // string; every other square carries an empty (never-shown) one.
+        .help(isHovered ? tooltipText(for: cell) : "")
     }
 
     private func colorFor(intensity: Int) -> Color {

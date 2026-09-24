@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import BennettUsageCore
 
 final class HeatmapGridViewTests: XCTestCase {
@@ -146,6 +147,45 @@ final class HeatmapGridViewTests: XCTestCase {
         XCTAssertNotNil(view)
         XCTAssertEqual(AgentFilterBarView.displayName(for: "claude"), "Claude Code")
         XCTAssertNotNil(AgentFilterBarView.colorMap["claude"])
+    }
+
+    @MainActor
+    func testHeatmapDayAccessibilityValue() {
+        let defaults = UserDefaults(suiteName: "HeatmapGridViewAccessibilityTests_\(UUID().uuidString)")!
+        let localization = LocalizationManager(userDefaults: defaults)
+        localization.setLanguage(.en)
+
+        let active = HeatmapDayCell(
+            date: Date(),
+            dayKey: "2026-09-01",
+            totalTokens: 500,
+            costUSD: 0.05,
+            intensityLevel: 2,
+            toolBreakdown: ["pi": 500]
+        )
+        XCTAssertEqual(
+            HeatmapGridView.accessibilityValue(for: active, localization: localization),
+            "Total Tokens: 500 (500) · Cost: $0.050"
+        )
+
+        let empty = HeatmapDayCell(
+            date: Date(),
+            dayKey: "2026-09-02",
+            totalTokens: 0,
+            costUSD: 0,
+            intensityLevel: 0,
+            toolBreakdown: [:]
+        )
+        XCTAssertEqual(
+            HeatmapGridView.accessibilityValue(for: empty, localization: localization),
+            "No token usage"
+        )
+    }
+
+    @MainActor
+    func testHeatmapDaySelectedAccessibilityTrait() {
+        XCTAssertTrue(HeatmapGridView.accessibilityTraits(isSelected: true).contains(.isSelected))
+        XCTAssertFalse(HeatmapGridView.accessibilityTraits(isSelected: false).contains(.isSelected))
     }
 
     @MainActor
