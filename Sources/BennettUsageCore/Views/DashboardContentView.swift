@@ -122,19 +122,12 @@ public struct DashboardContentView: View {
                 contextHeaderSection
                 filterControlsSection
                 heroSection
-                TrendChartCard(
-                    trendPoints: periodMetrics?.trendPoints ?? [],
-                    trendTitle: trendTitle,
-                    rangeSubtitle: rangeSubtitle,
-                    modelColors: cachedModelColors,
-                    localization: localization,
-                    pricingEngine: pricingEngine
-                )
+                dashboardHighlightsSection
+                trendAndSourceSection
                 todayFocusSection
                 tokenCompositionSection
-                agentUsageSection
-                heatmapSection
                 projectsSection
+                heatmapSection
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(AppTheme.Layout.canvasPadding)
@@ -439,38 +432,33 @@ public struct DashboardContentView: View {
         }
     }
 
-    // MARK: - Hero KPI & Supporting Metrics
+    // MARK: - Status Summary, Highlights & Exploration
 
     private var heroSection: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            heroPrimaryRow
-            AppTheme.Border.divider.frame(height: AppTheme.Layout.hairline)
-            heroSupportingMetrics
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 28) {
+                heroTotalMetric
+                heroStatusDivider
+                heroStatusSummary
+            }
+            VStack(alignment: .leading, spacing: 20) {
+                heroTotalMetric
+                heroStatusDivider
+                    .frame(width: 80, height: AppTheme.Layout.hairline)
+                heroStatusSummary
+            }
         }
         .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: AppTheme.Radius.card, style: .continuous)
                 .fill(AppTheme.Surface.primary)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: AppTheme.Radius.card, style: .continuous)
                 .stroke(AppTheme.Border.subtle, lineWidth: AppTheme.Layout.hairline)
         )
-    }
-
-    private var heroPrimaryRow: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 28) {
-                heroTotalMetric
-                Spacer(minLength: 18)
-                heroSpendMetric
-            }
-            VStack(alignment: .leading, spacing: 16) {
-                heroTotalMetric
-                heroSpendMetric
-            }
-        }
+        .accessibilityElement(children: .contain)
     }
 
     private var heroTotalMetric: some View {
@@ -483,216 +471,264 @@ public struct DashboardContentView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(AppTheme.Status.accent)
-                Text(agentTitle)
+                Text(localization.localized(.periodTokens))
                     .font(AppTheme.Typography.label)
                     .fontWeight(.medium)
                     .foregroundColor(AppTheme.Text.secondary)
-                    .lineLimit(1)
             }
-
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(TokenFormatter.formatCompact(totalTokens))
-                    .font(.system(size: 48, weight: .bold, design: .rounded))
+                    .font(.system(size: 50, weight: .bold, design: .rounded))
                     .foregroundColor(AppTheme.Text.primary)
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.58)
                     .contentTransition(.numericText())
-
                 Text(localization.localized(.tokenUnit))
                     .font(.headline)
                     .foregroundColor(AppTheme.Text.tertiary)
             }
-
-            HStack(spacing: 6) {
-                Text(localization.localized(.exactValue))
-                    .foregroundColor(AppTheme.Text.tertiary)
-                Text(TokenFormatter.formatFull(totalTokens))
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundColor(AppTheme.Text.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-            }
-        }
-        .help("\(TokenFormatter.formatFull(totalTokens)) \(localization.localized(.tokenUnit))")
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(agentTitle), \(TokenFormatter.formatFull(totalTokens)) \(localization.localized(.tokenUnit))")
-    }
-
-    private var heroSpendMetric: some View {
-        VStack(alignment: .trailing, spacing: 5) {
-            Text(localization.localized(.periodSpend))
-                .font(AppTheme.Typography.caption)
+            Text("\(agentTitle) · \(rangeSubtitle)")
+                .font(.caption)
                 .foregroundColor(AppTheme.Text.secondary)
                 .lineLimit(1)
-            Text(pricingEngine.spendString(periodMetrics?.totalCostUSD ?? 0.0))
-                .font(.system(size: 28, weight: .semibold, design: .rounded))
-                .foregroundColor(AppTheme.Status.success)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text(rangeSubtitle)
-                .font(.caption2)
+            Text("\(localization.localized(.exactValue)) \(TokenFormatter.formatFull(totalTokens))")
+                .font(.caption2.monospacedDigit())
                 .foregroundColor(AppTheme.Text.tertiary)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(AppTheme.Status.success.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(AppTheme.Status.success.opacity(0.16), lineWidth: AppTheme.Layout.hairline)
-        )
+        .help("\(TokenFormatter.formatFull(totalTokens)) \(localization.localized(.tokenUnit))")
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(localization.localized(.periodTokens)), \(agentTitle), \(rangeSubtitle), \(TokenFormatter.formatFull(totalTokens)) \(localization.localized(.tokenUnit))")
     }
 
-    private var heroSupportingMetrics: some View {
+    private var heroStatusSummary: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 0) {
-                supportingMetric(
-                    label: localization.localized(.costLabel),
+            HStack(alignment: .center, spacing: 24) {
+                heroStatusMetric(
+                    label: localization.localized(.periodSpend),
                     value: pricingEngine.spendString(periodMetrics?.totalCostUSD ?? 0),
-                    fullValue: nil,
+                    symbol: "dollarsign.circle.fill",
                     color: AppTheme.Status.success
                 )
-                metricDivider
-                supportingMetric(
-                    label: localization.localized(.inputLabel),
-                    value: TokenFormatter.formatCompact(periodMetrics?.inputTokens ?? 0),
-                    fullValue: TokenFormatter.formatFull(periodMetrics?.inputTokens ?? 0),
-                    color: AppTheme.Status.accent
-                )
-                metricDivider
-                supportingMetric(
-                    label: localization.localized(.outputLabel),
-                    value: TokenFormatter.formatCompact(periodMetrics?.outputTokens ?? 0),
-                    fullValue: TokenFormatter.formatFull(periodMetrics?.outputTokens ?? 0),
-                    color: AppTheme.Agent.claude
-                )
-                metricDivider
-                supportingMetric(
-                    label: localization.localized(.cacheLabel),
-                    value: TokenFormatter.formatCompact((periodMetrics?.cacheReadTokens ?? 0) + (periodMetrics?.cacheWriteTokens ?? 0)),
-                    fullValue: "\(TokenFormatter.formatFull(periodMetrics?.cacheReadTokens ?? 0)) / \(TokenFormatter.formatFull(periodMetrics?.cacheWriteTokens ?? 0))",
-                    color: AppTheme.Status.warning
+                heroStatusMetric(
+                    label: localization.localized(.cacheHitRate),
+                    value: String(format: "%.1f%%", (periodMetrics?.cacheHitRate ?? 0) * 100),
+                    symbol: "arrow.triangle.2.circlepath.circle.fill",
+                    color: AppTheme.Status.accent,
+                    progress: periodMetrics?.cacheHitRate ?? 0
                 )
             }
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-                supportingMetric(
-                    label: localization.localized(.costLabel),
+            VStack(alignment: .leading, spacing: 12) {
+                heroStatusMetric(
+                    label: localization.localized(.periodSpend),
                     value: pricingEngine.spendString(periodMetrics?.totalCostUSD ?? 0),
-                    fullValue: nil,
+                    symbol: "dollarsign.circle.fill",
                     color: AppTheme.Status.success
                 )
-                supportingMetric(
-                    label: localization.localized(.inputLabel),
-                    value: TokenFormatter.formatCompact(periodMetrics?.inputTokens ?? 0),
-                    fullValue: TokenFormatter.formatFull(periodMetrics?.inputTokens ?? 0),
-                    color: AppTheme.Status.accent
-                )
-                supportingMetric(
-                    label: localization.localized(.outputLabel),
-                    value: TokenFormatter.formatCompact(periodMetrics?.outputTokens ?? 0),
-                    fullValue: TokenFormatter.formatFull(periodMetrics?.outputTokens ?? 0),
-                    color: AppTheme.Agent.claude
-                )
-                supportingMetric(
-                    label: localization.localized(.cacheLabel),
-                    value: TokenFormatter.formatCompact((periodMetrics?.cacheReadTokens ?? 0) + (periodMetrics?.cacheWriteTokens ?? 0)),
-                    fullValue: "\(TokenFormatter.formatFull(periodMetrics?.cacheReadTokens ?? 0)) / \(TokenFormatter.formatFull(periodMetrics?.cacheWriteTokens ?? 0))",
-                    color: AppTheme.Status.warning
+                heroStatusMetric(
+                    label: localization.localized(.cacheHitRate),
+                    value: String(format: "%.1f%%", (periodMetrics?.cacheHitRate ?? 0) * 100),
+                    symbol: "arrow.triangle.2.circlepath.circle.fill",
+                    color: AppTheme.Status.accent,
+                    progress: periodMetrics?.cacheHitRate ?? 0
                 )
             }
         }
     }
 
-    private var metricDivider: some View {
+    private var heroStatusDivider: some View {
         AppTheme.Border.divider
-            .frame(width: AppTheme.Layout.hairline, height: 34)
-            .padding(.horizontal, 14)
+            .frame(width: AppTheme.Layout.hairline, height: 76)
     }
 
-    private func supportingMetric(
+    private func heroStatusMetric(
         label: String,
         value: String,
-        fullValue: String?,
+        symbol: String,
+        color: Color,
+        progress: Double? = nil
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(label, systemImage: symbol)
+                .font(AppTheme.Typography.caption)
+                .foregroundColor(AppTheme.Text.secondary)
+                .lineLimit(1)
+            Text(value)
+                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                .foregroundColor(AppTheme.Text.primary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .contentTransition(.numericText())
+            if let progress {
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(AppTheme.Surface.subtle)
+                        Capsule()
+                            .fill(color)
+                            .frame(
+                                width: max(0, min(geometry.size.width * CGFloat(progress), geometry.size.width)),
+                                height: 3
+                            )
+                    }
+                }
+                .frame(height: 3)
+            } else {
+                Text(rangeSubtitle)
+                    .font(.caption2)
+                    .foregroundColor(AppTheme.Text.tertiary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(minWidth: 120, alignment: .leading)
+        .help("\(label): \(value)")
+        .accessibilityElement(children: .combine)
+    }
+
+    private var dashboardHighlightsSection: some View {
+        let topAgent = toolDistribution
+            .filter { $0.tokens > 0 }
+            .max { $0.tokens < $1.tokens }
+        let topModel = (periodMetrics?.modelDistribution ?? [])
+            .filter { $0.tokens > 0 }
+            .max { $0.tokens < $1.tokens }
+        let topProject = projectRankings.first
+
+        return Group {
+            if topAgent == nil && topModel == nil && topProject == nil {
+                HStack(spacing: 8) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(AppTheme.Text.tertiary)
+                    Text(localization.localized(.noActivityRecorded, arguments: rangeSubtitle))
+                        .font(.subheadline)
+                        .foregroundColor(AppTheme.Text.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(alignment: .top, spacing: 0) {
+                    if let topAgent {
+                        highlightMetric(
+                            label: localization.localized(.topAgent),
+                            value: AgentFilterBarView.displayName(for: topAgent.tool),
+                            detail: TokenFormatter.formatCompact(topAgent.tokens),
+                            symbol: "person.crop.circle.fill",
+                            color: cachedAgentColors[topAgent.tool.lowercased()] ?? AppTheme.Status.accent
+                        )
+                        if topModel != nil || topProject != nil {
+                            highlightDivider
+                        }
+                    }
+                    if let topModel {
+                        highlightMetric(
+                            label: localization.localized(.modelDistribution),
+                            value: topModel.model,
+                            detail: TokenFormatter.formatCompact(topModel.tokens),
+                            symbol: "cpu.fill",
+                            color: cachedModelColors[topModel.model] ?? AppTheme.Agent.claude
+                        )
+                        if topProject != nil {
+                            highlightDivider
+                        }
+                    }
+                    if let topProject {
+                        highlightMetric(
+                            label: localization.localized(.topProjectsDrillDown),
+                            value: projectDisplayName(topProject.project),
+                            detail: TokenFormatter.formatCompact(topProject.totalTokens),
+                            symbol: "folder.fill",
+                            color: AppTheme.Status.warning
+                        )
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.card, style: .continuous)
+                .fill(AppTheme.Surface.primary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.card, style: .continuous)
+                .stroke(AppTheme.Border.subtle, lineWidth: AppTheme.Layout.hairline)
+        )
+        .accessibilityElement(children: .contain)
+    }
+
+    private var highlightDivider: some View {
+        AppTheme.Border.divider
+            .frame(width: AppTheme.Layout.hairline, height: 42)
+    }
+
+    private func highlightMetric(
+        label: String,
+        value: String,
+        detail: String?,
+        symbol: String,
         color: Color
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 5) {
-                Circle().fill(color).frame(width: 5, height: 5)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(color)
                 Text(label)
                     .font(.caption)
                     .foregroundColor(AppTheme.Text.secondary)
                     .lineLimit(1)
             }
             Text(value)
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .font(.system(size: 19, weight: .semibold, design: .rounded))
                 .foregroundColor(AppTheme.Text.primary)
-                .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
+            if let detail {
+                Text(detail)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundColor(AppTheme.Text.tertiary)
+            }
         }
+        .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .help(fullValue.map { "\(label): \($0)" } ?? label)
+        .help(detail.map { "\(label): \(value) · \($0)" } ?? "\(label): \(value)")
         .accessibilityElement(children: .combine)
     }
 
-    private func ribbonMetricColumn(label: String, value: String, fullTokens: Int) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(AppTheme.Typography.caption)
-                .foregroundColor(AppTheme.Text.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+    private var trendAndSourceSection: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: AppTheme.Layout.sectionSpacing) {
+                trendChartCard
+                agentUsageSection
+                    .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
+            }
 
-            Text(value)
-                .font(AppTheme.Typography.metricValue)
-                .foregroundColor(AppTheme.Text.primary)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-
-            Color.clear
-                .frame(height: 3)
+            VStack(alignment: .leading, spacing: AppTheme.Layout.sectionSpacing) {
+                trendChartCard
+                agentUsageSection
+                    .frame(maxWidth: .infinity)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .help("\(TokenFormatter.formatFull(fullTokens)) \(localization.localized(.tokenUnit))")
     }
 
-    private var ribbonCacheHitRateColumn: some View {
-        let hitRate = periodMetrics?.cacheHitRate ?? 0.0
-        return VStack(alignment: .leading, spacing: 4) {
-            Text(localization.localized(.cacheHitRate))
-                .font(AppTheme.Typography.caption)
-                .foregroundColor(AppTheme.Text.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+    private var trendChartCard: some View {
+        TrendChartCard(
+            trendPoints: periodMetrics?.trendPoints ?? [],
+            trendTitle: trendTitle,
+            rangeSubtitle: rangeSubtitle,
+            modelColors: cachedModelColors,
+            localization: localization,
+            pricingEngine: pricingEngine
+        )
+    }
 
-            Text(String(format: "%.1f%%", hitRate * 100))
-                .font(AppTheme.Typography.metricValue)
-                .foregroundColor(AppTheme.Text.primary)
-                .monospacedDigit()
-                .lineLimit(1)
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(AppTheme.Surface.subtle)
-                        .frame(height: 3)
-                    Capsule()
-                        .fill(AppTheme.Status.success)
-                        .frame(width: max(0, min(geo.size.width * CGFloat(hitRate), geo.size.width)), height: 3)
-                }
-            }
-            .frame(height: 3)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .help(localization.localized(.cacheHitRate) + ": " + String(format: "%.1f%%", hitRate * 100))
+    private func projectDisplayName(_ project: String) -> String {
+        let displayName = (project as NSString).lastPathComponent
+        return displayName.isEmpty ? project : displayName
     }
 
     // MARK: - Heatmap

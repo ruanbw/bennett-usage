@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bennett Usage · Swiss Monochrome</title>
+<style>
+:root{
+  --paper:#f7f7f4;--paper-2:#eeeeea;--ink:#111111;--muted:#6c6c67;--faint:#a4a49d;
+  --line:#d6d6cf;--blue:#1b54ff;--green:#16834b;--red:#b9382f;--white:#fff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;width:1920px;height:1500px;overflow:hidden}
+body{background:#deded8;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Noto Sans SC",Arial,sans-serif;font-variant-numeric:tabular-nums}
+.board{width:1920px;height:1500px;padding:42px 58px 50px;background:var(--paper)}
+.masthead{height:98px;display:flex;align-items:flex-start;justify-content:space-between;border-bottom:2px solid var(--ink);padding-bottom:20px}
+.kicker{font-size:12px;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:var(--blue);margin-bottom:12px}
+.masthead h1{font-size:34px;line-height:1.05;letter-spacing:-.055em;margin:0;font-weight:760}
+.masthead p{font-size:13px;color:var(--muted);margin:10px 0 0;letter-spacing:.01em}
+.meta{text-align:right;font-size:12px;line-height:1.7;color:var(--muted);min-width:210px}
+.meta strong{display:block;color:var(--ink);font-size:14px;letter-spacing:.04em}
+.stage{display:grid;grid-template-columns:1080px 360px;grid-template-rows:720px 510px;gap:26px 54px;margin-top:28px}
+.window{background:var(--white);border:1px solid var(--ink);overflow:hidden}
+.titlebar{height:38px;border-bottom:1px solid var(--ink);display:flex;align-items:center;padding:0 16px;gap:9px;background:var(--paper-2)}
+.dot{width:10px;height:10px;border-radius:50%;background:#ff6058;border:1px solid #111}
+.dot.gray{background:#bcbcb7}.dot.green{background:#28c840}
+.title{font-size:12px;font-weight:700;letter-spacing:.01em;margin-left:4px}
+.window-tools{margin-left:auto;display:flex;gap:12px;color:var(--muted);font-size:11px}
+/* dashboard */
+.dashboard{grid-column:1;grid-row:1}
+.dashboard-body{height:calc(100% - 38px);display:grid;grid-template-columns:166px 1fr}
+.rail{border-right:1px solid var(--ink);padding:20px 14px;display:flex;flex-direction:column;background:#f1f1ed}
+.brandmark{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:800;letter-spacing:-.02em;margin:0 7px 29px}
+.star{width:15px;height:15px;display:inline-block;background:var(--blue);clip-path:polygon(50% 0,61% 37%,100% 50%,61% 63%,50% 100%,39% 63%,0 50%,39% 37%)}
+.rail-label{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:0 7px 9px}
+.rail-item{height:30px;display:flex;align-items:center;gap:8px;padding:0 8px;font-size:12px;color:var(--muted);border-left:2px solid transparent}
+.rail-item.active{color:var(--ink);font-weight:700;border-left-color:var(--blue);background:#e7e7e1}
+.rail-item .count{margin-left:auto;font-size:10px;color:var(--faint)}
+.rail-spacer{flex:1}
+.sync-mini{border-top:1px solid var(--line);padding:14px 7px 0;font-size:10px;line-height:1.55;color:var(--muted)}
+.sync-mini strong{display:block;color:var(--green);font-size:11px;margin-bottom:4px}
+.dash-main{padding:22px 26px 18px;overflow:hidden}
+.dash-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px}
+.eyebrow{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:7px}
+.dash-top h2{font-size:22px;letter-spacing:-.04em;margin:0;font-weight:760}
+.date-note{font-size:11px;color:var(--muted);margin-top:6px}
+.top-actions{display:flex;align-items:center;gap:8px}
+.outline-btn,.solid-btn{height:30px;border:1px solid var(--ink);padding:0 12px;font:700 11px inherit;background:transparent;cursor:pointer}
+.solid-btn{background:var(--ink);color:#fff}
+.top-actions button{height:30px;font:700 11px inherit;border:1px solid var(--ink);background:transparent;padding:0 11px}
+.top-actions .refresh{background:var(--ink);color:#fff}
+.hero-grid{display:grid;grid-template-columns:1.35fr .8fr .8fr;border-top:2px solid var(--ink);border-bottom:1px solid var(--ink);margin-bottom:18px}
+.hero-cell{padding:15px 18px 14px 0;min-height:116px}
+.hero-cell+.hero-cell{border-left:1px solid var(--line);padding-left:18px}
+.metric-label{font-size:11px;color:var(--muted);font-weight:650;margin-bottom:8px}
+.metric-number{font-size:39px;line-height:.95;letter-spacing:-.07em;font-weight:780;white-space:nowrap}
+.metric-number small{font-size:15px;letter-spacing:-.02em;font-weight:650;margin-left:5px;color:var(--muted)}
+.delta{font-size:11px;color:var(--green);font-weight:700;margin-top:8px}
+.metric-sub{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.35}
+.cache-line{height:5px;background:#e3e3dd;margin-top:12px;position:relative}.cache-line span{display:block;height:100%;width:95.3%;background:var(--ink)}
+.chart-panel{border-bottom:1px solid var(--ink);padding-bottom:12px}
+.section-line{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}
+.section-line h3{font-size:13px;letter-spacing:-.02em;margin:0}.section-line span{font-size:10px;color:var(--muted)}
+.chart{width:100%;height:204px;display:block}
+.legend{display:flex;gap:18px;margin-top:3px;font-size:10px;color:var(--muted)}.legend i{width:7px;height:7px;display:inline-block;margin-right:5px;background:var(--blue)}
+.bottom-grid{display:grid;grid-template-columns:1.25fr .9fr;gap:26px;padding-top:13px}
+.mini-title{font-size:12px;font-weight:750;margin:0 0 10px}.muted{font-size:10px;color:var(--muted)}
+.rank{display:grid;grid-template-columns:22px 1fr 64px;align-items:center;gap:6px;height:25px;font-size:11px}.rank b{font-size:10px;color:var(--muted)}.rank .bar{height:6px;background:#e2e2dc;position:relative}.rank .bar i{display:block;height:100%;background:var(--blue)}.rank em{text-align:right;font-style:normal;font-weight:700}
+.insight{border-left:2px solid var(--blue);padding-left:11px;margin:0 0 10px;font-size:11px;line-height:1.4}.insight b{display:block;font-size:10px;color:var(--blue);letter-spacing:.08em;text-transform:uppercase;margin-bottom:3px}
+/* popover */
+.popover{grid-column:2;grid-row:1;width:360px;height:600px;background:#fbfbf8;border:1px solid var(--ink);box-shadow:8px 8px 0 rgba(17,17,17,.12);align-self:start}
+.popover-inner{height:100%;display:flex;flex-direction:column;padding:18px 18px 14px}
+.pop-grab{width:30px;height:3px;background:#c7c7c1;border-radius:5px;margin:-7px auto 15px}
+.pop-head{display:flex;align-items:center;justify-content:space-between;padding-bottom:14px;border-bottom:1px solid var(--ink)}
+.pop-head strong{font-size:14px;letter-spacing:-.03em}.pop-head span{font-size:10px;color:var(--muted)}
+.pop-number{padding:19px 0 17px;border-bottom:1px solid var(--line)}
+.pop-number .label{font-size:11px;color:var(--muted);font-weight:650}.pop-number .value{font-size:55px;line-height:.9;letter-spacing:-.08em;font-weight:800;margin-top:7px}.pop-number .value small{font-size:18px;letter-spacing:-.02em}.pop-number .cost{font-size:12px;color:var(--green);font-weight:750;margin-top:11px}
+.pop-section{padding:15px 0 13px;border-bottom:1px solid var(--line)}
+.pop-section h4{font-size:11px;margin:0 0 10px;font-weight:750}.driver{display:grid;grid-template-columns:8px 1fr auto;gap:7px;align-items:center;height:27px;font-size:11px}.driver i{width:7px;height:7px;border-radius:50%;background:var(--blue)}.driver .name{font-weight:650}.driver .val{font-weight:750}.driver .track{grid-column:2/4;height:3px;background:#e3e3dd;margin-top:-7px}.driver .track i{display:block;height:100%;background:var(--blue)}
+.pop-status{font-size:10px;color:var(--muted);padding:12px 0;display:flex;align-items:center;gap:6px}.pop-status i{width:6px;height:6px;background:var(--green);border-radius:50%}
+.pop-actions{margin-top:auto;display:grid;gap:7px}.pop-actions button{height:31px;border:1px solid var(--ink);background:transparent;font:700 11px inherit;text-align:left;padding:0 11px}.pop-actions .primary{background:var(--ink);color:#fff}.pop-actions .quiet{border:0;padding-left:0;color:var(--muted);font-weight:650}
+/* settings */
+.settings{grid-column:1;grid-row:2;width:750px;height:510px}
+.settings-body{height:calc(100% - 38px);display:grid;grid-template-columns:170px 1fr}
+.settings-nav{border-right:1px solid var(--ink);padding:18px 12px;background:#f1f1ed}.settings-nav .brandmark{margin:0 5px 25px}.settings-nav .rail-item{height:31px}.settings-nav .footer{margin-top:245px;border-top:1px solid var(--line);padding:12px 6px 0;font-size:10px;color:var(--muted);line-height:1.5}.settings-nav .footer b{display:block;color:var(--green);font-size:11px;margin-bottom:3px}
+.settings-main{padding:22px 26px;overflow:hidden}.settings-heading{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:15px;border-bottom:2px solid var(--ink)}.settings-heading h2{font-size:21px;letter-spacing:-.045em;margin:0}.settings-heading p{font-size:11px;color:var(--muted);margin:5px 0 0}.window-badge{font-size:10px;border:1px solid var(--ink);padding:6px 8px;font-weight:700}
+.settings-group{margin-top:13px}.settings-group h3{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 7px}.setting-row{min-height:42px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:8px 0;gap:14px}.setting-row:last-child{border-bottom:1px solid var(--line)}.setting-copy{min-width:0}.setting-copy strong{font-size:12px;display:block}.setting-copy span{font-size:10px;color:var(--muted);display:block;margin-top:3px}.setting-control{font-size:11px;border:1px solid var(--ink);padding:7px 10px;white-space:nowrap;background:#fff}.setting-control.blue{background:var(--blue);color:#fff;border-color:var(--blue)}.switch{width:31px;height:18px;border:1px solid var(--ink);border-radius:20px;padding:2px;background:var(--ink)}.switch i{display:block;width:12px;height:12px;background:#fff;border-radius:50%;margin-left:13px}
+.settings-foot{display:flex;gap:28px;margin-top:12px;font-size:10px;color:var(--muted)}.settings-foot b{color:var(--ink);font-size:11px}
+/* notes */
+.notes{grid-column:2;grid-row:2;width:360px;height:510px;border:1px solid var(--ink);padding:22px 20px;background:#111;color:#fff}.notes .label{font-size:10px;letter-spacing:.14em;color:#9fa19c;text-transform:uppercase}.notes h2{font-size:25px;letter-spacing:-.05em;line-height:1.05;margin:14px 0 24px}.notes-item{display:grid;grid-template-columns:24px 1fr;gap:10px;margin:0 0 18px}.notes-item b{font-size:11px;color:#7e9aff}.notes-item p{font-size:11px;line-height:1.45;color:#d0d0cb;margin:0}.notes-signature{border-top:1px solid #454641;padding-top:14px;margin-top:26px;font-size:10px;line-height:1.5;color:#9fa19c}.notes-signature strong{display:block;color:#fff;font-size:12px;margin-bottom:4px}
+</style>
+</head>
+<body>
+<main class="board">
+  <header class="masthead">
+    <div><div class="kicker">Bennett Usage / UI Refactor 01</div><h1>把 Dashboard 从卡片墙变成数据简报</h1><p>Swiss Monochrome · 让数字先说话，装饰退后，状态与来源沿着同一条阅读路径出现。</p></div>
+    <div class="meta"><strong>方向 A / 轮盘 19</strong>高对比 · 精密栅格<br>目标：3 秒洞察</div>
+  </header>
+  <section class="stage">
+    <article class="window dashboard">
+      <div class="titlebar"><i class="dot"></i><i class="dot gray"></i><i class="dot green"></i><span class="title">Bennett Usage</span><div class="window-tools"><span>数据范围</span><span>24 小时</span></div></div>
+      <div class="dashboard-body">
+        <aside class="rail">
+          <div class="brandmark"><i class="star"></i>Bennett Usage</div>
+          <div class="rail-label">时间范围</div>
+          <div class="rail-item active">过去 24 小时</div><div class="rail-item">今日</div><div class="rail-item">过去 7 天</div><div class="rail-item">过去 30 天</div><div class="rail-item">过去一年</div>
+          <div class="rail-label" style="margin-top:24px">Agent</div>
+          <div class="rail-item active">全部 Agent <span class="count">3</span></div><div class="rail-item">Antigravity</div><div class="rail-item">Oh My Pi</div><div class="rail-item">Pi Agent</div>
+          <div class="rail-spacer"></div><div class="sync-mini"><strong>● 数据已同步</strong>最后刷新：刚刚<br>本地数据库 · 14.2 MB</div>
+        </aside>
+        <div class="dash-main">
+          <div class="dash-top"><div><div class="eyebrow">Usage overview / 24 hours</div><h2>今天的使用概览</h2><div class="date-note">2026 年 9 月 24 日 · 18:42</div></div><div class="top-actions"><button>筛选</button><button class="refresh">↻ 刷新</button></div></div>
+          <div class="hero-grid">
+            <div class="hero-cell"><div class="metric-label">总 Token</div><div class="metric-number">417.3<small>M</small></div><div class="delta">↑ 18.4% 较前一周期</div></div>
+            <div class="hero-cell"><div class="metric-label">预估费用</div><div class="metric-number">$11<small>.91</small></div><div class="metric-sub">按当前模型价格表估算</div></div>
+            <div class="hero-cell"><div class="metric-label">缓存命中率</div><div class="metric-number">95.3<small>%</small></div><div class="cache-line"><span></span></div></div>
+          </div>
+          <div class="chart-panel"><div class="section-line"><h3>小时级 Token 趋势</h3><span>柱状图 · 按模型堆叠</span></div>
+            <svg class="chart" viewBox="0 0 780 202" role="img" aria-label="小时级 Token 趋势图">
+              <g stroke="#d6d6cf" stroke-width="1"><line x1="35" y1="20" x2="765" y2="20"/><line x1="35" y1="65" x2="765" y2="65"/><line x1="35" y1="110" x2="765" y2="110"/><line x1="35" y1="155" x2="765" y2="155"/></g>
+              <g fill="#8c8c86" font-size="9" font-family="-apple-system"><text x="0" y="24">75M</text><text x="0" y="69">50M</text><text x="0" y="114">25M</text><text x="14" y="159">0</text></g>
+              <g fill="#1b54ff"><rect x="48" y="148" width="25" height="8"/><rect x="116" y="129" width="25" height="27"/><rect x="184" y="88" width="25" height="68"/><rect x="252" y="112" width="25" height="44"/><rect x="320" y="72" width="25" height="84"/><rect x="388" y="105" width="25" height="51"/><rect x="456" y="46" width="25" height="110"/><rect x="524" y="92" width="25" height="64"/><rect x="592" y="70" width="25" height="86"/><rect x="660" y="115" width="25" height="41"/><rect x="728" y="57" width="25" height="99"/></g>
+              <g fill="#111"><rect x="48" y="144" width="25" height="4"/><rect x="116" y="124" width="25" height="5"/><rect x="184" y="81" width="25" height="7"/><rect x="252" y="105" width="25" height="7"/><rect x="320" y="63" width="25" height="9"/><rect x="388" y="97" width="25" height="8"/><rect x="456" y="36" width="25" height="10"/><rect x="524" y="84" width="25" height="8"/><rect x="592" y="59" width="25" height="11"/><rect x="660" y="106" width="25" height="9"/><rect x="728" y="47" width="25" height="10"/></g>
+              <g fill="#8c8c86" font-size="9" font-family="-apple-system"><text x="43" y="190">19:00</text><text x="111" y="190">20:00</text><text x="179" y="190">21:00</text><text x="247" y="190">22:00</text><text x="315" y="190">23:00</text><text x="383" y="190">00:00</text><text x="451" y="190">01:00</text><text x="519" y="190">02:00</text><text x="587" y="190">03:00</text><text x="655" y="190">04:00</text><text x="723" y="190">05:00</text></g>
+            </svg><div class="legend"><span><i></i>gemini-3.8-flash</span><span><i style="background:#111"></i>glm-5.3-flash</span><span><i style="background:#9a9a94"></i>deepseek-v4.1-flash</span></div>
+          </div>
+          <div class="bottom-grid"><div><h3 class="mini-title">消耗来源</h3><div class="rank"><b>01</b><div><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span>Antigravity</span><em>223.5M</em></div><div class="bar"><i style="width:54%"></i></div></div><b>54%</b></div><div class="rank"><b>02</b><div><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span>Oh My Pi</span><em>181.2M</em></div><div class="bar"><i style="width:43%"></i></div></div><b>43%</b></div><div class="rank"><b>03</b><div><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span>Pi Agent</span><em>12.6M</em></div><div class="bar"><i style="width:3%"></i></div></div><b>3%</b></div></div><div><h3 class="mini-title">读图提示</h3><div class="insight"><b>主要变化</b>Antigravity 在 04:00 后出现明显峰值。</div><div class="insight"><b>下一步</b>展开模型分布，确认峰值来自哪个模型。</div></div></div>
+        </div>
+      </div>
+    </article>
+
+    <article class="popover">
+      <div class="popover-inner"><div class="pop-grab"></div><div class="pop-head"><strong>Bennett Usage</strong><span>今日速览</span></div><div class="pop-number"><div class="label">今日 Token</div><div class="value">327<small>M</small></div><div class="cost">预估费用 $4.67</div></div><div class="pop-section"><h4>主要消耗来源</h4><div class="driver"><i></i><span class="name">Antigravity</span><span class="val">185.2M</span><div class="track"><i style="width:100%"></i></div></div><div class="driver"><i style="background:#111"></i><span class="name">Oh My Pi</span><span class="val">129.1M</span><div class="track"><i style="width:70%;background:#111"></i></div></div><div class="driver"><i style="background:#9a9a94"></i><span class="name">Pi Agent</span><span class="val">12.6M</span><div class="track"><i style="width:7%;background:#9a9a94"></i></div></div></div><div class="pop-status"><i></i>数据已同步 · 18:42</div><div class="pop-actions"><button class="primary">打开完整 Dashboard　→</button><button>立即同步</button><button>设置</button><button class="quiet">退出 Bennett Usage</button></div></div>
+    </article>
+
+    <article class="window settings">
+      <div class="titlebar"><i class="dot"></i><i class="dot gray"></i><i class="dot green"></i><span class="title">设置</span><div class="window-tools"><span>⌘ ,</span></div></div>
+      <div class="settings-body"><aside class="settings-nav"><div class="brandmark"><i class="star"></i>设置</div><div class="rail-item active">通用</div><div class="rail-item">Agent 状态</div><div class="rail-item">计价与汇率</div><div class="rail-item">数据与存储</div><div class="rail-item">关于应用</div><div class="footer"><b>● 4 个 Agent 正常</b>所有数据保存在本机</div></aside><div class="settings-main"><div class="settings-heading"><div><h2>通用设置</h2><p>配置界面语言与看板数据自动刷新频率</p></div><span class="window-badge">独立窗口</span></div><div class="settings-group"><h3>偏好</h3><div class="setting-row"><div class="setting-copy"><strong>语言</strong><span>菜单栏、Dashboard 与设置页的显示语言</span></div><div class="setting-control">跟随系统⌄</div></div><div class="setting-row"><div class="setting-copy"><strong>外观</strong><span>跟随系统或固定浅色/深色</span></div><div class="setting-control blue">深色⌄</div></div><div class="setting-row"><div class="setting-copy"><strong>自动刷新频率</strong><span>后台同步本地 Agent 会话数据</span></div><div class="setting-control">每 5 分钟⌄</div></div></div><div class="settings-group"><h3>更新</h3><div class="setting-row"><div class="setting-copy"><strong>自动检查更新</strong><span>每天一次，仅访问 GitHub Releases 公共接口</span></div><div class="switch"><i></i></div></div><div class="setting-row"><div class="setting-copy"><strong>当前版本</strong><span>上次检查：今天 18:00</span></div><div class="setting-control">已是最新</div></div></div><div class="settings-foot"><span><b>隐私</b><br>本地解析 · 本地存储</span><span><b>数据库</b><br>14.2 MB · 正常</span><span><b>快捷键</b><br>⌘D 打开 Dashboard</span></div></div></div>
+    </article>
+
+    <aside class="notes"><div class="label">Direction signature</div><h2>用规则线建立阅读顺序。</h2><div class="notes-item"><b>01</b><p>把“总量 / 费用 / 命中率”变成一条横向结论带，不再让三张卡片互相竞争。</p></div><div class="notes-item"><b>02</b><p>时间范围和 Agent 固定在左侧，像一份可扫描的账本索引；页面级设置不抢主操作。</p></div><div class="notes-item"><b>03</b><p>趋势图只回答“何时变化”，来源列表回答“谁在消耗”，两者之间用一个明确提示连接。</p></div><div class="notes-signature"><strong>Signature detail</strong>发丝规则线 + 单一蓝色交互色 + 数字等宽对齐。颜色只标记选择与数据，不承担装饰。</div></aside>
+  </section>
+</main>
+</body>
+</html>

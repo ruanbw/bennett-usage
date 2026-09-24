@@ -112,8 +112,9 @@ public struct SettingsContentView: View {
     @State private var agentHealthInfos: [AgentHealthInfo] = []
     @State private var isSyncing: Bool = false
     @State private var exchangeRateText: String = ""
+    @State private var exchangeRateError = false
     @State private var selectedCurrency: PreferredCurrency = .usd
-    @State private var autoRefreshSeconds: Int = 0
+    @State private var autoRefreshSeconds: Int
     @AppStorage(AppThemeMode.storageKey)
     private var themeModeRaw: String = AppThemeMode.dark.rawValue
     @State private var isShowingClearAlert: Bool = false
@@ -121,6 +122,10 @@ public struct SettingsContentView: View {
     @State private var isClearingRecords = false
     @State private var maintenanceFeedback: MaintenanceFeedback?
     @State private var storageStatusText: String = ""
+    @State private var storageIsLoading = true
+    @State private var storageIsUnavailable = false
+    @State private var preferenceFeedbackVisible = false
+    @State private var agentHealthLoadFailed = false
 
     public init(
         aggregator: MetricsAggregator? = nil,
@@ -133,6 +138,9 @@ public struct SettingsContentView: View {
         self.localization = localization
         self.updateChecker = updateChecker
         self.onDismiss = onDismiss
+        self._autoRefreshSeconds = State(
+            initialValue: UserDefaults.standard.integer(forKey: "bennett_auto_refresh_seconds")
+        )
         self._selectedCategory = State(initialValue: initialCategory)
     }
 
@@ -196,7 +204,7 @@ public struct SettingsContentView: View {
         .onAppear {
             selectedCurrency = PricingEngine.shared.preferredCurrency
             exchangeRateText = String(format: "%.2f", PricingEngine.shared.usdToCnyRate)
-            autoRefreshSeconds = UserDefaults.standard.integer(forKey: "bennett_auto_refresh_seconds")
+            preferenceFeedbackVisible = false
             Task {
                 await rescanAgents()
                 await updateStorageStatus()
@@ -204,9 +212,25 @@ public struct SettingsContentView: View {
         }
         .onChange(of: autoRefreshSeconds) { _, newValue in
             UserDefaults.standard.set(newValue, forKey: "bennett_auto_refresh_seconds")
+            showPreferenceFeedback()
         }
         .onChange(of: themeModeRaw) { _, newValue in
             AppThemeMode(rawValue: newValue)?.apply(to: .shared)
+            showPreferenceFeedback()
+        }
+        .onChange(of: selectedCategory) { _, _ in
+            preferenceFeedbackVisible = false
+        }
+        .task(id: preferenceFeedbackVisible) {
+            guard preferenceFeedbackVisible else { return }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            preferenceFeedbackVisible = false
+        }
+        .onExitCommand {
+            // Keep the original callback/API for callers, while leaving window
+            // chrome to the native title bar (there is no duplicate close button).
+            onDismiss?()
         }
     }
 
@@ -334,32 +358,61 @@ public struct SettingsContentView: View {
                 Text(selectedCategory.fullTitle(localization: localization))
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(AppTheme.Text.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(selectedCategory.subtitle(localization: localization))
                     .font(.caption)
                     .foregroundColor(AppTheme.Text.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.76)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 8)
-            if let onDismiss = onDismiss {
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(AppTheme.Text.secondary)
-                        .frame(width: 26, height: 26)
-                        .background(Circle().fill(AppTheme.Surface.subtle))
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
-                .help(localization.localized(.done))
-                .accessibilityLabel(localization.localized(.done))
-            }
+            Spacer(minLength: 12)
+            detailStatusView
         }
         .padding(.horizontal, 20)
-        .frame(height: 64)
+        .frame(minHeight: 64)
         .background(AppTheme.Canvas.background)
+    }
+
+    private var detailStatusView: some View {
+        let status = detailStatus
+        return Label(status.text, systemImage: status.systemImage)
+            .font(.caption.weight(.medium))
+            .foregroundColor(status.color)
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(status.color.opacity(0.10), in: Capsule())
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(status.text)
+    }
+
+    private var detailStatus: (text: String, systemImage: String, color: Color) {
+        switch selectedCategory {
+        case .general:
+            return (autoRefreshSubtitle, "arrow.clockwise", AppTheme.Status.accent)
+        case .agents:
+            return (
+                String(format: localization.localized(.agentsConnected), connectedAgentCount),
+                isAnyAgentConnected ? "checkmark.circle.fill" : "circle.dashed",
+                isAnyAgentConnected ? AppTheme.Status.success : AppTheme.Text.secondary
+            )
+        case .pricing:
+            return (
+                selectedCurrency == .usd ? localization.localized(.usdOption) : localization.localized(.cnyOption),
+                "coloncurrencysign.circle.fill",
+                AppTheme.Status.warning
+            )
+        case .storage:
+            return (storageStatusDisplayText, storageStatusIcon, storageStatusColor)
+        case .about:
+            return (
+                String(format: localization.localized(.versionLabel), updateChecker.currentVersion.description),
+                "checkmark.seal.fill",
+                AppTheme.Status.accent
+            )
+        }
     }
 
     // MARK: - Detail Content Switcher
@@ -382,162 +435,295 @@ public struct SettingsContentView: View {
     // MARK: - Section 1: General Settings Pane
     private var generalPane: some View {
         VStack(alignment: .leading, spacing: 14) {
-            settingsCard {
-                // Language selection row
-                HStack(spacing: 12) {
-                    cardRowIcon("globe", color: AppTheme.Status.accent)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(localization.localized(.language))
-                            .font(.body.weight(.medium))
-                            .foregroundColor(AppTheme.Text.primary)
-                            .lineLimit(1)
-                        Text(localization.localized(.systemDefault))
-                            .font(.caption)
-                            .foregroundColor(AppTheme.Text.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 12)
-                    trailingMenuPicker(
-                        displayName(for: localization.selectedLanguage),
-                        accessibilityLabel: localization.localized(.language),
-                        options: localization.availableLanguages.map(displayName(for:))
-                    ) { index in
-                        let languages = localization.availableLanguages
-                        guard languages.indices.contains(index) else { return }
-                        localization.setLanguage(languages[index])
-                    }
+            settingsSection(
+                title: localization.localized(.generalSettings),
+                subtitle: localization.localized(.settingsGeneralSubtitle),
+                systemImage: "slider.horizontal.3"
+            ) {
+                settingsCard {
+                    generalLanguageRow
+                    rowDivider
+                    generalAppearanceRow
+                    rowDivider
+                    generalAutoRefreshRow
                 }
-                .padding(.vertical, 4)
+            }
 
-                rowDivider
+            if preferenceFeedbackVisible {
+                preferenceFeedbackView
+            }
 
-                // Appearance row
-                HStack(spacing: 12) {
-                    cardRowIcon("circle.lefthalf.filled", color: AppTheme.Agent.claude)
-                    Text(localization.localized(.appearance))
-                        .font(.body.weight(.medium))
-                        .foregroundColor(AppTheme.Text.primary)
-                        .lineLimit(1)
-                    Spacer(minLength: 12)
-                    Picker(localization.localized(.appearance), selection: themeModeBinding) {
-                        ForEach(AppThemeMode.allCases) { mode in
-                            Text(mode.localizedTitle(localization: localization))
-                                .tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 220)
-                    .controlSize(.small)
-                    .accessibilityIdentifier(Self.themePickerID)
+            settingsSection(
+                title: localization.localized(.checkForUpdates),
+                subtitle: localization.localized(.autoCheckUpdatesSubtitle),
+                systemImage: "arrow.down.circle"
+            ) {
+                settingsCard {
+                    generalUpdateRow
+                    rowDivider
+                    generalUpdateStatusRow
                 }
-                .frame(minHeight: 44)
-                .padding(.vertical, 2)
+            }
 
-                rowDivider
-
-                // Auto Refresh row
-                HStack(spacing: 12) {
-                    cardRowIcon("arrow.clockwise", color: AppTheme.Agent.trae)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(localization.localized(.autoRefreshLabel))
-                            .font(.body.weight(.medium))
-                            .foregroundColor(AppTheme.Text.primary)
-                            .lineLimit(1)
-                        Text(autoRefreshSubtitle)
-                            .font(.caption)
-                            .foregroundColor(AppTheme.Text.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 12)
-                    trailingMenuPicker(
-                        autoRefreshSubtitle,
-                        accessibilityLabel: localization.localized(.autoRefreshLabel),
-                        options: [
-                            localization.localized(.autoRefreshOff),
-                            String(format: localization.localized(.autoRefreshSeconds), 10),
-                            String(format: localization.localized(.autoRefreshSeconds), 30),
-                            String(format: localization.localized(.autoRefreshSeconds), 60)
-                        ]
-                    ) { index in
-                        autoRefreshSeconds = [0, 10, 30, 60][index]
-                    }
+            settingsSection(
+                title: localization.localized(.privacy),
+                subtitle: localization.localized(.privacyNoUpload),
+                systemImage: "lock.shield.fill"
+            ) {
+                settingsCard {
+                    generalDatabaseRow
+                    rowDivider
+                    generalPrivacyRow
                 }
-                .padding(.vertical, 4)
-
-                rowDivider
-
-                // Automatic update check row
-                HStack(spacing: 12) {
-                    cardRowIcon("arrow.down.circle", color: AppTheme.Status.accent)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(localization.localized(.autoCheckUpdatesLabel))
-                            .font(.body.weight(.medium))
-                            .foregroundColor(AppTheme.Text.primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                        Text(localization.localized(.autoCheckUpdatesSubtitle))
-                            .font(.caption)
-                            .foregroundColor(AppTheme.Text.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.72)
-                    }
-                    Spacer(minLength: 12)
-                    Toggle("", isOn: $updateChecker.automaticallyChecksForUpdates)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                        .accessibilityIdentifier(Self.autoCheckToggleID)
-                }
-                .frame(minHeight: 44)
-                .padding(.vertical, 2)
             }
         }
     }
 
+    private var generalLanguageRow: some View {
+        HStack(spacing: 12) {
+            cardRowIcon("globe", color: AppTheme.Status.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(localization.localized(.language))
+                    .font(.body.weight(.medium))
+                    .foregroundColor(AppTheme.Text.primary)
+                Text(displayName(for: localization.selectedLanguage))
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Text.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 12)
+            trailingMenuPicker(
+                displayName(for: localization.selectedLanguage),
+                accessibilityLabel: localization.localized(.language),
+                options: localization.availableLanguages.map(displayName(for:))
+            ) { index in
+                let languages = localization.availableLanguages
+                guard languages.indices.contains(index) else { return }
+                localization.setLanguage(languages[index])
+                showPreferenceFeedback()
+            }
+        }
+        .frame(minHeight: 48)
+    }
+
+    private var generalAppearanceRow: some View {
+        HStack(spacing: 12) {
+            cardRowIcon("circle.lefthalf.filled", color: AppTheme.Agent.claude)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(localization.localized(.appearance))
+                    .font(.body.weight(.medium))
+                    .foregroundColor(AppTheme.Text.primary)
+                Text(Self.resolvedThemeMode(rawValue: themeModeRaw).localizedTitle(localization: localization))
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Text.secondary)
+            }
+            Spacer(minLength: 12)
+            Picker(localization.localized(.appearance), selection: themeModeBinding) {
+                ForEach(AppThemeMode.allCases) { mode in
+                    Text(mode.localizedTitle(localization: localization)).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 200)
+            .controlSize(.small)
+            .accessibilityIdentifier(Self.themePickerID)
+        }
+        .frame(minHeight: 48)
+    }
+
+    private var generalAutoRefreshRow: some View {
+        HStack(spacing: 12) {
+            cardRowIcon("arrow.clockwise", color: AppTheme.Agent.trae)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(localization.localized(.autoRefreshLabel))
+                    .font(.body.weight(.medium))
+                    .foregroundColor(AppTheme.Text.primary)
+                Text(autoRefreshSubtitle)
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Text.secondary)
+            }
+            Spacer(minLength: 12)
+            trailingMenuPicker(
+                autoRefreshSubtitle,
+                accessibilityLabel: localization.localized(.autoRefreshLabel),
+                options: [
+                    localization.localized(.autoRefreshOff),
+                    String(format: localization.localized(.autoRefreshSeconds), 10),
+                    String(format: localization.localized(.autoRefreshSeconds), 30),
+                    String(format: localization.localized(.autoRefreshSeconds), 60)
+                ]
+            ) { index in
+                autoRefreshSeconds = [0, 10, 30, 60][index]
+                showPreferenceFeedback()
+            }
+        }
+        .frame(minHeight: 48)
+    }
+
+    private var generalUpdateRow: some View {
+        HStack(spacing: 12) {
+            cardRowIcon("arrow.down.circle", color: AppTheme.Status.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(localization.localized(.autoCheckUpdatesLabel))
+                    .font(.body.weight(.medium))
+                    .foregroundColor(AppTheme.Text.primary)
+                Text(localization.localized(.autoCheckUpdatesSubtitle))
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Text.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 12)
+            Toggle("", isOn: $updateChecker.automaticallyChecksForUpdates)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .accessibilityIdentifier(Self.autoCheckToggleID)
+                .onChange(of: updateChecker.automaticallyChecksForUpdates) { _, _ in
+                    showPreferenceFeedback()
+                }
+        }
+        .frame(minHeight: 52)
+    }
+
+    private var generalUpdateStatusRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: updateChecker.isChecking ? "arrow.triangle.2.circlepath" : updateStatusIcon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(updateStatusColor)
+            Text(updateStatusDetail)
+                .font(.caption)
+                .foregroundColor(AppTheme.Text.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+            Spacer(minLength: 8)
+            Button(action: checkForUpdatesNow) {
+                if updateChecker.isChecking {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text(localization.localized(.checkForUpdates))
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(updateChecker.isChecking)
+            .accessibilityIdentifier(Self.checkNowButtonID)
+        }
+        .frame(minHeight: 34)
+    }
+
+    private var generalDatabaseRow: some View {
+        HStack(spacing: 12) {
+            cardRowIcon("cylinder.split.1x2", color: AppTheme.Agent.copilot)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(localization.localized(.sqliteDatabase))
+                    .font(.body.weight(.medium))
+                    .foregroundColor(AppTheme.Text.primary)
+                Text(storageStatusDisplayText)
+                    .font(.caption)
+                    .foregroundColor(storageStatusColor)
+                    .lineLimit(1)
+                Text(resolvedDbPath)
+                    .font(.caption2.monospaced())
+                    .foregroundColor(AppTheme.Text.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            Button(action: revealDatabaseInFinder) {
+                Image(systemName: "folder")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help(localization.localized(.revealInFinder))
+            .accessibilityLabel(localization.localized(.revealInFinder))
+        }
+        .frame(minHeight: 52)
+    }
+
+    private var generalPrivacyRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            cardRowIcon("lock.shield.fill", color: AppTheme.Status.success)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(localization.localized(.localFirstPrivate))
+                    .font(.body.weight(.medium))
+                    .foregroundColor(AppTheme.Text.primary)
+                Text(localization.localized(.privacyDescription))
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+        }
+        .padding(.vertical, 4)
+    }
+
     // MARK: - Section 2: Agent Health & Diagnostics Pane
     private var agentsPane: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // Summary and Rescan action bar
-            HStack {
-                Text(String(format: localization.localized(.agentsConnected), connectedAgentCount))
+        settingsSection(
+            title: localization.localized(.agentHealthSection),
+            subtitle: localization.localized(.settingsAgentsSubtitle),
+            systemImage: "bolt.shield.fill"
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label(
+                        String(format: localization.localized(.agentsConnected), connectedAgentCount),
+                        systemImage: isAnyAgentConnected ? "checkmark.circle.fill" : "circle.dashed"
+                    )
                     .font(.subheadline.weight(.medium))
-                    .foregroundColor(AppTheme.Text.secondary)
-                Spacer()
-                Button(action: {
-                    Task { await rescanAgents() }
-                }) {
-                    HStack(spacing: 6) {
-                        if isSyncing {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Image(systemName: "arrow.triangle.2.circlepath")
+                    .foregroundColor(isAnyAgentConnected ? AppTheme.Status.success : AppTheme.Text.secondary)
+                    Spacer()
+                    Button(action: {
+                        Task { await rescanAgents() }
+                    }) {
+                        HStack(spacing: 6) {
+                            if isSyncing {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                            }
+                            Text(localization.localized(.rescanNow))
                         }
-                        Text(localization.localized(.rescanNow))
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isSyncing)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isSyncing)
-            }
 
-            // Agents list card
-            settingsCard {
-                if agentHealthInfos.isEmpty {
-                    HStack {
-                        Spacer()
-                        Text(String(format: localization.localized(.agentsConnected), 0))
-                            .foregroundColor(AppTheme.Text.secondary)
-                            .font(.subheadline)
-                        Spacer()
-                    }
-                    .padding(.vertical, 18)
-                } else {
-                    ForEach(agentHealthInfos) { info in
-                        agentHealthRow(info)
-                        if info.id != agentHealthInfos.last?.id {
-                            rowDivider
+                if agentHealthLoadFailed {
+                    Label(localization.localized(.dataUnavailable), systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.medium))
+                        .foregroundColor(AppTheme.Status.warning)
+                }
+
+                settingsCard {
+                    if agentHealthInfos.isEmpty {
+                        HStack(spacing: 8) {
+                            Spacer()
+                            if isSyncing {
+                                ProgressView().controlSize(.small)
+                                Text(localization.localized(.loadingUsage))
+                            } else {
+                                Image(systemName: agentHealthLoadFailed ? "exclamationmark.triangle.fill" : "circle.dashed")
+                                    .foregroundColor(agentHealthLoadFailed ? AppTheme.Status.warning : AppTheme.Text.secondary)
+                                if agentHealthLoadFailed {
+                                    Text(localization.localized(.dataUnavailable))
+                                } else {
+                                    Text(String(format: localization.localized(.agentsConnected), 0))
+                                }
+                            }
+                            Spacer()
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(AppTheme.Text.secondary)
+                        .padding(.vertical, 18)
+                    } else {
+                        ForEach(agentHealthInfos) { info in
+                            agentHealthRow(info)
+                            if info.id != agentHealthInfos.last?.id {
+                                rowDivider
+                            }
                         }
                     }
                 }
@@ -638,6 +824,7 @@ public struct SettingsContentView: View {
                     .frame(width: 150)
                     .onChange(of: selectedCurrency) { _, newCurrency in
                         PricingEngine.shared.setPreferredCurrency(newCurrency)
+                        showPreferenceFeedback()
                     }
                 }
                 .padding(.vertical, 4)
@@ -665,6 +852,9 @@ public struct SettingsContentView: View {
                             .controlSize(.small)
                             .frame(width: 62)
                             .multilineTextAlignment(.trailing)
+                            .onChange(of: exchangeRateText) { _, _ in
+                                exchangeRateError = false
+                            }
                             .onSubmit {
                                 saveExchangeRate()
                             }
@@ -679,6 +869,16 @@ public struct SettingsContentView: View {
                     }
                 }
                 .padding(.vertical, 4)
+            }
+
+            if exchangeRateError {
+                Label(localization.localized(.invalidExchangeRate), systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption.weight(.medium))
+                    .foregroundColor(AppTheme.Status.warning)
+            }
+
+            if preferenceFeedbackVisible {
+                preferenceFeedbackView
             }
         }
     }
@@ -701,12 +901,10 @@ public struct SettingsContentView: View {
                             .truncationMode(.middle)
                             .help(resolvedDbPath)
 
-                        if !storageStatusText.isEmpty {
-                            Text(storageStatusText)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundColor(AppTheme.Text.primary)
-                                .padding(.top, 2)
-                        }
+                        Text(storageStatusDisplayText)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(storageStatusColor)
+                            .padding(.top, 2)
                     }
                     Spacer()
                     Button(action: revealDatabaseInFinder) {
@@ -797,7 +995,7 @@ public struct SettingsContentView: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(
                         LinearGradient(
-                            colors: [Color.accentColor, Color.purple],
+                            colors: [AppTheme.Status.accent, AppTheme.Status.accent.opacity(0.68)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -1063,6 +1261,76 @@ public struct SettingsContentView: View {
     }
 
     // MARK: - Reusable UI Helpers
+    private func settingsSection<Content: View>(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(AppTheme.Status.accent)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(AppTheme.Text.primary)
+            }
+            Text(subtitle)
+                .font(.caption)
+                .foregroundColor(AppTheme.Text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            content()
+        }
+    }
+
+    private var storageStatusDisplayText: String {
+        if storageIsLoading || storageStatusText.isEmpty {
+            return localization.localized(.loadingUsage)
+        }
+        return storageStatusText
+    }
+
+    private var storageStatusIcon: String {
+        if storageIsLoading { return "arrow.triangle.2.circlepath" }
+        if storageIsUnavailable { return "exclamationmark.triangle.fill" }
+        return "externaldrive.fill"
+    }
+
+    private var storageStatusColor: Color {
+        if storageIsLoading { return AppTheme.Status.accent }
+        if storageIsUnavailable { return AppTheme.Status.warning }
+        return AppTheme.Status.success
+    }
+
+    private func showPreferenceFeedback() {
+        preferenceFeedbackVisible = true
+    }
+
+    private var preferenceFeedbackView: some View {
+        Label(localization.localized(.done), systemImage: "checkmark.circle.fill")
+            .font(.caption.weight(.medium))
+            .foregroundColor(AppTheme.Status.success)
+            .accessibilityIdentifier("settings.preferences.feedback")
+    }
+
+    private var updateStatusIcon: String {
+        if updateChecker.isChecking { return "arrow.triangle.2.circlepath" }
+        if case .failed = updateChecker.status { return "exclamationmark.triangle.fill" }
+        if updateChecker.availableUpdate != nil { return "arrow.down.circle.fill" }
+        if case .upToDate = updateChecker.status { return "checkmark.circle.fill" }
+        return "circle.dashed"
+    }
+
+    private var updateStatusColor: Color {
+        if updateChecker.isChecking { return AppTheme.Status.accent }
+        if case .failed = updateChecker.status { return AppTheme.Status.warning }
+        if updateChecker.availableUpdate != nil { return AppTheme.Status.accent }
+        if case .upToDate = updateChecker.status { return AppTheme.Status.success }
+        return AppTheme.Text.secondary
+    }
+
     private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         VStack(spacing: 12) {
             content()
@@ -1184,9 +1452,13 @@ public struct SettingsContentView: View {
     }
 
     private func saveExchangeRate() {
-        if let rate = Double(exchangeRateText), rate > 0 {
-            PricingEngine.shared.setExchangeRate(rate)
+        guard let rate = Double(exchangeRateText), rate > 0 else {
+            exchangeRateError = true
+            return
         }
+        exchangeRateError = false
+        PricingEngine.shared.setExchangeRate(rate)
+        showPreferenceFeedback()
     }
 
     private func revealDatabaseInFinder() {
@@ -1197,20 +1469,37 @@ public struct SettingsContentView: View {
 
     @MainActor
     private func updateStorageStatus() async {
-        let count = (try? await aggregator?.fetchTotalRecordCount()) ?? 0
         let path = (resolvedDbPath as NSString).expandingTildeInPath
+        storageIsLoading = true
+        storageIsUnavailable = false
+        guard let aggregator,
+              FileManager.default.fileExists(atPath: path),
+              let count = try? await aggregator.fetchTotalRecordCount() else {
+            storageStatusText = localization.localized(.dataUnavailable)
+            storageIsUnavailable = true
+            storageIsLoading = false
+            return
+        }
         let sizeBytes = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
         let sizeFormatted = ByteCountFormatter.string(fromByteCount: sizeBytes, countStyle: .file)
         storageStatusText = String(format: localization.localized(.storageStatus), count, sizeFormatted)
+        storageIsUnavailable = false
+        storageIsLoading = false
     }
 
     @MainActor
     private func rescanAgents() async {
         guard !isSyncing else { return }
         isSyncing = true
+        agentHealthInfos = []
+        agentHealthLoadFailed = false
         defer { isSyncing = false }
         if let infos = try? await aggregator?.fetchAgentHealthInfos() {
             agentHealthInfos = infos
+            agentHealthLoadFailed = false
+        } else {
+            agentHealthInfos = []
+            agentHealthLoadFailed = true
         }
         await updateStorageStatus()
     }

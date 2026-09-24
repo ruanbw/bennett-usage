@@ -159,6 +159,7 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case exchangeRateSummary
     case exchangeRatePrefix
     case exchangeRatePlaceholder
+    case invalidExchangeRate
     case currencyCNY
     case sqliteDatabase
     case versionLabel
@@ -541,6 +542,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     .exchangeRateSummary: "1 USD = %@ CNY",
     .exchangeRatePrefix: "1 USD =",
     .exchangeRatePlaceholder: "7.30",
+    .invalidExchangeRate: "Enter an exchange rate greater than 0.",
     .currencyCNY: "CNY",
     .sqliteDatabase: "SQLite Database",
     .versionLabel: "v%@",
@@ -801,6 +803,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .exchangeRateSummary: "1 USD = %@ CNY",
     .exchangeRatePrefix: "1 USD =",
     .exchangeRatePlaceholder: "7.30",
+    .invalidExchangeRate: "请输入大于 0 的汇率。",
     .currencyCNY: "CNY",
     .sqliteDatabase: "SQLite 数据库",
     .versionLabel: "v%@",

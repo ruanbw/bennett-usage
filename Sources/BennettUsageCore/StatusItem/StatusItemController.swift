@@ -84,6 +84,9 @@ public final class StatusItemController: NSObject {
                     await self?.updateDisplayedSyncStatus()
                 }
             }
+        Task { @MainActor [weak self] in
+            await self?.updateDisplayedSyncStatus()
+        }
         refreshData()
 
         if let heartbeatInterval, heartbeatInterval > 0 {
@@ -257,6 +260,8 @@ public final class StatusItemController: NSObject {
             guard !Task.isCancelled, let (summary, trend) = result else { return }
             summaryModel.summary = summary
             summaryModel.trendPoints = trend.count >= 2 ? trend : nil
+            // This timestamp describes a database read only. Source-sync
+            // freshness is published separately from SyncCoordinator status.
             summaryModel.lastRefreshedAt = Date()
             applyStatusItemAppearance()
         }
@@ -322,13 +327,26 @@ public final class StatusItemController: NSObject {
 
     func updateDisplayedSyncStatus() async {
         let status = await syncCoordinator.currentSyncStatus()
-        guard status.phase == .idle,
-              status.failures.isEmpty,
-              let lastSuccessfulAt = status.lastSuccessfulAt else {
-            return
+        let lastSuccessful = status.lastSuccessfulAt.map {
+            LastSuccessfulRefresh(completedAt: $0)
         }
-        guard lastSyncDate != lastSuccessfulAt else { return }
-        lastSyncDate = lastSuccessfulAt
+        let partialFailure = status.failures.isEmpty ? nil : "source_sync_failed"
+
+        summaryModel.freshness = SyncFreshnessModel(
+            lastChecked: status.lastAttemptAt,
+            lastSuccessful: lastSuccessful,
+            isRefreshing: status.phase == .syncing,
+            partialFailure: partialFailure
+        )
+
+        // Keep the status item timestamp tied to a real successful source sync.
+        // A partial failure may retain the previous successful date in the model,
+        // but it must not create a new success timestamp.
+        if status.phase == .idle,
+           status.failures.isEmpty,
+           let lastSuccessfulAt = status.lastSuccessfulAt {
+            lastSyncDate = lastSuccessfulAt
+        }
         applyStatusItemAppearance()
     }
 

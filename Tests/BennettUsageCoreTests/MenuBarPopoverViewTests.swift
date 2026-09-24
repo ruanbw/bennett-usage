@@ -49,6 +49,20 @@ final class MenuBarPopoverViewTests: XCTestCase {
     }
 
     @MainActor
+    func testStatusSummaryModelSeparatesDatabaseReadFromSourceSyncFreshness() {
+        let readAt = Date()
+        let model = StatusSummaryModel(
+            summary: nil,
+            lastRefreshedAt: readAt,
+            freshness: SyncFreshnessModel(isRefreshing: true)
+        )
+
+        XCTAssertEqual(model.lastRefreshedAt, readAt)
+        XCTAssertTrue(model.freshness.isRefreshing)
+        XCTAssertFalse(model.freshness.hasSuccessfulRefresh)
+    }
+
+    @MainActor
     func testMenuBarPopoverViewNilSummary() {
         let view = MenuBarPopoverView(
             model: StatusSummaryModel(summary: nil),
