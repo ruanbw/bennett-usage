@@ -79,15 +79,18 @@ final class CrushAdapterTests: XCTestCase {
         let data = tempDir.appendingPathComponent("data")
         let alias = tempDir.appendingPathComponent("data-alias")
         let projectA = tempDir.appendingPathComponent("project-a")
+        let projectAlias = tempDir.appendingPathComponent("project-alias")
         let projectB = tempDir.appendingPathComponent("project-b")
+        try FileManager.default.createDirectory(at: projectA, withIntermediateDirectories: true)
         try createDatabase(at: data, sessions: [session("shared", 10, 2, 0.1, 100, 90)])
         try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: data)
-        try writeProjects(global, [(projectA.path, alias.path), (projectB.path, data.path)])
+        try FileManager.default.createSymbolicLink(at: projectAlias, withDestinationURL: projectA)
+        try writeProjects(global, [(projectAlias.path + "/", alias.path), (projectB.path, data.path)])
 
         let adapter = CrushAdapter()
         let result = try await adapter.fetchIncrementalRecords(from: global, since: nil)
         XCTAssertEqual(result.records.count, 1)
-        XCTAssertEqual(result.records.first?.projectFolder, projectA.standardizedFileURL.path)
+        XCTAssertEqual(result.records.first?.projectFolder, projectA.resolvingSymlinksInPath().path)
         XCTAssertEqual(adapter.auxiliaryWatchRoots(for: global), [data.standardizedFileURL])
 
         let repeated = try await adapter.fetchIncrementalRecords(from: global, since: result.newCursor)
@@ -151,6 +154,16 @@ final class CrushAdapterTests: XCTestCase {
 
         let result = try await CrushAdapter().fetchIncrementalRecords(from: global, since: nil)
         XCTAssertEqual(result.records.first?.projectFolder, data.appendingPathComponent("crush.db").path)
+    }
+
+    func testRootProjectPathKeepsRootSeparator() async throws {
+        let global = tempDir.appendingPathComponent("global")
+        let data = tempDir.appendingPathComponent("data")
+        try createDatabase(at: data, sessions: [session("root", 1, 1, 0.01, 100, 90)])
+        try writeProjects(global, [("/", data.path)])
+
+        let result = try await CrushAdapter().fetchIncrementalRecords(from: global, since: nil)
+        XCTAssertEqual(result.records.first?.projectFolder, "/")
     }
 
     func testFirstRepeatSameSecondGrowthResetAndZeroCost() async throws {

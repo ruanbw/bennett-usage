@@ -146,9 +146,7 @@ public struct CrushAdapter: AgentSourceAdapter, @unchecked Sendable {
             }
             let rawProject = (entry["path"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let projectPath = rawProject.isEmpty ? "" :
-                URL(fileURLWithPath: (rawProject as NSString).expandingTildeInPath)
-                    .standardizedFileURL.path
+            let projectPath = rawProject.isEmpty ? "" : Self.canonicalPath(rawProject)
             let expanded = URL(fileURLWithPath: (rawDataDirectory as NSString).expandingTildeInPath)
             let dataDirectory: URL
             if expanded.path.hasPrefix("/") {
@@ -413,8 +411,17 @@ public struct CrushAdapter: AgentSourceAdapter, @unchecked Sendable {
 
     // MARK: - Stable state keys
 
+    private static func canonicalPath(_ path: String) -> String {
+        canonicalURL(URL(fileURLWithPath: (path as NSString).expandingTildeInPath)).path
+    }
+
     private static func canonicalURL(_ url: URL) -> URL {
-        url.standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
+        let canonical = url.standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
+        var path = canonical.path
+        while path.count > 1 && path.hasSuffix("/") {
+            path.removeLast()
+        }
+        return URL(fileURLWithPath: path)
     }
 
     private static func placeholderDatabaseIdentity(for url: URL) -> Int64 {
