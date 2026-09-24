@@ -167,11 +167,30 @@ final class HeatmapGridViewTests: XCTestCase {
             intensityLevel: 2,
             toolBreakdown: ["pi": 500]
         )
+        let pricingEngine = PricingEngine()
+        pricingEngine.setExchangeRate(7.30)
+        pricingEngine.setPreferredCurrency(.usd)
         XCTAssertEqual(
-            HeatmapGridView.accessibilityValue(for: active, localization: localization),
-            "Total Tokens: 500 (500) · Cost: $0.050"
+            HeatmapGridView.accessibilityValue(
+                for: active,
+                localization: localization,
+                pricingEngine: pricingEngine
+            ),
+            "Total Tokens: 500 (500) · Cost: $0.05"
         )
 
+        pricingEngine.setPreferredCurrency(.cny)
+        localization.setLanguage(.zh)
+        XCTAssertEqual(
+            HeatmapGridView.accessibilityValue(
+                for: active,
+                localization: localization,
+                pricingEngine: pricingEngine
+            ),
+            "总 Token: 500 (500) · 费用: ¥0.36"
+        )
+
+        localization.setLanguage(.en)
         let empty = HeatmapDayCell(
             date: Date(),
             dayKey: "2026-09-02",

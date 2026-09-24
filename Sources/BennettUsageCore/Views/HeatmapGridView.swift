@@ -5,17 +5,20 @@ public struct HeatmapGridView: View {
     public let selectedDayKey: String?
     public let onSelectDay: ((HeatmapDayCell) -> Void)?
     public let localization: LocalizationManager
+    public let pricingEngine: PricingEngine
 
 
     public init(
         cells: [HeatmapDayCell],
         selectedDayKey: String? = nil,
         localization: LocalizationManager = .shared,
+        pricingEngine: PricingEngine = .shared,
         onSelectDay: ((HeatmapDayCell) -> Void)? = nil
     ) {
         self.cells = cells
         self.selectedDayKey = selectedDayKey
         self.localization = localization
+        self.pricingEngine = pricingEngine
         self.onSelectDay = onSelectDay
     }
     /// Weeks aligned to the calendar: column 0 starts at `firstWeekday`, and the
@@ -46,7 +49,8 @@ public struct HeatmapGridView: View {
     /// Value announced with a day's date label for VoiceOver.
     public static func accessibilityValue(
         for cell: HeatmapDayCell,
-        localization: LocalizationManager = .shared
+        localization: LocalizationManager = .shared,
+        pricingEngine: PricingEngine = .shared
     ) -> String {
         guard cell.totalTokens > 0 else {
             // `noTokenUsage` includes the date in its visible tooltip format. The
@@ -58,7 +62,7 @@ public struct HeatmapGridView: View {
         return localization.localized(
             .activityDetail,
             arguments: formattedTokens,
-            String(format: "%.3f", cell.costUSD)
+            pricingEngine.spendString(cell.costUSD)
         )
     }
 
@@ -108,7 +112,8 @@ public struct HeatmapGridView: View {
                             HeatmapDayCellView(
                                 cell: cell,
                                 isSelected: cell.dayKey == selectedDayKey,
-                                localization: localization
+                                localization: localization,
+                                pricingEngine: pricingEngine
                             ) { onSelectDay?($0) }
                         } else {
                             Color.clear
@@ -133,6 +138,7 @@ private struct HeatmapDayCellView: View {
     let cell: HeatmapDayCell
     let isSelected: Bool
     let localization: LocalizationManager
+    let pricingEngine: PricingEngine
     let onSelect: (HeatmapDayCell) -> Void
 
     @State private var isHovered = false
@@ -141,6 +147,7 @@ private struct HeatmapDayCellView: View {
         lhs.cell == rhs.cell
             && lhs.isSelected == rhs.isSelected
             && lhs.localization === rhs.localization
+            && lhs.pricingEngine === rhs.pricingEngine
     }
 
     var body: some View {
@@ -163,7 +170,11 @@ private struct HeatmapDayCellView: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .accessibilityLabel(cell.dayKey)
-        .accessibilityValue(HeatmapGridView.accessibilityValue(for: cell, localization: localization))
+        .accessibilityValue(HeatmapGridView.accessibilityValue(
+            for: cell,
+            localization: localization,
+            pricingEngine: pricingEngine
+        ))
         .accessibilityAddTraits(HeatmapGridView.accessibilityTraits(isSelected: isSelected))
         // Formatted lazily: only the hovered square builds its tooltip
         // string; every other square carries an empty (never-shown) one.
@@ -179,7 +190,11 @@ private struct HeatmapDayCellView: View {
             return localization.localized(.noTokenUsage, arguments: cell.dayKey)
         }
         let formattedTokens = "\(TokenFormatter.formatCompact(cell.totalTokens)) (\(TokenFormatter.formatFull(cell.totalTokens)))"
-        let detail = localization.localized(.activityDetail, arguments: formattedTokens, String(format: "%.3f", cell.costUSD))
+        let detail = localization.localized(
+            .activityDetail,
+            arguments: formattedTokens,
+            pricingEngine.spendString(cell.costUSD)
+        )
         return "\(cell.dayKey)\n\(detail)"
     }
 }

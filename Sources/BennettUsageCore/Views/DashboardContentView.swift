@@ -617,7 +617,8 @@ public struct DashboardContentView: View {
                 HeatmapGridView(
                     cells: heatmapCells,
                     selectedDayKey: selectedCell?.dayKey,
-                    localization: localization
+                    localization: localization,
+                    pricingEngine: pricingEngine
                 ) { cell in
                     selectedCell = (selectedCell?.dayKey == cell.dayKey) ? nil : cell
                 }
@@ -744,7 +745,11 @@ public struct DashboardContentView: View {
                 .buttonStyle(.plain)
             }
             let formattedTokens = "\(TokenFormatter.formatCompact(cell.totalTokens)) (\(TokenFormatter.formatFull(cell.totalTokens)))"
-            Text(localization.localized(.activityDetail, arguments: formattedTokens, String(format: "%.3f", cell.costUSD)))
+            Text(localization.localized(
+                .activityDetail,
+                arguments: formattedTokens,
+                pricingEngine.spendString(cell.costUSD)
+            ))
                 .font(.caption)
                 .foregroundColor(AppTheme.Text.secondary)
             if !cell.toolBreakdown.isEmpty {
