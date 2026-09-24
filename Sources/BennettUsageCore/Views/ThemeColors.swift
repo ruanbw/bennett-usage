@@ -55,10 +55,14 @@ public enum AppTheme {
     /// roles semantic makes it possible to tune density without changing the
     /// information hierarchy of an individual screen.
     public enum Typography {
-        public static let heroMetric = Font.system(size: 36, weight: .semibold, design: .rounded)
-        public static let heroSpend = Font.system(size: 24, weight: .semibold, design: .rounded)
+        /// Dashboard hierarchy: the compact total is deliberately dominant and
+        /// exact values remain tabular, secondary metadata.
+        public static let heroMetric = Font.system(size: 48, weight: .bold, design: .rounded)
+        public static let heroSpend = Font.system(size: 28, weight: .semibold, design: .rounded)
+        public static let contextTitle = Font.system(size: 24, weight: .bold, design: .rounded)
         public static let sectionTitle = Font.system(size: 16, weight: .semibold)
         public static let metricValue = Font.system(size: 15, weight: .semibold, design: .rounded)
+        public static let supportingValue = Font.system(size: 17, weight: .semibold, design: .rounded)
         public static let exactValue = Font.system(size: 12, weight: .medium, design: .monospaced)
         public static let label = Font.system(size: 11, weight: .medium)
         public static let caption = Font.system(size: 11)
@@ -70,7 +74,7 @@ public enum AppTheme {
     public enum Layout {
         public static let canvasPadding: CGFloat = 24
         public static let sectionSpacing: CGFloat = 20
-        public static let cardPadding: CGFloat = 16
+        public static let cardPadding: CGFloat = 18
         public static let compactSpacing: CGFloat = 10
         public static let hairline: CGFloat = 0.5
     }
@@ -79,6 +83,13 @@ public enum AppTheme {
         public static let card: CGFloat = 12
         public static let control: CGFloat = 8
         public static let pill: CGFloat = 999
+
+        public enum Settings {
+            public static let sidebarWidth: CGFloat = 176
+            public static let headerHeight: CGFloat = 64
+            public static let privacyFooterHeight: CGFloat = 30
+            public static let contentPadding: CGFloat = 20
+        }
     }
 
     public enum Control {
@@ -116,7 +127,9 @@ public enum AppTheme {
             lightAlpha: 0.10, darkAlpha: 0.16
         )
 
-        /// Floating popovers, tooltips, and elevated modal panels.
+        /// Floating popovers, tooltips, controls, and elevated modal panels.
+        /// Kept dynamic because the Penpot popover and settings chrome follow
+        /// the system appearance independently of the dashboard canvas.
         public static let elevated = Color.dynamic(lightHex: "#FFFFFF", darkHex: "#2C2C30")
     }
 
@@ -232,6 +245,15 @@ public enum AppTheme {
     // MARK: - Charts & Trends
 
     public enum Chart {
+        /// Semantic series colors used when category identity is not the data
+        /// subject. Agent-facing charts continue to use `Agent` below.
+        public enum Series {
+            public static let input = Status.accent
+            public static let output = Agent.claude
+            public static let cacheRead = Status.success
+            public static let cacheWrite = Status.warning
+        }
+
         /// Primary trend line.
         public static let primaryLine = Color.dynamic(lightHex: "#2563EB", darkHex: "#3B82F6")
 

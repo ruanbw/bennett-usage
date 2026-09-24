@@ -37,7 +37,14 @@ public struct DashboardView: View {
             localization: localization,
             onOpenSettings: onOpenSettings ?? { presentation.isShowingSettings = true }
         )
-        .frame(minWidth: 960, idealWidth: 1080, minHeight: 680, idealHeight: 740)
+        .frame(
+            minWidth: 960,
+            idealWidth: 1080,
+            maxWidth: .infinity,
+            minHeight: 680,
+            idealHeight: 740,
+            maxHeight: .infinity
+        )
         .background(AppTheme.Canvas.background)
         .sheet(isPresented: $presentation.isShowingSettings) {
             SettingsSheetView(

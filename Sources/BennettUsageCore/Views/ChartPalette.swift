@@ -27,17 +27,23 @@ public struct ChartPalette: Sendable {
         var result: [String: Color] = [:]
         result.reserveCapacity(sortedKeys.count)
         for (index, key) in sortedKeys.enumerated() {
-            let lower = key.lowercased()
-            if let agentColor = AppTheme.Agent.knownColor(for: lower) {
-                result[key] = agentColor
-            } else if let modelColor = AppTheme.Agent.inferredModelColor(for: lower) {
-                result[key] = modelColor
-            } else {
-                result[key] = AppTheme.Harmonic.color(for: key, index: index, seed: seed)
-            }
+            result[key] = color(for: key, paletteIndex: index)
         }
         cache.store(result, for: sortedKeys)
         return result
+    }
+
+    /// Resolves one series color without making callers know about the known
+    /// agent/model precedence or the deterministic fallback palette.
+    public func color(for key: String, paletteIndex: Int = 0) -> Color {
+        let lower = key.lowercased()
+        if let agentColor = AppTheme.Agent.knownColor(for: lower) {
+            return agentColor
+        }
+        if let modelColor = AppTheme.Agent.inferredModelColor(for: lower) {
+            return modelColor
+        }
+        return AppTheme.Harmonic.color(for: key, index: paletteIndex, seed: seed)
     }
 
     /// Bounded, thread-safe memoization box.

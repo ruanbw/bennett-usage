@@ -59,125 +59,169 @@ public struct MenuBarPopoverView: View {
         let active = Self.activeTools(for: summary)
         let toolColors = ChartPalette.shared.colors(for: active.map(\.id))
 
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "chart.bar.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(AppTheme.Status.accent)
-                Text(localization.localized(.appName))
-                    .font(.headline)
-                    .foregroundColor(AppTheme.Text.primary)
-                Spacer(minLength: 8)
-                if let onOpenSettings = onOpenSettings {
-                    QuietIconButton(
-                        systemName: "gearshape",
-                        tooltip: localization.localized(.settings),
-                        action: onOpenSettings
-                    )
-                    .accessibilityLabel(localization.localized(.settings))
-                }
-                QuietIconButton(
-                    systemName: "macwindow",
-                    tooltip: localization.localized(.openDashboardShortcut),
-                    action: onOpenDashboard
-                )
-                .accessibilityLabel(localization.localized(.openDashboardShortcut))
-            }
+        return VStack(alignment: .leading, spacing: 0) {
+            popoverHeader
+            Divider().overlay(AppTheme.Border.divider)
 
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(localization.localized(.todaysTokens))
-                        .font(AppTheme.Typography.caption)
-                        .foregroundColor(AppTheme.Text.secondary)
-                    Text(TokenFormatter.formatCompact(summary?.totalTokens ?? 0))
-                        .font(.system(size: 25, weight: .semibold, design: .rounded))
-                        .foregroundColor(AppTheme.Text.primary)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .help(TokenFormatter.formatWithTooltip(summary?.totalTokens ?? 0).tooltip)
+            VStack(alignment: .leading, spacing: 12) {
+                glanceMetrics
+                if let points = model.trendPoints,
+                   points.contains(where: { $0.tokens > 0 }),
+                   points.count > 1 {
+                    glanceTrend(points: points)
                 }
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(localization.localized(.estimatedCost))
-                        .font(AppTheme.Typography.caption)
-                        .foregroundColor(AppTheme.Text.secondary)
-                    Text(pricingEngine.spendString(summary?.totalCostUSD ?? 0.0))
-                        .font(.system(size: 17, weight: .semibold, design: .rounded))
-                        .foregroundColor(AppTheme.Status.success)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                }
+                glanceTopAgent(active: active, toolColors: toolColors)
+                freshnessRow
             }
-            .accessibilityElement(children: .combine)
-
-            if let points = model.trendPoints,
-               points.contains(where: { $0.tokens > 0 }),
-               points.count > 1 {
-                glanceTrend(points: points)
-            }
-            glanceDistribution(active: active, toolColors: toolColors)
-
-            HStack(spacing: 5) {
-                Image(systemName: "checkmark.circle")
-                    .font(.system(size: 9, weight: .semibold))
-                Text(dataFreshnessText)
-                    .font(.caption2)
-                Spacer(minLength: 0)
-            }
-            .foregroundColor(AppTheme.Text.tertiary)
-            .accessibilityElement(children: .combine)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
 
             if let update = updateChecker.availableUpdate {
                 updateBanner(update)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
             }
 
-            Divider()
-                .overlay(AppTheme.Border.divider)
+            Divider().overlay(AppTheme.Border.divider)
+            actionBar
+        }
+        .frame(width: 360)
+        .background(.regularMaterial)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(localization.localized(.quickGlance))
+    }
 
-            HStack(spacing: 8) {
-                Button(action: onOpenDashboard) {
-                    Label(localization.localized(.navDashboard), systemImage: "macwindow")
+    private var popoverHeader: some View {
+        HStack(spacing: 9) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(AppTheme.Status.accent.opacity(0.12))
+                    .frame(width: 28, height: 28)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(AppTheme.Status.accent)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(localization.localized(.appName))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(AppTheme.Text.primary)
+                Text(localization.localized(.quickGlance))
+                    .font(.caption2)
+                    .foregroundColor(AppTheme.Text.secondary)
+            }
+            Spacer(minLength: 8)
+            if let onOpenSettings = onOpenSettings {
+                QuietIconButton(
+                    systemName: "gearshape",
+                    tooltip: localization.localized(.openSettingsAction),
+                    action: onOpenSettings
+                )
+                .accessibilityLabel(localization.localized(.settings))
+            }
+            QuietIconButton(
+                systemName: "macwindow",
+                tooltip: localization.localized(.openDashboardShortcut),
+                action: onOpenDashboard
+            )
+            .accessibilityLabel(localization.localized(.openDashboardShortcut))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+    }
+
+    private var glanceMetrics: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(localization.localized(.todaysTokens))
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Text.secondary)
+                Text(TokenFormatter.formatCompact(summary?.totalTokens ?? 0))
+                    .font(.system(size: 29, weight: .bold, design: .rounded))
+                    .foregroundColor(AppTheme.Text.primary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.68)
+                    .help(TokenFormatter.formatWithTooltip(summary?.totalTokens ?? 0).tooltip)
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(localization.localized(.estimatedCost))
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Text.secondary)
+                Text(pricingEngine.spendString(summary?.totalCostUSD ?? 0.0))
+                    .font(.system(size: 19, weight: .semibold, design: .rounded))
+                    .foregroundColor(AppTheme.Status.success)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.68)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(localization.localized(.popoverAccessibilityDescription))
+    }
+
+    private var freshnessRow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(AppTheme.Status.success)
+            Text(localization.localized(.syncFreshness))
+                .font(.caption2.weight(.medium))
+                .foregroundColor(AppTheme.Text.secondary)
+            Text("·")
+                .foregroundColor(AppTheme.Text.quaternary)
+            Text(dataFreshnessText)
+                .font(.caption2.monospacedDigit())
+                .foregroundColor(AppTheme.Text.tertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.76)
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .help(dataFreshnessText)
+    }
+
+    private var actionBar: some View {
+        HStack(spacing: 7) {
+            Button(action: onOpenDashboard) {
+                Label(localization.localized(.openDashboardAction), systemImage: "macwindow")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+
+            if let onOpenSettings = onOpenSettings {
+                Button(action: onOpenSettings) {
+                    Image(systemName: "gearshape")
                         .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .accessibilityLabel(localization.localized(.openDashboardShortcut))
-
-                if let onOpenSettings = onOpenSettings {
-                    Button(action: onOpenSettings) {
-                        Image(systemName: "gearshape")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help(localization.localized(.settings))
-                    .accessibilityLabel(localization.localized(.settings))
-                }
-
-                Button(action: onSyncNow) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .help(localization.localized(.syncNow))
-                .accessibilityLabel(localization.localized(.syncNow))
-
-                QuietTextButton(
-                    title: localization.localized(.quit),
-                    action: onQuit
-                )
-                .accessibilityLabel(localization.localized(.quit))
+                .help(localization.localized(.settings))
+                .accessibilityLabel(localization.localized(.settings))
             }
+
+            Button(action: onSyncNow) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help(localization.localized(.syncNow))
+            .accessibilityLabel(localization.localized(.syncNow))
+
+            QuietTextButton(
+                title: localization.localized(.quit),
+                action: onQuit
+            )
+            .accessibilityLabel(localization.localized(.quit))
         }
-        .padding(14)
-        .frame(width: 330)
-        .background(.regularMaterial)
+        .padding(10)
     }
 
     private var dataFreshnessText: String {
         guard let lastRefreshedAt = model.lastRefreshedAt else {
-            return localization.localized(.noToolsActiveToday)
+            return localization.localized(.notSyncedYet)
         }
         let minutes = max(0, Int(Date().timeIntervalSince(lastRefreshedAt) / 60))
         if minutes == 0 {
@@ -207,50 +251,47 @@ public struct MenuBarPopoverView: View {
         }
     }
 
-    private func glanceDistribution(active: [ActiveTool], toolColors: [String: Color]) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+    private func glanceTopAgent(active: [ActiveTool], toolColors: [String: Color]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(localization.localized(.toolBreakdownToday))
-                    .font(AppTheme.Typography.label)
+                Text(localization.localized(.popoverTopAgent, arguments: active.first.map { AgentFilterBarView.displayName(for: $0.id) } ?? localization.localized(.none)))
+                    .font(.caption)
                     .foregroundColor(AppTheme.Text.secondary)
-                Spacer()
-                if let activeAgent = active.first {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(toolColors[activeAgent.id] ?? AppTheme.Harmonic.color(for: activeAgent.id))
-                            .frame(width: 6, height: 6)
-                        Text(AgentFilterBarView.displayName(for: activeAgent.id))
-                            .font(.caption2.weight(.medium))
-                            .foregroundColor(AppTheme.Text.primary)
-                            .lineLimit(1)
-                    }
-                    .accessibilityElement(children: .combine)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if let top = active.first {
+                    Text(TokenFormatter.formatCompact(top.tokens))
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundColor(AppTheme.Text.primary)
                 }
             }
-
-            miniDistributionBar(active: active, toolColors: toolColors)
-
-            if active.isEmpty {
-                Text(localization.localized(.noToolsActiveToday))
+            if let top = active.first {
+                let color = toolColors[top.id] ?? AppTheme.Agent.knownColor(for: top.id) ?? AppTheme.Harmonic.color(for: top.id)
+                HStack(spacing: 8) {
+                    Circle().fill(color).frame(width: 8, height: 8)
+                    Text(AgentFilterBarView.displayName(for: top.id))
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(AppTheme.Text.primary)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(localization.localized(.distributionShare, arguments: topShare(for: top, in: active)))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundColor(AppTheme.Text.tertiary)
+                }
+                miniDistributionBar(active: active, toolColors: toolColors)
+            } else {
+                Text(localization.localized(.popoverNoUsage))
                     .font(.caption)
                     .foregroundColor(AppTheme.Text.tertiary)
-            } else {
-                ForEach(active.prefix(3), id: \.id) { tool in
-                    toolRow(
-                        name: AgentFilterBarView.displayName(for: tool.id),
-                        tokens: tool.tokens,
-                        color: toolColors[tool.id] ?? AppTheme.Agent.knownColor(for: tool.id) ?? AppTheme.Harmonic.color(for: tool.id)
-                    )
-                }
-                if active.count > 3 {
-                    Text(localization.localized(.moreToolsCount, arguments: active.count - 3))
-                        .font(.caption)
-                        .foregroundColor(AppTheme.Text.tertiary)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .accessibilityLabel(localization.localized(.moreToolsCount, arguments: active.count - 3))
-                }
             }
         }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func topShare(for tool: ActiveTool, in active: [ActiveTool]) -> Double {
+        let total = active.reduce(0) { $0 + $1.tokens }
+        guard total > 0 else { return 0 }
+        return Double(tool.tokens) / Double(total) * 100
     }
 
     // MARK: - Mini Distribution Bar
@@ -303,27 +344,6 @@ public struct MenuBarPopoverView: View {
             let shareText = localization.localized(.distributionShare, arguments: share)
             return "\(name), \(TokenFormatter.formatFull(tool.tokens)) \(tokenUnit), \(shareText)"
         }.joined(separator: ", ")
-    }
-
-    // MARK: - Tool Row
-
-    private func toolRow(name: String, tokens: Int, color: Color) -> some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
-            Text(name)
-                .font(.caption)
-                .foregroundColor(AppTheme.Text.primary)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            Text(tokens > 0 ? TokenFormatter.formatCompact(tokens) : "-")
-                .font(.caption.monospacedDigit())
-                .foregroundColor(tokens > 0 ? AppTheme.Text.secondary : AppTheme.Text.quaternary)
-                .help(tokens > 0 ? "\(TokenFormatter.formatFull(tokens)) \(localization.localized(.tokenUnit))" : "")
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(name), \(TokenFormatter.formatFull(tokens)) \(localization.localized(.tokenUnit))")
     }
 
     // MARK: - Update Banner

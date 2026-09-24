@@ -159,21 +159,16 @@ public struct SettingsContentView: View {
     }
 
     public var body: some View {
-        GeometryReader { proxy in
-            HStack(spacing: 0) {
-                if proxy.size.width < 680 {
-                    compactCategoryStrip
-                } else {
-                    sidebarView
-                        .frame(width: 190)
-                }
+        HStack(spacing: 0) {
+            sidebarView
+                .frame(width: 176)
 
-                AppTheme.Border.divider
-                    .frame(width: AppTheme.Layout.hairline)
+            AppTheme.Border.divider
+                .frame(width: AppTheme.Layout.hairline)
 
-                detailColumn
-            }
+            detailColumn
         }
+        .frame(minWidth: 750, idealWidth: 750, minHeight: 510, idealHeight: 510)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppTheme.Canvas.background)
         .alert(localization.localized(.clearRecordsConfirmTitle), isPresented: $isShowingClearAlert) {
@@ -202,26 +197,32 @@ public struct SettingsContentView: View {
     private var sidebarView: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: "gearshape.2.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(AppTheme.Status.accent)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(AppTheme.Status.accent.opacity(0.12))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: "gearshape.2.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(AppTheme.Status.accent)
+                }
                 Text(localization.localized(.settings))
                     .font(.headline.weight(.semibold))
                     .foregroundColor(AppTheme.Text.primary)
-                Spacer()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 16)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 12)
+            .padding(.top, 15)
+            .padding(.bottom, 9)
 
-            VStack(spacing: 3) {
+            VStack(spacing: 2) {
                 ForEach(SettingsCategory.allCases) { category in
                     categoryRow(category)
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 7)
 
-            Spacer()
+            Spacer(minLength: 12)
 
             HStack(spacing: 6) {
                 Circle()
@@ -231,48 +232,17 @@ public struct SettingsContentView: View {
                     .font(.caption2)
                     .foregroundColor(AppTheme.Text.secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .minimumScaleFactor(0.72)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-        }
-        .background(AppTheme.Surface.subtle.opacity(0.4))
-    }
-
-    private var compactCategoryStrip: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 4) {
-                ForEach(SettingsCategory.allCases) { category in
-                    Button {
-                        selectedCategory = category
-                    } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: category.systemImage)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(selectedCategory == category ? category.iconColor : AppTheme.Text.secondary)
-                            Text(category.title(localization: localization))
-                                .font(.system(size: 9, weight: selectedCategory == category ? .semibold : .regular))
-                                .foregroundColor(selectedCategory == category ? AppTheme.Text.primary : AppTheme.Text.secondary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(selectedCategory == category ? AppTheme.Surface.selected : Color.clear)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(category.title(localization: localization))
-                    .accessibilityAddTraits(selectedCategory == category ? .isSelected : [])
-                }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .background(AppTheme.Surface.primary.opacity(0.5))
+            .overlay(alignment: .top) {
+                AppTheme.Border.divider.frame(height: AppTheme.Layout.hairline)
             }
-            .padding(6)
         }
-        .frame(width: 82)
-        .background(AppTheme.Surface.subtle.opacity(0.4))
+        .background(AppTheme.Surface.subtle.opacity(0.56))
     }
 
     private var detailColumn: some View {
@@ -284,7 +254,9 @@ public struct SettingsContentView: View {
 
             ScrollView(.vertical, showsIndicators: true) {
                 detailContentView
-                    .padding(24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 18)
             }
 
             AppTheme.Border.divider
@@ -297,20 +269,25 @@ public struct SettingsContentView: View {
     }
 
     private var privacyFooter: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 9, weight: .semibold))
+        HStack(spacing: 7) {
+            Image(systemName: "lock.shield.fill")
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(AppTheme.Status.success)
-            Text(localization.localized(.localFirstPrivate))
+            Text(localization.localized(.privacyFooter))
                 .font(.caption2)
                 .foregroundColor(AppTheme.Text.secondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.78)
-            Spacer(minLength: 0)
+                .minimumScaleFactor(0.76)
+            Spacer(minLength: 8)
+            Text(localization.localized(.privacyLocalOnly))
+                .font(.caption2)
+                .foregroundColor(AppTheme.Text.tertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.76)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 8)
-        .background(AppTheme.Surface.subtle.opacity(0.55))
+        .padding(.horizontal, 20)
+        .frame(height: 30)
+        .background(AppTheme.Surface.subtle.opacity(0.5))
         .accessibilityElement(children: .combine)
     }
 
@@ -327,29 +304,44 @@ public struct SettingsContentView: View {
 
     // MARK: - Detail Header View
     private var detailHeaderView: some View {
-        HStack(alignment: .center) {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(selectedCategory.iconColor.opacity(0.12))
+                    .frame(width: 32, height: 32)
+                Image(systemName: selectedCategory.systemImage)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(selectedCategory.iconColor)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(selectedCategory.fullTitle(localization: localization))
-                    .font(.title2.bold())
+                    .font(.system(size: 18, weight: .bold))
                     .foregroundColor(AppTheme.Text.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
                 Text(selectedCategory.subtitle(localization: localization))
                     .font(.caption)
                     .foregroundColor(AppTheme.Text.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
             }
-            Spacer()
+            Spacer(minLength: 8)
             if let onDismiss = onDismiss {
                 Button(action: onDismiss) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(AppTheme.Text.tertiary)
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(AppTheme.Text.secondary)
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(AppTheme.Surface.subtle))
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.cancelAction)
                 .help(localization.localized(.done))
+                .accessibilityLabel(localization.localized(.done))
             }
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 13)
+        .frame(height: 64)
         .background(AppTheme.Canvas.background)
     }
 
@@ -372,7 +364,7 @@ public struct SettingsContentView: View {
 
     // MARK: - Section 1: General Settings Pane
     private var generalPane: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 14) {
             settingsCard {
                 // Language selection row
                 HStack(spacing: 12) {
@@ -381,11 +373,13 @@ public struct SettingsContentView: View {
                         Text(localization.localized(.language))
                             .font(.body.weight(.medium))
                             .foregroundColor(AppTheme.Text.primary)
+                            .lineLimit(1)
                         Text(localization.localized(.systemDefault))
                             .font(.caption)
                             .foregroundColor(AppTheme.Text.secondary)
+                            .lineLimit(1)
                     }
-                    Spacer()
+                    Spacer(minLength: 12)
                     trailingMenuPicker(
                         displayName(for: localization.selectedLanguage),
                         accessibilityLabel: localization.localized(.language),
@@ -407,11 +401,13 @@ public struct SettingsContentView: View {
                         Text(localization.localized(.autoRefreshLabel))
                             .font(.body.weight(.medium))
                             .foregroundColor(AppTheme.Text.primary)
+                            .lineLimit(1)
                         Text(autoRefreshSubtitle)
                             .font(.caption)
                             .foregroundColor(AppTheme.Text.secondary)
+                            .lineLimit(1)
                     }
-                    Spacer()
+                    Spacer(minLength: 12)
                     trailingMenuPicker(
                         autoRefreshSubtitle,
                         accessibilityLabel: localization.localized(.autoRefreshLabel),
@@ -436,19 +432,23 @@ public struct SettingsContentView: View {
                         Text(localization.localized(.autoCheckUpdatesLabel))
                             .font(.body.weight(.medium))
                             .foregroundColor(AppTheme.Text.primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                         Text(localization.localized(.autoCheckUpdatesSubtitle))
                             .font(.caption)
                             .foregroundColor(AppTheme.Text.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
                     }
-                    Spacer()
+                    Spacer(minLength: 12)
                     Toggle("", isOn: $updateChecker.automaticallyChecksForUpdates)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
                         .accessibilityIdentifier(Self.autoCheckToggleID)
                 }
-                .padding(.vertical, 4)
+                .frame(minHeight: 44)
+                .padding(.vertical, 2)
             }
         }
     }
@@ -475,8 +475,8 @@ public struct SettingsContentView: View {
                         Text(localization.localized(.rescanNow))
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 .disabled(isSyncing)
             }
 
@@ -592,7 +592,8 @@ public struct SettingsContentView: View {
                         Text(localization.localized(.cnyOption)).tag(PreferredCurrency.cny)
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 220)
+                    .labelsHidden()
+                    .frame(width: 150)
                     .onChange(of: selectedCurrency) { _, newCurrency in
                         PricingEngine.shared.setPreferredCurrency(newCurrency)
                     }
@@ -619,7 +620,8 @@ public struct SettingsContentView: View {
                             .foregroundColor(AppTheme.Text.secondary)
                         TextField(localization.localized(.exchangeRatePlaceholder), text: $exchangeRateText)
                             .textFieldStyle(.roundedBorder)
-                            .frame(width: 70)
+                            .controlSize(.small)
+                            .frame(width: 62)
                             .multilineTextAlignment(.trailing)
                             .onSubmit {
                                 saveExchangeRate()
@@ -669,7 +671,8 @@ public struct SettingsContentView: View {
                         Label(localization.localized(.revealInFinder), systemImage: "folder")
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.regular)
+                    .controlSize(.small)
+                    .fixedSize()
                 }
                 .padding(.vertical, 4)
             }
@@ -694,7 +697,7 @@ public struct SettingsContentView: View {
                             )
                         }
                         .buttonStyle(.bordered)
-                        .controlSize(.regular)
+                        .controlSize(.small)
                         .disabled(isPerformingMaintenance)
                         .accessibilityIdentifier(Self.rebuildButtonID)
                     }
@@ -720,7 +723,7 @@ public struct SettingsContentView: View {
                             )
                         }
                         .buttonStyle(.bordered)
-                        .controlSize(.regular)
+                        .controlSize(.small)
                         .foregroundColor(AppTheme.Status.error)
                         .disabled(isPerformingMaintenance)
                         .accessibilityIdentifier(Self.clearCacheButtonID)
@@ -874,7 +877,7 @@ public struct SettingsContentView: View {
                         }
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.regular)
+                    .controlSize(.small)
                     .disabled(updateChecker.isChecking)
                     .accessibilityIdentifier(Self.checkNowButtonID)
                 }
@@ -1021,14 +1024,16 @@ public struct SettingsContentView: View {
         VStack(spacing: 12) {
             content()
         }
-        .padding(16)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(AppTheme.Surface.primary)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+                .stroke(AppTheme.Border.subtle, lineWidth: AppTheme.Layout.hairline)
         )
     }
 
@@ -1039,13 +1044,14 @@ public struct SettingsContentView: View {
 
     private func cardRowIcon(_ name: String, color: Color) -> some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(color.opacity(0.15))
-                .frame(width: 28, height: 28)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(color.opacity(0.12))
+                .frame(width: 30, height: 30)
             Image(systemName: name)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(color)
         }
+        .accessibilityHidden(true)
     }
 
     /// A right-aligned selection control matching the settings card styling.
@@ -1166,25 +1172,14 @@ public struct SettingsContentView: View {
         await updateStorageStatus()
     }
 
-    // `NumberFormatter` / `RelativeDateTimeFormatter` are comparatively expensive
-    // to construct, so a single shared instance is reused per formatter instead
-    // of building one on every row render. Both call sites are SwiftUI view code
-    // and the format options match the previous per-call instances exactly.
-    private static let decimalNumberFormatter: NumberFormatter = {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter
-    }()
-
+    // `RelativeDateTimeFormatter` is comparatively expensive to construct, so a
+    // single shared instance is reused instead of building one on every row
+    // render. Its short format is identical to the previous per-call instance.
     private static let shortRelativeDateFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
         return formatter
     }()
-
-    private func formatNumber(_ number: Int) -> String {
-        return Self.decimalNumberFormatter.string(from: NSNumber(value: number)) ?? "\(number)"
-    }
 
     private func relativeTimestamp(_ date: Date) -> String {
         return Self.shortRelativeDateFormatter.localizedString(for: date, relativeTo: Date())
@@ -1448,32 +1443,35 @@ private struct CategoryRowButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                // Colored squircle icon
+            HStack(spacing: 9) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(category.iconColor)
-                        .frame(width: 22, height: 22)
+                        .fill(isSelected ? category.iconColor : category.iconColor.opacity(0.12))
+                        .frame(width: 24, height: 24)
                     Image(systemName: category.systemImage)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(isSelected ? .white : category.iconColor)
                 }
 
                 Text(category.title(localization: localization))
-                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
                     .foregroundColor(isSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
 
-                Spacer()
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 9)
+            .frame(height: 34)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected ? AppTheme.Surface.selected : (isHovered ? AppTheme.Surface.hover : Color.clear))
             )
-            .contentShape(Rectangle())
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+        .accessibilityLabel(category.title(localization: localization))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

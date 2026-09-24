@@ -65,27 +65,32 @@ public struct AgentFilterBarView: View {
     }
 
     public var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                filterPill(
-                    title: localization.localized(.filterAllAgents),
-                    color: AppTheme.Status.accent,
-                    isSelected: isAllSelected
-                ) {
-                    onSelect(nil)
-                }
-
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 7) {
                 ForEach(availableAgents, id: \.self) { agent in
                     filterPill(
                         title: Self.displayName(for: agent),
-                        color: Self.colorMap[agent] ?? AppTheme.Harmonic.color(for: agent),
+                        color: Self.colorMap[agent.lowercased()] ?? AppTheme.Harmonic.color(for: agent),
                         isSelected: selectedAgent?.lowercased() == agent.lowercased()
                     ) {
                         onSelect(agent)
                     }
                 }
             }
-            .padding(.vertical, 1)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 7) {
+                    ForEach(availableAgents, id: \.self) { agent in
+                        filterPill(
+                            title: Self.displayName(for: agent),
+                            color: Self.colorMap[agent.lowercased()] ?? AppTheme.Harmonic.color(for: agent),
+                            isSelected: selectedAgent?.lowercased() == agent.lowercased()
+                        ) {
+                            onSelect(agent)
+                        }
+                    }
+                }
+                .padding(.vertical, 1)
+            }
         }
         .accessibilityLabel(localization.localized(.filterAllAgents))
     }
@@ -97,23 +102,27 @@ public struct AgentFilterBarView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 Circle()
                     .fill(color)
                     .frame(width: 7, height: 7)
                 Text(title)
-                    .font(.caption)
-                    .fontWeight(isSelected ? .semibold : .regular)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
                     .foregroundColor(isSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.78)
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .frame(height: 30)
             .background(
-                Capsule(style: .continuous)
-                    .fill(isSelected ? color.opacity(0.12) : Color.clear)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(isSelected ? AppTheme.Surface.selected : AppTheme.Surface.subtle.opacity(0.72))
             )
-            .contentShape(Capsule(style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(isSelected ? color.opacity(0.42) : AppTheme.Border.subtle, lineWidth: AppTheme.Layout.hairline)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
