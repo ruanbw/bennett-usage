@@ -1,6 +1,6 @@
 # 本地 Agent 用量数据源与 UI/UX 调研
 
-> 调研截止日期：**2026-09-24**。本文只记录现状、证据、建议和未来验收标准；除本文外，本轮没有实现或宣称实现 Goose、Crush、Continue CLI、Kimi Code、trajectory 或任何 UI 修复。
+> 调研截止日期：**2026-09-24**。本文记录调研截止日的历史现状、证据、建议和未来验收标准。调研时（实施前）尚未实现或宣称实现 Goose、Crush、Continue CLI、Kimi Code、trajectory 或任何 UI 修复；当前 HEAD 已在此后新增 Continue、Goose、Crush 和 Kimi adapters。本次仅同步文档元数据，不改变产品行为。
 
 ## 1. 结论、范围与证据纪律
 
@@ -35,25 +35,27 @@
 
 有冲突时，版本更贴近实际安装物的发布包优先于仓库 README；固定 commit 优先于可变的 `main` 链接；源码中的明确字段语义优先于 UI 文案。若官方材料互相矛盾，文档必须保留版本边界和未知项。
 
-## 2. 当前仓库覆盖（不是候选队列现状）
+## 2. 实施前 14-source 历史快照（当前 HEAD 状态见下文）
 
-仓库的 `MetricsAggregator.builtInAdapters()` 当前注册 **14 个 source adapter**：
+以下表格是调研截止日、四个 adapter 实施前的**历史快照**。当时 `MetricsAggregator.builtInAdapters()` 注册 **14 个 source adapter**：
 
 | 类别 | 数量 | source adapter |
 |---|---:|---|
 | 本地用量源 | 11 | Pi Agent (`pi`)、Oh My Pi (`omp`)、Claude Code (`claude`)、OpenAI Codex (`codex`)、Gemini CLI (`gemini`)、Antigravity (`antigravity`)、OpenCode (`opencode`)、Roo Code / Cline / Kilo VS Code tasks (`roo`)、Cline desktop/CLI (`cline`)、Qwen Code (`qwen`)、DSH Harness (`dsh`) |
 | detection-only | 3 | GitHub Copilot (`copilot`)、Cursor (`cursor`)、Trae (`trae`) |
 
-`copilot`、`cursor`、`trae` 的 adapter 均标记 `isSyncStub = true`：只参与安装检测，不产生 token 记录。仓库 README 对这三项的“云端计费/需要 API”说明与源码一致。其他 11 项虽读取不同版本的本地文件或数据库，但均属于**当前已经存在的实现**，不表示其上游 schema 永久稳定。
+在这张历史快照中，`copilot`、`cursor`、`trae` 的 adapter 均标记 `isSyncStub = true`：只参与安装检测，不产生 token 记录。仓库 README 对这三项的“云端计费/需要 API”说明与源码一致。其他 11 项虽读取不同版本的本地文件或数据库，但均属于当时已经存在的实现，不表示其上游 schema 永久稳定。
+
+**当前 HEAD（文档对齐时）** 已在此后新增 4 个本地用量 adapter：Continue CLI (`continue`)、Goose (`goose`)、Crush (`crush`) 和 Kimi Code (`kimi`)。因此当前 `AdapterCatalog.defaults` / `MetricsAggregator.builtInAdapters()` 共 **18 个 source adapter**（15 个本地用量源 + 3 个 detection-only）；上表的 14-source 数字仅用于保留实施前历史，不应被读作当前覆盖数。
 
 ## 3. 候选决策矩阵
 
-| 候选 | 截止日决策 | 本地证据与纳入方式 | 主要原因/限制 |
+| 候选 | 决策/当前状态 | 本地证据与纳入方式 | 主要原因/限制 |
 |---|---|---|---|
-| **Goose** | **本轮实施队列** | `sessions.db` 的 `usage_ledger` 是逐 provider/model invocation 的持久 ledger；另有 `sessions` 累计值和 `messages.metadata_json` | 没有稳定外键把它等同“用户 turn”；ledger 缺独立 provider/reasoning；需处理 `carried_forward`、父子 session 和数据库替换 |
-| **Crush** | **本轮实施队列** | 全局 `projects.json` 枚举每项目 `data_dir`，`data_dir/crush.db` 的 `sessions` 保存累计 prompt/completion/cost | 只有 session 累计值，无 cache/reasoning/message usage；时间仅到秒；`cost = 0` 可能是 flat-rate，不等于零消费 |
-| **Continue CLI** | **本轮实施队列（精确锁定 1.5.47）** | `~/.continue/sessions/*.json` 的 `history[i].message.usage` 保存 assistant-level usage | provider/timestamp/request ID 未保存；fork 与 compaction 无法完全去重；缺 usage 很正常；顶层 `usage` 是累计 checkpoint |
-| **Kimi Code** | **本轮实施队列（token-only）** | 当前 `$KIMI_CODE_HOME`（默认 `~/.kimi-code`）下 session 的 `agents/<agent-id>/wire.jsonl` 中 durable `usage.record` | 稳定 schema 无 cost/provider/reasoning/request ID；需 token-only 降级；不得沿用旧调研的 `~/.kimi/context.jsonl` |
+| **Goose** | **已实现** | `sessions.db` 的 `usage_ledger` 是逐 provider/model invocation 的持久 ledger；另有 `sessions` 累计值和 `messages.metadata_json` | 没有稳定外键把它等同“用户 turn”；ledger 缺独立 provider/reasoning；需处理 `carried_forward`、父子 session 和数据库替换 |
+| **Crush** | **已实现** | 全局 `projects.json` 枚举每项目 `data_dir`，`data_dir/crush.db` 的 `sessions` 保存累计 prompt/completion/cost | 只有 session 累计值，无 cache/reasoning/message usage；时间仅到秒；`cost = 0` 可能是 flat-rate，不等于零消费 |
+| **Continue CLI** | **已实现（精确锁定 1.5.47）** | `~/.continue/sessions/*.json` 的 `history[i].message.usage` 保存 assistant-level usage | provider/timestamp/request ID 未保存；fork 与 compaction 无法完全去重；缺 usage 很正常；顶层 `usage` 是累计 checkpoint |
+| **Kimi Code** | **已实现（token-only）** | 当前 `$KIMI_CODE_HOME`（默认 `~/.kimi-code`）下 session 的 `agents/<agent-id>/wire.jsonl` 中 durable `usage.record` | 稳定 schema 无 cost/provider/reasoning/request ID；需 token-only 降级；不得沿用旧调研的 `~/.kimi/context.jsonl` |
 | **mini-SWE-agent** | **P1；要求显式 trajectory root/output path** | `.traj.json` 的 assistant `extra.cost`、`extra.response.usage`、`extra.timestamp` 可逐调用；运行总成本仅作对账 | 默认 `output_path = nil`，不做全盘发现；provider 原始 usage 随 LiteLLM 变化；trajectory 重写要按内容 hash supersede |
 | **SWE-agent** | **P1；要求显式 trajectory root** | 完成态 `.traj` 是可回放历史，可能有运行级 `model_stats` | 不同 trajectory format 的 token 字段不一致；只拿到 run aggregate 时只能做无损累计导入，不能声称逐请求 |
 | **OpenHands** | `defer` | 当前顶层 Agent Canvas 使用 `software-agent-sdk`；`~/.openhands` 只证明持久根 | 旧 `base_state.json` 说法已过时；当前 conversation/event/usage schema 与 resume 语义未闭环，先做真实 capture gate |
@@ -68,7 +70,7 @@
 
 这里的 `defer` 是“等待可复现证据或用户配置”，`exclude` 是“当前没有合格本地账本/不满足产品边界”。二者都不是永久判决；未来拿到新的官方 schema 和真实 fixture 后应重新评审。
 
-## 4. 四个实施队列的数据契约
+## 4. 四个已实现 adapter 的数据契约（历史设计依据）
 
 ### 4.1 Goose：`sessions.db` / `usage_ledger`
 
@@ -273,7 +275,7 @@ inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens
 
 ## 6. 源码审计确认的 UI/UX 问题
 
-本节只保留源码能直接证明的问题；尚未做 GUI/VoiceOver 实测的性能或时序项明确标为风险/验收项。
+本节是调研时源码审计的历史问题清单；当前 HEAD 已实现其中多项修复，尚未完成的项目以第 8 节为准。尚未做 GUI/VoiceOver 实测的性能或时序项明确标为风险/验收项。
 
 ### P1：可信度与可访问性
 
@@ -302,26 +304,16 @@ inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens
 - [Settings HIG](https://developer.apple.com/design/human-interface-guidelines/settings) 和 [SwiftUI Settings](https://developer.apple.com/documentation/swiftui/settings) 描述 macOS 的标准 Settings window、App menu/`Command-,`、pane/toolbar 和最近 pane 恢复；长期通用设置不应只作为 Dashboard 的临时 sheet。
 - [Demystify SwiftUI performance（WWDC23）](https://developer.apple.com/videos/play/wwdc2023/10160/)、[Instrumenting your app](https://developer.apple.com/documentation/xcode/instrumenting-your-app) 与 [Time Profiler](https://developer.apple.com/documentation/instruments/time-profiler) 支持先观察 `body` 更新/长 view body，再以同一 Release build 和数据集修复、复测。Apple 没有为项目数、FPS 或列表规模给出通用硬阈值，本项目需用自己的基线设门禁。
 
-## 8. 严格逐提交实施顺序与验收
+## 8. 未完成项与验收
 
-以下均是**未来计划**，不是当前代码状态。每个提交只做该提交列出的范围，前一提交验收通过后再进入下一提交。
+以下仅保留当前 HEAD 尚未完成的计划。已实施的四个 adapter 以及已完成的相关 UI/性能修复不再列入未来计划；未完成项仍按独立提交边界验收。
 
 | 顺序 | 提交边界 | 验收标准 |
 |---:|---|---|
 | 1 | `refactor: distinguish unknown token usage from zero` | schema migration/模型允许 unknown；missing usage fixture 生成 0 条账本记录；fresh input + cache 拆分 fixture 证明 `totalTokens` 不重复；unknown、provider zero、cost source 各有测试 |
-| 2 | `feat: add Goose usage ledger adapter` | 官方截止 commit/schema 16 的空库、单调用、carried-forward、父子 session、同值重复、DB 替换 fixture 通过；`ledger.id` 重扫不重复；对账不回 `accumulated + ledger` |
-| 3 | `feat: add Crush cumulative session adapter` | projects.json + 两个同名 crush.db 隔离；首次 snapshot、同秒增长、reset、delete、DB replacement fixture 通过；无负 token/cost；不声称 message usage |
-| 4 | `feat: add Continue CLI 1.5.47 usage adapter` | 1.5.47 嵌套 schema、缺 usage、cache 同义字段、compact/fork、损坏 JSON fixture 通过；重复扫描不新增；mtime 不被标成 request time；版本外默认拒绝或显式 best effort |
-| 5 | `feat: add Kimi Code token-only wire adapter` | main/agent wire 路径、durable `usage.record`、截断尾行、rewrite generation、未知 raw fixture 通过；cost/provider/reasoning 保持 unknown；绝不读取 `~/.kimi/context.jsonl` 作为当前 schema |
-| 6 | `fix: clarify cache reset and notify consumers` | 清空期间按钮禁用；成功/失败可见；所有 Dashboard/Popover 即时刷新；cache 模式明确会被源重导入，persistent 模式有 cutoff/suppression 并保持为空；重复点击只执行一次 |
-| 7 | `fix: make pricing settings observable` | Dashboard 和 Popover 同开时 USD↔CNY、汇率变化立即一致；浅/深色、前后台、休眠唤醒复测通过 |
-| 8 | `fix: make heatmap accessible and readable` | 日期可键盘/VoiceOver 操作；label/value/selected trait 正确；选中不只靠颜色；light/dark/high contrast 普通小字 ≥4.5:1；Accessibility Inspector 无阻断项 |
-| 9 | `fix: bound project rankings` | 10k/100k projects 的 query 有 Top N 与独立总数；展开列表虚拟化/分页；记录 p50/p95、峰值内存、滚动 hitch，优化前后 trace 可比 |
-| 10 | `fix: correct dashboard ranges and localization` | 闰年/平年/年末测试覆盖今年至今分母；所有 UI 路径可达 past year；中英文无硬编码可见英文；CNY 下无遗留 `$`；locale 日期/长文本不裁切 |
-| 11 | `perf: remove unused all-time aggregation and profile startup` | 通知风暴/filter 切换不再出现该全表 SUM；Release Instruments 记录 launch-to-ready、first-sync、body update、hang/hitch、峰值内存；每一项都有修复前后对照而非只看单次数字 |
-| 12 | `test: add adapter integration and macOS UI coverage` | `swift test`、新增 UI/集成测试、Accessibility audit 和 manual VoiceOver/Full Keyboard Access 矩阵通过；文档/README 只在代码验收后更新 source 数量与支持范围 |
+| 2 | `test: finish macOS UI coverage and accessibility matrix` | `swift test` 与 UI/集成回归通过；Accessibility audit 和 manual VoiceOver/Full Keyboard Access 矩阵通过；补齐尚未覆盖的固定布局、同步重导入和性能/时序验证 |
 
-最终发布 gate：四个 adapter 的 golden fixtures 与真实本地两轮运行对账；重复同步无增量；数据库仍在运行时无写锁/WAL 撕裂；缺 usage 不产生 0；费用来源明确；UI 性能/无障碍问题关闭或明确记录为 blocker。
+最终发布 gate：已实施 adapter 的 golden fixtures 与真实本地两轮运行对账；重复同步无增量；数据库仍在运行时无写锁/WAL 撕裂；缺 usage 不产生 0；费用来源明确；UI 性能/无障碍问题关闭或明确记录为 blocker。
 
 ## 9. 最有价值的官方 URL
 

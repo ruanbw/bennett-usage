@@ -224,7 +224,7 @@ public enum AppTheme {
         )
     }
 
-    // MARK: - Agent Brand Palette (All 16 Agents)
+    // MARK: - Agent Brand Palette (All 18 Agents)
 
     public enum Agent {
         // 1. Claude (Anthropic): Terracotta Sienna
@@ -306,7 +306,7 @@ public enum AppTheme {
             }
         }
 
-        /// Map of all 16 curated agents.
+        /// Map of all 18 curated agents.
         public static let allMap: [String: Color] = [
             "claude": claude,
             "cursor": cursor,
