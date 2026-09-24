@@ -452,7 +452,7 @@ public struct SettingsContentView: View {
                         .font(.body.weight(.semibold))
                         .foregroundColor(AppTheme.Text.primary)
                     if info.isInstalled {
-                        Text("Active")
+                        Text(localization.localized(.agentActive))
                             .font(.system(size: 10, weight: .bold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
@@ -460,7 +460,7 @@ public struct SettingsContentView: View {
                             .foregroundColor(AppTheme.Status.success)
                             .cornerRadius(4)
                     } else {
-                        Text("Not Found")
+                        Text(localization.localized(.agentNotFound))
                             .font(.system(size: 10, weight: .medium))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
@@ -481,7 +481,7 @@ public struct SettingsContentView: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 3) {
-                Text("\(formatNumber(info.recordCount)) records")
+                Text(String(format: localization.localized(.agentRecords), formatNumber(info.recordCount)))
                     .font(.caption.weight(.medium).monospacedDigit())
                     .foregroundColor(AppTheme.Text.primary)
                     .padding(.horizontal, 8)
@@ -510,7 +510,7 @@ public struct SettingsContentView: View {
                         Text(localization.localized(.preferredCurrencyLabel))
                             .font(.body.weight(.medium))
                             .foregroundColor(AppTheme.Text.primary)
-                        Text("USD ($) / CNY (¥)")
+                        Text(localization.localized(.currencySummary))
                             .font(.caption)
                             .foregroundColor(AppTheme.Text.secondary)
                     }
@@ -536,23 +536,23 @@ public struct SettingsContentView: View {
                         Text(localization.localized(.exchangeRateLabel))
                             .font(.body.weight(.medium))
                             .foregroundColor(AppTheme.Text.primary)
-                        Text("1 USD = \(exchangeRateText) CNY")
+                        Text(String(format: localization.localized(.exchangeRateSummary), exchangeRateText))
                             .font(.caption)
                             .foregroundColor(AppTheme.Text.secondary)
                     }
                     Spacer()
                     HStack(spacing: 6) {
-                        Text("1 USD =")
+                        Text(localization.localized(.exchangeRatePrefix))
                             .font(.callout)
                             .foregroundColor(AppTheme.Text.secondary)
-                        TextField("7.30", text: $exchangeRateText)
+                        TextField(localization.localized(.exchangeRatePlaceholder), text: $exchangeRateText)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 70)
                             .multilineTextAlignment(.trailing)
                             .onSubmit {
                                 saveExchangeRate()
                             }
-                        Text("CNY")
+                        Text(localization.localized(.currencyCNY))
                             .font(.callout)
                             .foregroundColor(AppTheme.Text.secondary)
                         Button(localization.localized(.done)) {
@@ -575,7 +575,7 @@ public struct SettingsContentView: View {
                 HStack(alignment: .top, spacing: 12) {
                     cardRowIcon("cylinder.split.1x2", color: AppTheme.Agent.copilot)
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("SQLite Database")
+                        Text(localization.localized(.sqliteDatabase))
                             .font(.body.weight(.semibold))
                             .foregroundColor(AppTheme.Text.primary)
                         Text(resolvedDbPath)
@@ -707,7 +707,7 @@ public struct SettingsContentView: View {
                             Text(localization.localized(.appName))
                                 .font(.title3.bold())
                                 .foregroundColor(AppTheme.Text.primary)
-                            Text("v\(updateChecker.currentVersion.description)")
+                            Text(String(format: localization.localized(.versionLabel), updateChecker.currentVersion.description))
                                 .font(.subheadline)
                                 .foregroundColor(AppTheme.Text.secondary)
                         }
@@ -726,10 +726,10 @@ public struct SettingsContentView: View {
                 HStack(alignment: .top, spacing: 14) {
                     cardRowIcon("lock.shield.fill", color: AppTheme.Status.success)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("100% Local-First & Private")
+                        Text(localization.localized(.localFirstPrivate))
                             .font(.body.weight(.semibold))
                             .foregroundColor(AppTheme.Text.primary)
-                        Text("All analytics and token logs are stored exclusively in your local SQLite database. Bennett Usage never collects, transmits, or inspects your source code, prompts, or API keys.")
+                        Text(localization.localized(.privacyDescription))
                             .font(.caption)
                             .foregroundColor(AppTheme.Text.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -743,7 +743,7 @@ public struct SettingsContentView: View {
                 HStack {
                     cardRowIcon("chevron.left.forwardslash.chevron.right", color: AppTheme.Text.secondary)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Open Source")
+                        Text(localization.localized(.openSource))
                             .font(.body.weight(.medium))
                             .foregroundColor(AppTheme.Text.primary)
                         Text("github.com/ruanbw/bennett-usage")
@@ -754,7 +754,7 @@ public struct SettingsContentView: View {
                     if let githubURL = URL(string: "https://github.com/ruanbw/bennett-usage") {
                         Link(destination: githubURL) {
                             HStack(spacing: 4) {
-                                Text("GitHub")
+                                Text(localization.localized(.github))
                                 Image(systemName: "arrow.up.right.square")
                             }
                         }

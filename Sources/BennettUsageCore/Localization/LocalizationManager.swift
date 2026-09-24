@@ -142,6 +142,20 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case generalSettings
     case usdOption
     case cnyOption
+    case agentActive
+    case agentNotFound
+    case agentRecords
+    case currencySummary
+    case exchangeRateSummary
+    case exchangeRatePrefix
+    case exchangeRatePlaceholder
+    case currencyCNY
+    case sqliteDatabase
+    case versionLabel
+    case localFirstPrivate
+    case privacyDescription
+    case openSource
+    case github
 
     // Hero Card Metrics
     case freshInput
@@ -426,6 +440,20 @@ private let englishDictionary: [LocalizedKey: String] = [
     .generalSettings: "General Settings",
     .usdOption: "USD ($)",
     .cnyOption: "CNY (¥)",
+    .agentActive: "Active",
+    .agentNotFound: "Not Found",
+    .agentRecords: "%d records",
+    .currencySummary: "USD ($) / CNY (¥)",
+    .exchangeRateSummary: "1 USD = %@ CNY",
+    .exchangeRatePrefix: "1 USD =",
+    .exchangeRatePlaceholder: "7.30",
+    .currencyCNY: "CNY",
+    .sqliteDatabase: "SQLite Database",
+    .versionLabel: "v%@",
+    .localFirstPrivate: "100% Local-First & Private",
+    .privacyDescription: "All analytics and token logs are stored exclusively in your local SQLite database. Bennett Usage never collects, transmits, or inspects your source code, prompts, or API keys.",
+    .openSource: "Open Source",
+    .github: "GitHub",
 
     // Hero Card Metrics
     .freshInput: "Fresh Input",
@@ -588,6 +616,20 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .generalSettings: "通用设置",
     .usdOption: "美元 USD ($)",
     .cnyOption: "人民币 CNY (¥)",
+    .agentActive: "正常",
+    .agentNotFound: "未找到",
+    .agentRecords: "%d 条记录",
+    .currencySummary: "美元 USD ($) / 人民币 CNY (¥)",
+    .exchangeRateSummary: "1 USD = %@ CNY",
+    .exchangeRatePrefix: "1 USD =",
+    .exchangeRatePlaceholder: "7.30",
+    .currencyCNY: "CNY",
+    .sqliteDatabase: "SQLite 数据库",
+    .versionLabel: "v%@",
+    .localFirstPrivate: "100% 本地优先与隐私保护",
+    .privacyDescription: "所有分析数据和 Token 日志仅存储在本地 SQLite 数据库中。Bennett Usage 不会收集、传输或检查你的源代码、提示词或 API 密钥。",
+    .openSource: "开源项目",
+    .github: "GitHub",
 
     // Hero Card Metrics
     .freshInput: "新增输入",

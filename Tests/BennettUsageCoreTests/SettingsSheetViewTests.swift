@@ -163,6 +163,23 @@ final class SettingsSheetViewTests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsRemainingCopyRespondsToLanguage() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+        let englishView = SettingsContentView(
+            aggregator: aggregator,
+            localization: manager,
+            initialCategory: .agents
+        )
+        XCTAssertNotNil(englishView.body)
+
+        manager.setLanguage(.zh)
+        XCTAssertEqual(manager.localized(.agentActive), "正常")
+        XCTAssertEqual(manager.localized(.agentRecords, arguments: 12), "12 条记录")
+        XCTAssertEqual(manager.localized(.currencySummary), "美元 USD ($) / 人民币 CNY (¥)")
+        XCTAssertEqual(manager.localized(.privacyDescription).contains("Token"), true)
+    }
+
+    @MainActor
     func testPricingEngineCurrencyAndRateSettings() {
         let initialRate = PricingEngine.shared.usdToCnyRate
         let initialCurrency = PricingEngine.shared.preferredCurrency

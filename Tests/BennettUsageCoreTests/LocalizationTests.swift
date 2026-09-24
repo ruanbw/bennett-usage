@@ -116,6 +116,32 @@ final class LocalizationTests: XCTestCase {
         }
     }
 
+    func testSettingsCopyTranslationsAreComplete() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+
+        manager.setLanguage(.en)
+        XCTAssertEqual(manager.localized(.agentActive), "Active")
+        XCTAssertEqual(manager.localized(.agentNotFound), "Not Found")
+        XCTAssertEqual(manager.localized(.agentRecords, arguments: 3), "3 records")
+        XCTAssertEqual(manager.localized(.currencySummary), "USD ($) / CNY (¥)")
+        XCTAssertEqual(manager.localized(.exchangeRateSummary, arguments: "7.30"), "1 USD = 7.30 CNY")
+        XCTAssertEqual(manager.localized(.sqliteDatabase), "SQLite Database")
+        XCTAssertEqual(manager.localized(.localFirstPrivate), "100% Local-First & Private")
+        XCTAssertTrue(manager.localized(.privacyDescription).contains("never collects"))
+        XCTAssertEqual(manager.localized(.openSource), "Open Source")
+
+        manager.setLanguage(.zh)
+        XCTAssertEqual(manager.localized(.agentActive), "正常")
+        XCTAssertEqual(manager.localized(.agentNotFound), "未找到")
+        XCTAssertEqual(manager.localized(.agentRecords, arguments: 3), "3 条记录")
+        XCTAssertEqual(manager.localized(.currencySummary), "美元 USD ($) / 人民币 CNY (¥)")
+        XCTAssertEqual(manager.localized(.exchangeRateSummary, arguments: "7.30"), "1 USD = 7.30 CNY")
+        XCTAssertEqual(manager.localized(.sqliteDatabase), "SQLite 数据库")
+        XCTAssertEqual(manager.localized(.localFirstPrivate), "100% 本地优先与隐私保护")
+        XCTAssertTrue(manager.localized(.privacyDescription).contains("不会收集"))
+        XCTAssertEqual(manager.localized(.openSource), "开源项目")
+    }
+
     func testNewNavigationAndSettingsLocalizationKeysExist() {
         let manager = LocalizationManager(userDefaults: testDefaults)
         let requiredKeys: [LocalizedKey] = [
@@ -149,6 +175,20 @@ final class LocalizationTests: XCTestCase {
             .generalSettings,
             .usdOption,
             .cnyOption,
+            .agentActive,
+            .agentNotFound,
+            .agentRecords,
+            .currencySummary,
+            .exchangeRateSummary,
+            .exchangeRatePrefix,
+            .exchangeRatePlaceholder,
+            .currencyCNY,
+            .sqliteDatabase,
+            .versionLabel,
+            .localFirstPrivate,
+            .privacyDescription,
+            .openSource,
+            .github,
             .annualPanorama,
             .annualTotalTokens,
             .annualSpend,
