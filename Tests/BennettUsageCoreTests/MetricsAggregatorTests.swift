@@ -355,7 +355,7 @@ final class MetricsAggregatorTests: XCTestCase {
         try db.insertRecords([r1])
 
         let healthInfos = try await aggregator.fetchAgentHealthInfos()
-        XCTAssertEqual(healthInfos.count, 16)
+        XCTAssertEqual(healthInfos.count, 18)
         let ids = Set(healthInfos.map { $0.id })
         XCTAssertTrue(ids.contains("pi"))
         XCTAssertTrue(ids.contains("goose"))
