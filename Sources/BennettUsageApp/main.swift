@@ -13,22 +13,10 @@ guard let db = try? DatabaseManager(path: dbPath) else {
     fatalError("Failed to initialize usage database")
 }
 
-// Register default adapters
-AdapterRegistry.shared.register(OmpAdapter())
-AdapterRegistry.shared.register(PiAdapter())
-AdapterRegistry.shared.register(ClaudeAdapter())
-AdapterRegistry.shared.register(CodexAdapter())
-AdapterRegistry.shared.register(GeminiAdapter())
-AdapterRegistry.shared.register(AntigravityAdapter())
-AdapterRegistry.shared.register(OpenCodeAdapter())
-AdapterRegistry.shared.register(RooCodeAdapter())
-AdapterRegistry.shared.register(ClineAdapter())
-AdapterRegistry.shared.register(QwenCodeAdapter())
-// Cloud-billed tools: detection-only (Agent Health) until API adapters land.
-AdapterRegistry.shared.register(CopilotAdapter())
-AdapterRegistry.shared.register(CursorAdapter())
-AdapterRegistry.shared.register(TraeAdapter())
-AdapterRegistry.shared.register(DshAdapter())
+// Register default adapters in catalog order.
+for adapter in AdapterCatalog.defaults {
+    AdapterRegistry.shared.register(adapter)
+}
 
 let aggregator = MetricsAggregator(database: db)
 let coordinator = SyncCoordinator(database: db)

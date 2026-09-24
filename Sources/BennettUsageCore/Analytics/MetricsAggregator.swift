@@ -322,12 +322,8 @@ public final class MetricsAggregator: Sendable {
     /// Every adapter shipped with the app, in registration order. Used as the
     /// fallback when the shared registry is empty (unit tests) and as the
     /// merge-in set for ids the registry does not already provide.
-    static func builtInAdapters() -> [AgentSourceAdapter] {
-        [
-            PiAdapter(), OmpAdapter(), ClaudeAdapter(), CodexAdapter(), GeminiAdapter(),
-            AntigravityAdapter(), OpenCodeAdapter(), RooCodeAdapter(), ClineAdapter(),
-            QwenCodeAdapter(), CopilotAdapter(), CursorAdapter(), TraeAdapter(), DshAdapter()
-        ]
+    static func builtInAdapters() -> [any AgentSourceAdapter] {
+        AdapterCatalog.defaults
     }
 
     public func fetchAgentHealthInfos() async throws -> [AgentHealthInfo] {
