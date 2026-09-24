@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import BennettUsageCore
 
@@ -120,7 +121,7 @@ final class KimiCodeAdapterTests: XCTestCase {
             return XCTFail("Expected a Kimi file-generation checkpoint")
         }
         XCTAssertEqual(resumedCheckpoint.generation, firstCheckpoint.generation)
-        XCTAssertEqual(resumedCheckpoint.generation, firstCheckpoint.generation)
+        XCTAssertNotEqual(resumedCheckpoint.prefixHash, firstCheckpoint.prefixHash)
         XCTAssertEqual(resumedCheckpoint.offset, Int64((complete + truncated).utf8.count))
         XCTAssertEqual(resumedCheckpoint.size, resumedCheckpoint.offset)
     }
@@ -144,7 +145,7 @@ final class KimiCodeAdapterTests: XCTestCase {
         XCTAssertEqual(first.newCursor, second.newCursor)
     }
 
-    func testTruncationOrGenerationRewriteChangesGeneration() async throws {
+    func testTruncationOrPrefixRewriteChangesConsumedHash() async throws {
         try write(mainWire, lines: [
             usage(agentId: "main", scope: "turn", time: 1_700_000_000_000, output: 2),
             usage(agentId: "main", scope: "turn", time: 1_700_000_001_000, output: 3),
@@ -162,9 +163,87 @@ final class KimiCodeAdapterTests: XCTestCase {
               let rewrittenCheckpoint = rewrittenFiles[mainWire.path] else {
             return XCTFail("Expected a Kimi file-generation checkpoint")
         }
-        XCTAssertNotEqual(rewrittenCheckpoint.generation, firstCheckpoint.generation)
+        XCTAssertEqual(rewrittenCheckpoint.generation, firstCheckpoint.generation)
+        XCTAssertNotEqual(rewrittenCheckpoint.prefixHash, firstCheckpoint.prefixHash)
         XCTAssertEqual(rewritten.records.count, 1)
         XCTAssertEqual(rewritten.records[0].outputTokens, 7)
+    }
+
+    func testSecondLineRewriteWithUnchangedFirstLineAndMetadataRescansConsumedPrefix() async throws {
+        let first = usage(agentId: "main", scope: "turn", time: 1_700_000_000_000, output: 2)
+        let second = usage(agentId: "main", scope: "turn", time: 1_700_000_001_000, output: 3)
+        let firstLine = try jsonLine(first)
+        try Data((firstLine + jsonLine(second)).utf8).write(to: mainWire)
+
+        let adapter = KimiCodeAdapter()
+        let initial = try await adapter.fetchIncrementalRecords(from: home, since: nil)
+        guard case .fileGenerations(let initialFiles) = initial.newCursor,
+              let initialCheckpoint = initialFiles[KimiCodeAdapter.canonicalPath(for: mainWire)] else {
+            return XCTFail("Expected a Kimi file-generation checkpoint")
+        }
+        let initialStat = try fileStat(mainWire)
+        let initialModificationDate = try XCTUnwrap(
+            try FileManager.default.attributesOfItem(atPath: mainWire.path)[.modificationDate] as? Date
+        )
+
+        let rewrittenSecond = usage(agentId: "main", scope: "turn", time: 1_700_000_001_000, output: 9)
+        try Data((firstLine + jsonLine(rewrittenSecond)).utf8).write(to: mainWire)
+        try FileManager.default.setAttributes(
+            [.modificationDate: initialModificationDate],
+            ofItemAtPath: mainWire.path
+        )
+        let rewrittenStat = try fileStat(mainWire)
+        let rewrittenData = try Data(contentsOf: mainWire)
+        XCTAssertEqual(
+            String(decoding: rewrittenData.prefix(firstLine.utf8.count), as: UTF8.self),
+            firstLine
+        )
+
+        XCTAssertEqual(rewrittenStat.identity, initialStat.identity)
+        XCTAssertEqual(
+            try FileManager.default.attributesOfItem(atPath: mainWire.path)[.modificationDate] as? Date,
+            initialModificationDate
+        )
+        let rescanned = try await adapter.fetchIncrementalRecords(from: home, since: initial.newCursor)
+        XCTAssertEqual(rescanned.records.count, 2)
+        XCTAssertEqual(rescanned.records.map(\.outputTokens), [2, 9])
+        guard case .fileGenerations(let files) = rescanned.newCursor,
+              let checkpoint = files[KimiCodeAdapter.canonicalPath(for: mainWire)] else {
+            return XCTFail("Expected a Kimi file-generation checkpoint")
+        }
+        XCTAssertNotEqual(checkpoint.prefixHash, initialCheckpoint.prefixHash)
+    }
+
+    func testLegacyCursorWithoutPrefixHashRescansOnce() async throws {
+        try write(mainWire, lines: [
+            usage(agentId: "main", scope: "turn", time: 1_700_000_000_000, output: 2),
+            usage(agentId: "main", scope: "turn", time: 1_700_000_001_000, output: 3),
+        ])
+        let adapter = KimiCodeAdapter()
+        let first = try await adapter.fetchIncrementalRecords(from: home, since: nil)
+        guard case .fileGenerations(let firstFiles) = first.newCursor,
+              let checkpoint = firstFiles[KimiCodeAdapter.canonicalPath(for: mainWire)] else {
+            return XCTFail("Expected a Kimi file-generation checkpoint")
+        }
+
+        let legacyCursor = SyncCursor.fileGenerations([
+            KimiCodeAdapter.canonicalPath(for: mainWire): FileGeneration(
+                generation: checkpoint.generation,
+                offset: checkpoint.offset,
+                size: checkpoint.size
+            ),
+        ])
+        let migrated = try await adapter.fetchIncrementalRecords(from: home, since: legacyCursor)
+        XCTAssertEqual(migrated.records.count, 2)
+        guard case .fileGenerations(let migratedFiles) = migrated.newCursor,
+              let migratedCheckpoint = migratedFiles[KimiCodeAdapter.canonicalPath(for: mainWire)] else {
+            return XCTFail("Expected a migrated Kimi file-generation checkpoint")
+        }
+        XCTAssertNotNil(migratedCheckpoint.prefixHash)
+        XCTAssertNotEqual(migrated.newCursor, legacyCursor)
+
+        let repeated = try await adapter.fetchIncrementalRecords(from: home, since: migrated.newCursor)
+        XCTAssertTrue(repeated.records.isEmpty)
     }
 
     func testMalformedCompleteLinePreservesOldCheckpoint() async throws {
@@ -270,6 +349,16 @@ final class KimiCodeAdapterTests: XCTestCase {
     private func write(_ url: URL, lines: [[String: Any]]) throws {
         let text = try lines.map(jsonLine).joined()
         try Data(text.utf8).write(to: url)
+    }
+
+    private struct FileStat {
+        let identity: String
+    }
+
+    private func fileStat(_ url: URL) throws -> FileStat {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else { throw CocoaError(.fileReadCorruptFile) }
+        return FileStat(identity: "\(info.st_dev):\(info.st_ino)")
     }
 
     private func jsonLine(_ payload: [String: Any]) throws -> String {

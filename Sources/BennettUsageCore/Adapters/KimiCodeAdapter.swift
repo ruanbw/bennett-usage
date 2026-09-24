@@ -136,16 +136,21 @@ public struct KimiCodeAdapter: AgentSourceAdapter, @unchecked Sendable {
                     throw CocoaError(.fileReadCorruptFile)
                 }
 
-                let generation = Self.generation(
-                    path: path,
-                    identity: identity,
-                    data: data
-                )
+                let generation = Self.generation(path: path, identity: identity)
                 let canContinue = oldCheckpoint.map {
-                    $0.generation == generation
-                        && $0.offset >= 0
-                        && $0.offset <= data.count
-                        && ($0.offset == 0 || data[Int($0.offset) - 1] == 0x0A)
+                    guard $0.generation == generation,
+                          let oldPrefixHash = $0.prefixHash,
+                          $0.offset >= 0,
+                          $0.offset <= data.count,
+                          $0.size >= 0,
+                          $0.size >= $0.offset,
+                          $0.size <= data.count,
+                          ($0.offset == 0 || data[Int($0.offset) - 1] == 0x0A)
+                    else { return false }
+                    return oldPrefixHash == Self.consumedPrefixHash(
+                        in: data,
+                        offset: Int($0.offset)
+                    )
                 } ?? false
                 let startOffset = canContinue ? Int(oldCheckpoint!.offset) : 0
                 let parsed = Self.parseCompleteLines(
@@ -168,7 +173,8 @@ public struct KimiCodeAdapter: AgentSourceAdapter, @unchecked Sendable {
                 checkpoints[path] = FileGeneration(
                     generation: generation,
                     offset: Int64(parsed.consumedOffset),
-                    size: Int64(data.count)
+                    size: Int64(data.count),
+                    prefixHash: Self.consumedPrefixHash(in: data, offset: parsed.consumedOffset)
                 )
             } catch {
                 if requireCompleteSnapshot { throw error }
@@ -213,21 +219,19 @@ public struct KimiCodeAdapter: AgentSourceAdapter, @unchecked Sendable {
         return "\(info.st_dev):\(info.st_ino)"
     }
 
-    /// A generation uses canonical path, device/inode identity, and a bounded
-    /// content-prefix digest. The prefix is the first complete line (or the
-    /// first 64 KiB while that line is being written), rather than the current
-    /// file size, so ordinary appends keep the same generation while atomic
-    /// replacement and rewrites of the wire prefix do not.
-    static func generation(path: String, identity: String, data: Data) -> String {
-        let searchLimit = min(data.count, 64 * 1024)
-        let prefixEnd: Int
-        if let newline = data[..<searchLimit].firstIndex(of: 0x0A) {
-            prefixEnd = data.index(after: newline)
-        } else {
-            prefixEnd = searchLimit
-        }
-        let prefixHash = sha256Hex(Data(data[..<prefixEnd]))
-        return sha256Hex(Data("kimi-wire-v1\n\(path)\n\(identity)\n\(prefixHash)".utf8))
+    /// A generation identifies the canonical wire and its device/inode. The
+    /// consumed prefix is checked separately from this stable identity so an
+    /// in-place rewrite of any already consumed byte forces a safe rescan.
+    static func generation(path: String, identity: String) -> String {
+        sha256Hex(Data("kimi-wire-v2\n\(path)\n\(identity)".utf8))
+    }
+
+    /// Hash exactly the bytes consumed by the cursor. Because `offset` is
+    /// always a complete-line boundary, appending a new line leaves this hash
+    /// unchanged while rewriting any consumed line changes it.
+    static func consumedPrefixHash(in data: Data, offset: Int) -> String {
+        precondition(offset >= 0 && offset <= data.count)
+        return sha256Hex(Data(data[..<offset]))
     }
 
     // MARK: - Current wire payload
