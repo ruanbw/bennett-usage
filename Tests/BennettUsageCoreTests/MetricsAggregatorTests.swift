@@ -10,6 +10,23 @@ final class MetricsAggregatorTests: XCTestCase {
         aggregator = MetricsAggregator(database: db)
     }
 
+    func testClearAllRecordsNotifiesDataConsumers() async throws {
+        let notification = expectation(description: "data update notification")
+        notification.expectedFulfillmentCount = 1
+        let observer = NotificationCenter.default.addObserver(
+            forName: .bennettUsageDataDidUpdate,
+            object: nil,
+            queue: .main
+        ) { _ in
+            notification.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        try await aggregator.clearAllRecords()
+
+        await fulfillment(of: [notification], timeout: 2.0)
+    }
+
     func testHeatmapIntensityScaling() async throws {
         let r1 = UnifiedTokenRecord(id: "1", sourceId: "omp", timestamp: Date(), dayKey: "2026-01-15", sessionKey: "s", projectFolder: nil, model: "m", provider: nil, inputTokens: 5000, outputTokens: 5000)
         let r2 = UnifiedTokenRecord(id: "2", sourceId: "omp", timestamp: Date(), dayKey: "2026-02-20", sessionKey: "s", projectFolder: nil, model: "m", provider: nil, inputTokens: 500_000, outputTokens: 500_000)

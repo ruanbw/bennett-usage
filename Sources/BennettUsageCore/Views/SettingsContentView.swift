@@ -88,6 +88,11 @@ public enum SettingsCategory: String, CaseIterable, Identifiable, Sendable {
 }
 
 public struct SettingsContentView: View {
+    private enum MaintenanceFeedback: Equatable {
+        case succeeded
+        case failed
+    }
+
     public let aggregator: MetricsAggregator?
     @ObservedObject public var localization: LocalizationManager
     @ObservedObject public var updateChecker: UpdateChecker
@@ -110,6 +115,9 @@ public struct SettingsContentView: View {
     @State private var selectedCurrency: PreferredCurrency = .usd
     @State private var autoRefreshSeconds: Int = 0
     @State private var isShowingClearAlert: Bool = false
+    @State private var isRebuilding = false
+    @State private var isClearingRecords = false
+    @State private var maintenanceFeedback: MaintenanceFeedback?
     @State private var storageStatusText: String = ""
 
     public init(
@@ -177,11 +185,7 @@ public struct SettingsContentView: View {
         .background(AppTheme.Canvas.background)
         .alert(localization.localized(.clearRecordsConfirmTitle), isPresented: $isShowingClearAlert) {
             Button(localization.localized(.clearAllRecords), role: .destructive) {
-                Task {
-                    try? await aggregator?.clearAllRecords()
-                    await rescanAgents()
-                    await updateStorageStatus()
-                }
+                clearLocalUsageCache()
             }
             Button(localization.localized(.cancel), role: .cancel) {}
         } message: {
@@ -606,21 +610,21 @@ public struct SettingsContentView: View {
                             Text(localization.localized(.rebuildRollups))
                                 .font(.body.weight(.medium))
                                 .foregroundColor(AppTheme.Text.primary)
-                            Text("Re-aggregate token usage and daily summaries from raw records")
+                            Text(localization.localized(.rebuildRollupsDescription))
                                 .font(.caption)
                                 .foregroundColor(AppTheme.Text.secondary)
                         }
                         Spacer()
-                        Button(action: {
-                            Task {
-                                try? await aggregator?.rebuildDailyRollups()
-                                await updateStorageStatus()
-                            }
-                        }) {
-                            Label(localization.localized(.rebuildRollups), systemImage: "arrow.triangle.2.circlepath")
+                        Button(action: rebuildAggregates) {
+                            Label(
+                                localization.localized(.rebuildRollups),
+                                systemImage: isRebuilding ? "hourglass" : "arrow.triangle.2.circlepath"
+                            )
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.regular)
+                        .disabled(isPerformingMaintenance)
+                        .accessibilityIdentifier(Self.rebuildButtonID)
                     }
 
                     rowDivider
@@ -630,7 +634,7 @@ public struct SettingsContentView: View {
                             Text(localization.localized(.clearAllRecords))
                                 .font(.body.weight(.medium))
                                 .foregroundColor(AppTheme.Status.error)
-                            Text("Permanently delete all stored token usage history")
+                            Text(localization.localized(.clearRecordsDescription))
                                 .font(.caption)
                                 .foregroundColor(AppTheme.Text.secondary)
                         }
@@ -638,11 +642,20 @@ public struct SettingsContentView: View {
                         Button(role: .destructive, action: {
                             isShowingClearAlert = true
                         }) {
-                            Label(localization.localized(.clearAllRecords), systemImage: "trash")
+                            Label(
+                                localization.localized(.clearAllRecords),
+                                systemImage: isClearingRecords ? "hourglass" : "trash"
+                            )
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.regular)
                         .foregroundColor(AppTheme.Status.error)
+                        .disabled(isPerformingMaintenance)
+                        .accessibilityIdentifier(Self.clearCacheButtonID)
+                    }
+
+                    if let maintenanceFeedback {
+                        maintenanceFeedbackView(maintenanceFeedback)
                     }
                 }
                 .padding(.vertical, 4)
@@ -760,6 +773,8 @@ public struct SettingsContentView: View {
     static let autoCheckToggleID = "settings.update.autoCheck"
     static let checkNowButtonID = "settings.update.checkNow"
     static let downloadUpdateButtonID = "settings.update.download"
+    static let rebuildButtonID = "settings.maintenance.rebuild"
+    static let clearCacheButtonID = "settings.maintenance.clearCache"
 
     private var updateCard: some View {
         settingsCard {
@@ -971,6 +986,66 @@ public struct SettingsContentView: View {
         onSelect: @escaping (Int) -> Void
     ) -> some View {
         SettingsMenuControlView(title: title, options: options, onSelect: onSelect)
+    }
+
+    private var isPerformingMaintenance: Bool {
+        isRebuilding || isClearingRecords
+    }
+
+    private func maintenanceFeedbackView(_ feedback: MaintenanceFeedback) -> some View {
+        let isSuccess = feedback == .succeeded
+        return Label(
+            localization.localized(isSuccess ? .maintenanceSucceeded : .maintenanceFailed),
+            systemImage: isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+        )
+        .font(.caption.weight(.medium))
+        .foregroundColor(isSuccess ? AppTheme.Status.success : AppTheme.Status.error)
+        .accessibilityIdentifier("settings.maintenance.feedback")
+    }
+
+    private func rebuildAggregates() {
+        guard !isPerformingMaintenance else { return }
+        isRebuilding = true
+        maintenanceFeedback = nil
+        guard let aggregator else {
+            isRebuilding = false
+            maintenanceFeedback = .failed
+            return
+        }
+
+        Task {
+            do {
+                try await aggregator.rebuildDailyRollups()
+                await updateStorageStatus()
+                maintenanceFeedback = .succeeded
+            } catch {
+                maintenanceFeedback = .failed
+            }
+            isRebuilding = false
+        }
+    }
+
+    private func clearLocalUsageCache() {
+        guard !isPerformingMaintenance else { return }
+        isClearingRecords = true
+        maintenanceFeedback = nil
+        guard let aggregator else {
+            isClearingRecords = false
+            maintenanceFeedback = .failed
+            return
+        }
+
+        Task {
+            do {
+                try await aggregator.clearAllRecords()
+                await rescanAgents()
+                await updateStorageStatus()
+                maintenanceFeedback = .succeeded
+            } catch {
+                maintenanceFeedback = .failed
+            }
+            isClearingRecords = false
+        }
     }
 
     // MARK: - Helpers

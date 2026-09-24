@@ -148,6 +148,21 @@ final class SettingsSheetViewTests: XCTestCase {
     }
 
     @MainActor
+    func testStorageClearCopyPreservesSourceLogsSemantics() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+
+        manager.setLanguage(.en)
+        XCTAssertEqual(manager.localized(.clearAllRecords), "Clear Local Usage Cache...")
+        XCTAssertTrue(manager.localized(.clearRecordsDescription).contains("source agent logs are preserved"))
+        XCTAssertTrue(manager.localized(.clearRecordsConfirmMessage).contains("can be imported again on the next sync"))
+
+        manager.setLanguage(.zh)
+        XCTAssertEqual(manager.localized(.clearAllRecords), "清空本地统计缓存...")
+        XCTAssertTrue(manager.localized(.clearRecordsDescription).contains("原始日志会保留"))
+        XCTAssertTrue(manager.localized(.clearRecordsConfirmMessage).contains("下次同步时重新导入"))
+    }
+
+    @MainActor
     func testPricingEngineCurrencyAndRateSettings() {
         let initialRate = PricingEngine.shared.usdToCnyRate
         let initialCurrency = PricingEngine.shared.preferredCurrency

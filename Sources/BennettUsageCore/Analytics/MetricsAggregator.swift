@@ -225,6 +225,13 @@ public final class MetricsAggregator: Sendable {
 
     public func clearAllRecords() async throws {
         try database.clearAllRecords()
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: .bennettUsageDataDidUpdate,
+                object: nil,
+                userInfo: ["ingested": 0]
+            )
+        }
     }
 
     public func fetchTotalRecordCount() async throws -> Int {

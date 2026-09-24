@@ -131,6 +131,10 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case clearAllRecords
     case clearRecordsConfirmTitle
     case clearRecordsConfirmMessage
+    case rebuildRollupsDescription
+    case clearRecordsDescription
+    case maintenanceSucceeded
+    case maintenanceFailed
     case autoRefreshLabel
     case autoRefreshOff
     case autoRefreshSeconds
@@ -408,9 +412,13 @@ private let englishDictionary: [LocalizedKey: String] = [
     .preferredCurrencyLabel: "Preferred Currency",
     .revealInFinder: "Reveal in Finder",
     .rebuildRollups: "Rebuild Aggregates",
-    .clearAllRecords: "Clear All Records...",
-    .clearRecordsConfirmTitle: "Clear All Local Usage Records?",
-    .clearRecordsConfirmMessage: "This will reset the local database. If raw agent logs remain, they will be rescanned on next sync.",
+    .clearAllRecords: "Clear Local Usage Cache...",
+    .clearRecordsConfirmTitle: "Clear Local Usage Cache?",
+    .clearRecordsConfirmMessage: "This clears the locally aggregated usage statistics. Source agent logs are preserved and can be imported again on the next sync.",
+    .rebuildRollupsDescription: "Re-aggregate token usage and daily summaries from locally stored records",
+    .clearRecordsDescription: "Clear locally aggregated usage statistics; source agent logs are preserved for the next sync",
+    .maintenanceSucceeded: "Maintenance completed successfully",
+    .maintenanceFailed: "Maintenance failed. Please try again.",
     .autoRefreshLabel: "Auto Refresh Interval",
     .autoRefreshOff: "Manual",
     .autoRefreshSeconds: "%d seconds",
@@ -566,9 +574,13 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .preferredCurrencyLabel: "主显示币种",
     .revealInFinder: "在访达中显示",
     .rebuildRollups: "重新聚合数据",
-    .clearAllRecords: "清空所有记录...",
-    .clearRecordsConfirmTitle: "确定清空所有本地用量记录？",
-    .clearRecordsConfirmMessage: "此操作将重置本地记录数据库。若 Agent 原始日志仍然存在，下次同步将重新扫描收录。",
+    .clearAllRecords: "清空本地统计缓存...",
+    .clearRecordsConfirmTitle: "确定清空本地统计缓存？",
+    .clearRecordsConfirmMessage: "此操作会清空本地统计缓存。Agent 原始日志会保留，并可在下次同步时重新导入。",
+    .rebuildRollupsDescription: "根据本地记录重新聚合 Token 用量与每日汇总",
+    .clearRecordsDescription: "清空本地统计缓存；Agent 原始日志会保留并在下次同步时重新导入",
+    .maintenanceSucceeded: "维护操作已完成",
+    .maintenanceFailed: "维护操作失败，请重试。",
     .autoRefreshLabel: "自动刷新频率",
     .autoRefreshOff: "手动刷新",
     .autoRefreshSeconds: "%d 秒",
