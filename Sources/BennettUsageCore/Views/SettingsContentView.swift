@@ -71,20 +71,15 @@ public enum SettingsCategory: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    public var iconColor: Color {
-        switch self {
-        case .general:
-            return AppTheme.Status.accent
-        case .agents:
-            return AppTheme.Status.success
-        case .pricing:
-            return AppTheme.Status.warning
-        case .storage:
-            return AppTheme.Agent.copilot
-        case .about:
-            return AppTheme.Text.secondary
-        }
-    }
+    /// Navigation chrome uses a single color.
+    ///
+    /// The sidebar previously gave each row its own hue — accent blue for
+    /// General, success green for Agents, warning amber for Pricing, an agent
+    /// brand indigo for Storage. Those hues already carry meaning elsewhere
+    /// (a state, or an agent's identity in a chart), and a sidebar is not a
+    /// place to spend them. Selection is now expressed by the row's fill and
+    /// the accent, and nothing else.
+    public var iconColor: Color { AppTheme.Chrome.glyph }
 }
 
 public struct SettingsContentView: View {
@@ -237,26 +232,18 @@ public struct SettingsContentView: View {
     // MARK: - Sidebar View
     private var sidebarView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(AppTheme.Status.accent.opacity(0.12))
-                        .frame(width: 28, height: 28)
-                    Image(systemName: "gearshape.2.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(AppTheme.Status.accent)
-                }
-                Text(localization.localized(.settings))
-                    .font(.headline.weight(.semibold))
-                    .foregroundColor(AppTheme.Text.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 15)
-            .padding(.bottom, 9)
+            // A plain section label, not a selectable row. It used to carry a
+            // filled accent tile that made it look like a sixth destination
+            // next to the five real categories.
+            Text(localization.localized(.settings).uppercased())
+                .font(AppTheme.Typography.eyebrow)
+                .tracking(0.8)
+                .foregroundColor(AppTheme.Text.quaternary)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 10)
 
-            VStack(spacing: 2) {
+            VStack(spacing: 1) {
                 ForEach(SettingsCategory.allCases) { category in
                     categoryRow(category)
                 }
@@ -270,15 +257,15 @@ public struct SettingsContentView: View {
                     .fill(isAnyAgentConnected ? AppTheme.Status.success : AppTheme.Text.quaternary)
                     .frame(width: 7, height: 7)
                 Text(String(format: localization.localized(.agentsConnected), connectedAgentCount))
-                    .font(.caption2)
+                    .font(AppTheme.Typography.caption)
                     .foregroundColor(AppTheme.Text.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 11)
-            .background(AppTheme.Surface.primary.opacity(0.5))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(AppTheme.Surface.subtle.opacity(0.5))
             .overlay(alignment: .top) {
                 AppTheme.Border.divider.frame(height: AppTheme.Layout.hairline)
             }
@@ -309,25 +296,23 @@ public struct SettingsContentView: View {
         .background(AppTheme.Canvas.background)
     }
 
+    /// One privacy statement, not two. The sidebar footer and this bar used to
+    /// both promise local-only storage, side by side, in slightly different
+    /// words — which read as two different claims rather than one reassurance.
     private var privacyFooter: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 6) {
             Image(systemName: "lock.shield.fill")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(AppTheme.Status.success)
             Text(localization.localized(.privacyFooter))
-                .font(.caption2)
-                .foregroundColor(AppTheme.Text.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.76)
-            Spacer(minLength: 8)
-            Text(localization.localized(.privacyLocalOnly))
-                .font(.caption2)
+                .font(AppTheme.Typography.caption)
                 .foregroundColor(AppTheme.Text.tertiary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.76)
+            Spacer(minLength: 8)
         }
-        .padding(.horizontal, 20)
-        .frame(height: 30)
+        .padding(.horizontal, AppTheme.Radius.Settings.contentPadding)
+        .frame(height: 28)
         .background(AppTheme.Surface.subtle.opacity(0.5))
         .accessibilityElement(children: .combine)
     }
@@ -345,32 +330,30 @@ public struct SettingsContentView: View {
 
     // MARK: - Detail Header View
     private var detailHeaderView: some View {
-        HStack(alignment: .center, spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(selectedCategory.iconColor.opacity(0.12))
-                    .frame(width: 32, height: 32)
-                Image(systemName: selectedCategory.systemImage)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(selectedCategory.iconColor)
-            }
+        HStack(alignment: .center, spacing: 10) {
+            // A plain glyph matching the sidebar row and the setting rows. The
+            // filled tile this replaced was the last colored icon block in the
+            // window, and it was the largest one.
+            Image(systemName: selectedCategory.systemImage)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(AppTheme.Chrome.glyphActive)
+                .frame(width: 20)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(selectedCategory.fullTitle(localization: localization))
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(AppTheme.Text.primary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
                 Text(selectedCategory.subtitle(localization: localization))
-                    .font(.caption)
-                    .foregroundColor(AppTheme.Text.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .font(AppTheme.Typography.caption)
+                    .foregroundColor(AppTheme.Text.tertiary)
+                    .lineLimit(1)
             }
             Spacer(minLength: 12)
             detailStatusView
         }
-        .padding(.horizontal, 20)
-        .frame(minHeight: 64)
+        .padding(.horizontal, AppTheme.Radius.Settings.contentPadding)
+        .frame(height: AppTheme.Radius.Settings.headerHeight)
         .background(AppTheme.Canvas.background)
     }
 
@@ -388,10 +371,16 @@ public struct SettingsContentView: View {
             .accessibilityLabel(status.text)
     }
 
+    /// The header badge reports *state* only.
+    ///
+    /// It previously colored "General" and "About" with the accent and "USD"
+    /// with the warning amber, so a currency preference looked like a caution.
+    /// A neutral accent marks ordinary information; success, warning and error
+    /// are reserved for the conditions they actually describe.
     private var detailStatus: (text: String, systemImage: String, color: Color) {
         switch selectedCategory {
         case .general:
-            return (autoRefreshSubtitle, "arrow.clockwise", AppTheme.Status.accent)
+            return (autoRefreshSubtitle, "arrow.clockwise", AppTheme.Chrome.glyphActive)
         case .agents:
             return (
                 String(format: localization.localized(.agentsConnected), connectedAgentCount),
@@ -401,8 +390,8 @@ public struct SettingsContentView: View {
         case .pricing:
             return (
                 selectedCurrency == .usd ? localization.localized(.usdOption) : localization.localized(.cnyOption),
-                "coloncurrencysign.circle.fill",
-                AppTheme.Status.warning
+                "coloncurrencysign",
+                AppTheme.Chrome.glyphActive
             )
         case .storage:
             return (storageStatusDisplayText, storageStatusIcon, storageStatusColor)
@@ -410,7 +399,7 @@ public struct SettingsContentView: View {
             return (
                 String(format: localization.localized(.versionLabel), updateChecker.currentVersion.description),
                 "checkmark.seal.fill",
-                AppTheme.Status.accent
+                AppTheme.Chrome.glyphActive
             )
         }
     }
@@ -434,12 +423,8 @@ public struct SettingsContentView: View {
 
     // MARK: - Section 1: General Settings Pane
     private var generalPane: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            settingsSection(
-                title: localization.localized(.generalSettings),
-                subtitle: localization.localized(.settingsGeneralSubtitle),
-                systemImage: "slider.horizontal.3"
-            ) {
+        VStack(alignment: .leading, spacing: 18) {
+            leadingSettingsGroup {
                 settingsCard {
                     generalLanguageRow
                     rowDivider
@@ -455,7 +440,6 @@ public struct SettingsContentView: View {
 
             settingsSection(
                 title: localization.localized(.checkForUpdates),
-                subtitle: localization.localized(.autoCheckUpdatesSubtitle),
                 systemImage: "arrow.down.circle"
             ) {
                 settingsCard {
@@ -467,7 +451,6 @@ public struct SettingsContentView: View {
 
             settingsSection(
                 title: localization.localized(.privacy),
-                subtitle: localization.localized(.privacyNoUpload),
                 systemImage: "lock.shield.fill"
             ) {
                 settingsCard {
@@ -481,7 +464,7 @@ public struct SettingsContentView: View {
 
     private var generalLanguageRow: some View {
         HStack(spacing: 12) {
-            cardRowIcon("globe", color: AppTheme.Status.accent)
+            cardRowIcon("globe", color: AppTheme.Chrome.glyph)
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.language))
                     .font(.body.weight(.medium))
@@ -508,7 +491,7 @@ public struct SettingsContentView: View {
 
     private var generalAppearanceRow: some View {
         HStack(spacing: 12) {
-            cardRowIcon("circle.lefthalf.filled", color: AppTheme.Agent.claude)
+            cardRowIcon("circle.lefthalf.filled", color: AppTheme.Chrome.glyph)
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.appearance))
                     .font(.body.weight(.medium))
@@ -534,7 +517,7 @@ public struct SettingsContentView: View {
 
     private var generalAutoRefreshRow: some View {
         HStack(spacing: 12) {
-            cardRowIcon("arrow.clockwise", color: AppTheme.Agent.trae)
+            cardRowIcon("arrow.clockwise", color: AppTheme.Chrome.glyph)
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.autoRefreshLabel))
                     .font(.body.weight(.medium))
@@ -563,7 +546,7 @@ public struct SettingsContentView: View {
 
     private var generalUpdateRow: some View {
         HStack(spacing: 12) {
-            cardRowIcon("arrow.down.circle", color: AppTheme.Status.accent)
+            cardRowIcon("arrow.down.circle", color: AppTheme.Chrome.glyph)
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.autoCheckUpdatesLabel))
                     .font(.body.weight(.medium))
@@ -614,7 +597,7 @@ public struct SettingsContentView: View {
 
     private var generalDatabaseRow: some View {
         HStack(spacing: 12) {
-            cardRowIcon("cylinder.split.1x2", color: AppTheme.Agent.copilot)
+            cardRowIcon("cylinder.split.1x2", color: AppTheme.Chrome.glyph)
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.sqliteDatabase))
                     .font(.body.weight(.medium))
@@ -643,7 +626,7 @@ public struct SettingsContentView: View {
 
     private var generalPrivacyRow: some View {
         HStack(alignment: .top, spacing: 12) {
-            cardRowIcon("lock.shield.fill", color: AppTheme.Status.success)
+            cardRowIcon("lock.shield.fill", color: AppTheme.Chrome.glyph)
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.localFirstPrivate))
                     .font(.body.weight(.medium))
@@ -660,11 +643,7 @@ public struct SettingsContentView: View {
 
     // MARK: - Section 2: Agent Health & Diagnostics Pane
     private var agentsPane: some View {
-        settingsSection(
-            title: localization.localized(.agentHealthSection),
-            subtitle: localization.localized(.settingsAgentsSubtitle),
-            systemImage: "bolt.shield.fill"
-        ) {
+        leadingSettingsGroup {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label(
@@ -805,7 +784,7 @@ public struct SettingsContentView: View {
             // Preferred Currency Card
             settingsCard {
                 HStack(spacing: 12) {
-                    cardRowIcon("coloncurrencysign.circle.fill", color: AppTheme.Status.warning)
+                    cardRowIcon("coloncurrencysign.circle.fill", color: AppTheme.Chrome.glyph)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.preferredCurrencyLabel))
                             .font(.body.weight(.medium))
@@ -833,7 +812,7 @@ public struct SettingsContentView: View {
             // Exchange Rate Card
             settingsCard {
                 HStack(spacing: 12) {
-                    cardRowIcon("chart.line.uptrend.xyaxis", color: AppTheme.Status.success)
+                    cardRowIcon("chart.line.uptrend.xyaxis", color: AppTheme.Chrome.glyph)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.exchangeRateLabel))
                             .font(.body.weight(.medium))
@@ -889,7 +868,7 @@ public struct SettingsContentView: View {
             // Database Info Card
             settingsCard {
                 HStack(alignment: .top, spacing: 12) {
-                    cardRowIcon("cylinder.split.1x2", color: AppTheme.Agent.copilot)
+                    cardRowIcon("cylinder.split.1x2", color: AppTheme.Chrome.glyph)
                     VStack(alignment: .leading, spacing: 6) {
                         Text(localization.localized(.sqliteDatabase))
                             .font(.body.weight(.semibold))
@@ -1039,7 +1018,7 @@ public struct SettingsContentView: View {
             // Privacy Card
             settingsCard {
                 HStack(alignment: .top, spacing: 14) {
-                    cardRowIcon("lock.shield.fill", color: AppTheme.Status.success)
+                    cardRowIcon("lock.shield.fill", color: AppTheme.Chrome.glyph)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(localization.localized(.localFirstPrivate))
                             .font(.body.weight(.semibold))
@@ -1056,7 +1035,7 @@ public struct SettingsContentView: View {
             // Repository Link Card
             settingsCard {
                 HStack {
-                    cardRowIcon("chevron.left.forwardslash.chevron.right", color: AppTheme.Text.secondary)
+                    cardRowIcon("chevron.left.forwardslash.chevron.right", color: AppTheme.Chrome.glyph)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.openSource))
                             .font(.body.weight(.medium))
@@ -1096,7 +1075,7 @@ public struct SettingsContentView: View {
         settingsCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
-                    cardRowIcon("arrow.down.circle", color: AppTheme.Status.accent)
+                    cardRowIcon("arrow.down.circle", color: AppTheme.Chrome.glyph)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.checkForUpdates))
                             .font(.body.weight(.medium))
@@ -1261,28 +1240,36 @@ public struct SettingsContentView: View {
     }
 
     // MARK: - Reusable UI Helpers
+    /// The subtitle is optional because the first row of most groups already
+    /// explains the group in full. Printing the same sentence in the eyebrow
+    /// and again under the row title is how the pane came to read as repetitive.
     private func settingsSection<Content: View>(
         title: String,
-        subtitle: String,
+        subtitle: String? = nil,
         systemImage: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(AppTheme.Status.accent)
-                    .accessibilityHidden(true)
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(AppTheme.Text.primary)
+        VStack(alignment: .leading, spacing: 10) {
+            if let subtitle {
+                SectionEyebrow(title) {
+                    Text(subtitle)
+                        .font(AppTheme.Typography.caption)
+                        .foregroundColor(AppTheme.Text.quaternary)
+                        .lineLimit(1)
+                }
+            } else {
+                SectionEyebrow(title)
             }
-            Text(subtitle)
-                .font(.caption)
-                .foregroundColor(AppTheme.Text.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             content()
         }
+    }
+
+    /// The first group in a pane carries no heading of its own: the detail
+    /// header directly above it already shows this category's title and
+    /// subtitle. Repeating both verbatim made every Settings page open with
+    /// the same sentence printed twice.
+    private func leadingSettingsGroup<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
     }
 
     private var storageStatusDisplayText: String {
@@ -1332,37 +1319,45 @@ public struct SettingsContentView: View {
     }
 
     private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 0) {
             content()
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
+        // Horizontal padding stays matched to the detail pane's own inset, so a
+        // row's control lines up with the edge of the text column above it —
+        // and so the trailing menu control sits flush with the card edge, which
+        // the settings layout test pins.
+        .padding(.horizontal, AppTheme.Radius.Settings.contentPadding)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(AppTheme.Surface.primary)
+            RoundedRectangle(cornerRadius: AppTheme.Radius.panel, style: .continuous)
+                .fill(AppTheme.Surface.panel)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: AppTheme.Radius.panel, style: .continuous)
                 .stroke(AppTheme.Border.subtle, lineWidth: AppTheme.Layout.hairline)
         )
     }
 
     private var rowDivider: some View {
         AppTheme.Border.divider
-            .frame(height: 0.5)
+            .frame(height: AppTheme.Layout.hairline)
     }
 
+    /// A plain glyph, not a colored tile.
+    ///
+    /// The rows used to carry a 30pt rounded square filled with a brand hue —
+    /// a different one per row, several of them lifted straight from the agent
+    /// palette. Those hues already mean "this agent" in the charts, so using
+    /// them as wallpaper both wasted the palette's meaning and gave the pane
+    /// the look of a template. One neutral glyph, sized to the text, reads as
+    /// a native Settings row.
     private func cardRowIcon(_ name: String, color: Color) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(color.opacity(0.12))
-                .frame(width: 30, height: 30)
-            Image(systemName: name)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(color)
-        }
-        .accessibilityHidden(true)
+        Image(systemName: name)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(color)
+            .frame(width: 18)
+            .accessibilityHidden(true)
     }
 
     /// A right-aligned selection control matching the settings card styling.
@@ -1776,14 +1771,13 @@ private struct CategoryRowButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 9) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isSelected ? category.iconColor : category.iconColor.opacity(0.12))
-                        .frame(width: 24, height: 24)
-                    Image(systemName: category.systemImage)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(isSelected ? .white : category.iconColor)
-                }
+                // A plain glyph in one reserved column. The selected state is
+                // carried by the row fill and the label weight, so the icons
+                // stay a single neutral color and the column still aligns.
+                Image(systemName: category.systemImage)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(isSelected ? AppTheme.Chrome.glyphActive : AppTheme.Chrome.glyph)
+                    .frame(width: 18)
 
                 Text(category.title(localization: localization))
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
@@ -1794,12 +1788,12 @@ private struct CategoryRowButton: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 9)
-            .frame(height: 34)
+            .frame(height: 30)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(isSelected ? AppTheme.Surface.selected : (isHovered ? AppTheme.Surface.hover : Color.clear))
             )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }

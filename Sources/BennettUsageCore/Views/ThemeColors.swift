@@ -143,6 +143,16 @@ public enum AppTheme {
         public static let exactValue = Font.system(size: 12, weight: .medium, design: .monospaced)
         public static let label = Font.system(size: 11, weight: .medium)
         public static let caption = Font.system(size: 11)
+
+        /// Section eyebrows replace the old "icon + title" pattern. A tracked,
+        /// uppercase micro-label carries the grouping without decorating every
+        /// heading with a pictogram.
+        public static let eyebrow = Font.system(size: 10, weight: .semibold)
+        public static let pageTitle = Font.system(size: 19, weight: .bold)
+        public static let rowTitle = Font.system(size: 13, weight: .medium)
+        public static let rowDetail = Font.system(size: 11)
+        /// Dense numeric readouts inside tables and lists.
+        public static let tabular = Font.system(size: 12, weight: .medium, design: .monospaced)
     }
 
     // MARK: - Layout & Controls
@@ -154,10 +164,20 @@ public enum AppTheme {
         public static let cardPadding: CGFloat = 18
         public static let compactSpacing: CGFloat = 10
         public static let hairline: CGFloat = 0.5
+
+        /// Gaps inside a continuous container (the Dashboard conclusion panel,
+        /// Settings groups). Continuous containers separate their children with
+        /// hairlines rather than by repeating a card border.
+        public static let groupGap: CGFloat = 14
+        public static let cellPadding: CGFloat = 16
+        public static let rowHeight: CGFloat = 44
     }
 
     public enum Radius {
         public static let card: CGFloat = 12
+        /// The single enclosing container for a screen region. Slightly tighter
+        /// than `card` so grouped panels read as one object.
+        public static let panel: CGFloat = 10
         public static let control: CGFloat = 8
         public static let pill: CGFloat = 999
 
@@ -188,6 +208,12 @@ public enum AppTheme {
         /// Light: Pure white (#FFFFFF), Dark: Elevated warm graphite (#262629).
         public static let primary = Color.dynamic(lightHex: "#FFFFFF", darkHex: "#262629")
 
+        /// One continuous container that groups a whole screen region. Regions
+        /// separated by this surface are separated by whitespace and hairlines
+        /// instead of by repeating a bordered card, which is what previously
+        /// made every surface read as an identical tile in a card wall.
+        public static let panel = Color.dynamic(lightHex: "#FFFFFF", darkHex: "#252528")
+
         /// Subtle container / inset well for grouped rows or stat pods.
         /// Light: Delicate warm gray (#EFEFF1), Dark: Subtle well (#2F2F34).
         public static let subtle = Color.dynamic(lightHex: "#EFEFF1", darkHex: "#2F2F34")
@@ -208,6 +234,22 @@ public enum AppTheme {
         /// Kept dynamic because the Penpot popover and settings chrome follow
         /// the system appearance independently of the dashboard canvas.
         public static let elevated = Color.dynamic(lightHex: "#FFFFFF", darkHex: "#2C2C30")
+    }
+
+    // MARK: - Data Marks
+
+    /// Colors used by data marks, kept separate from `Status` so a categorical
+    /// agent color can never double as an interaction or state color.
+    public enum Data {
+        /// The empty portion of a proportional bar. Categorical hues are drawn
+        /// on top of this neutral track rather than as a full-bleed fill, so one
+        /// dominant agent color no longer owns the whole screen.
+        public static let track = Color.dynamic(lightHex: "#000000", darkHex: "#FFFFFF", lightAlpha: 0.07, darkAlpha: 0.10)
+
+        /// A single-series mark (one total, no category split). Neutral by
+        /// default so the eye reads shape and position, not hue.
+        public static let series = Color.dynamic(lightHex: "#0066CC", darkHex: "#2997FF")
+        public static let seriesMuted = Color.dynamic(lightHex: "#0066CC", darkHex: "#2997FF", lightAlpha: 0.28, darkAlpha: 0.42)
     }
 
     // MARK: - Typography
@@ -250,6 +292,19 @@ public enum AppTheme {
 
     // MARK: - Status & Accent
 
+    /// Color roles are strict and do not overlap:
+    ///
+    /// - `Chrome` colors every piece of interface furniture: selection, focus,
+    ///   links, active controls. There is exactly one accent.
+    /// - `Status` colors a *state* only: success, warning, destructive. A color
+    ///   here never appears on a value that is not a state.
+    /// - `Agent` / `Harmonic` / `Data.series` color a *category* on a data mark
+    ///   only. A categorical hue never colors an icon, a sidebar row, a section
+    ///   heading, or a button.
+    ///
+    /// Before this rule the same amber meant "Pi Agent" in a legend, "cache
+    /// write" in the composition bar, "caution" in Settings, and "project" in a
+    /// heading icon, so no hue on screen carried a readable meaning.
     public enum Status {
         /// macOS refined primary interactive blue.
         public static let accent = Color.dynamic(lightHex: "#0066CC", darkHex: "#2997FF")
@@ -265,6 +320,19 @@ public enum AppTheme {
         /// Error / destructive state:
         /// Light: Crimson coral (#DC2626), Dark: Soft coral red (#F87171).
         public static let error = Color.dynamic(lightHex: "#DC2626", darkHex: "#F87171")
+    }
+
+    /// Interface furniture. One accent, used for anything the user can act on
+    /// and for anything that reports its own selection state.
+    public enum Chrome {
+        public static let accent = Status.accent
+        /// A filled accent, for a selected segmented segment or primary button.
+        public static let accentFill = Status.accent
+        /// A low-emphasis wash of the accent, for a selected row background.
+        public static let accentWash = Surface.selected
+        /// Icons and glyphs that carry no state of their own.
+        public static let glyph = Text.secondary
+        public static let glyphActive = Status.accent
     }
 
     // MARK: - Project Rank Medals

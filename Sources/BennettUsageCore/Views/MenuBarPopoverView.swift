@@ -75,18 +75,16 @@ public struct MenuBarPopoverView: View {
                     todayConclusion(active: active)
                     AppTheme.Border.divider.frame(height: AppTheme.Layout.hairline)
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        freshnessStatus
-                        if let update = updateChecker.availableUpdate {
-                            updateBanner(update)
-                        } else {
-                            updateStatusNotice
-                        }
+                    if let update = updateChecker.availableUpdate {
+                        updateBanner(update)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 14)
+                    } else {
+                        updateStatusNotice
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
 
                     AppTheme.Border.divider.frame(height: AppTheme.Layout.hairline)
+                        .padding(.top, updateChecker.availableUpdate == nil ? 14 : 0)
                     sourceBreakdown(active: active, toolColors: toolColors)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 14)
@@ -97,32 +95,48 @@ public struct MenuBarPopoverView: View {
             Divider().overlay(AppTheme.Border.divider)
             actionBar
         }
-        .frame(width: 360, height: 600)
+        .frame(width: 340)
         .background(.regularMaterial)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(localization.localized(.quickGlance))
         .preferredColorScheme(themeMode.colorScheme)
     }
 
+    /// The popover hangs off a menu bar item that already names the app, so the
+    /// header states the window's subject — today's usage — rather than
+    /// repeating the product name, and carries the sync state inline. Freshness
+    /// used to get its own tinted panel between the total and the breakdown,
+    /// which cost a whole band to say one short thing.
     private var popoverHeader: some View {
-        HStack(spacing: 9) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(AppTheme.Status.accent.opacity(0.12))
-                    .frame(width: 28, height: 28)
-                Image(systemName: "sparkles")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(AppTheme.Status.accent)
-            }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(localization.localized(.appName))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(AppTheme.Text.primary)
-                Text(localization.localized(.quickGlance))
-                    .font(.caption2)
-                    .foregroundColor(AppTheme.Text.secondary)
-            }
-            Spacer(minLength: 8)
+        let isRefreshing = model.freshness.isRefreshing
+        let hasFailure = model.freshness.partialFailure != nil
+        let hasSuccessfulRefresh = model.freshness.hasSuccessfulRefresh
+        let systemImage: String
+        let color: Color
+        if isRefreshing {
+            systemImage = "arrow.triangle.2.circlepath"
+            color = AppTheme.Chrome.glyphActive
+        } else if hasFailure {
+            systemImage = "exclamationmark.triangle.fill"
+            color = AppTheme.Status.error
+        } else if hasSuccessfulRefresh {
+            systemImage = "checkmark.circle.fill"
+            color = AppTheme.Status.success
+        } else {
+            systemImage = "clock.badge.exclamationmark"
+            color = AppTheme.Text.tertiary
+        }
+
+        let detail = isRefreshing
+            ? localization.localized(.syncInProgress)
+            : hasFailure
+                ? localization.localized(.syncFailed)
+                : dataFreshnessText
+
+        return HStack(spacing: 8) {
+            SectionEyebrow(localization.localized(.todaysTokens))
+            StatusMarker(systemImage: systemImage, text: detail, color: color)
+            Spacer(minLength: 6)
             if let onOpenSettings = onOpenSettings {
                 QuietIconButton(
                     systemName: "gearshape",
@@ -131,27 +145,21 @@ public struct MenuBarPopoverView: View {
                 )
                 .accessibilityLabel(localization.localized(.settings))
             }
-            QuietIconButton(
-                systemName: "macwindow",
-                tooltip: localization.localized(.openDashboardShortcut),
-                action: onOpenDashboard
-            )
-            .accessibilityLabel(localization.localized(.openDashboardShortcut))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 16)
+        .padding(.top, 13)
+        .padding(.bottom, 9)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(localization.localized(.popoverSyncStatus, arguments: detail))
+        .help(detail)
     }
 
     private func todayConclusion(active: [ActiveTool]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(localization.localized(.todaysTokens))
-                .font(.caption.weight(.semibold))
-                .foregroundColor(AppTheme.Text.secondary)
-
+        VStack(alignment: .leading, spacing: 10) {
             if let summary, summary.totalTokens > 0 {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text(TokenFormatter.formatCompact(summary.totalTokens))
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundColor(AppTheme.Text.primary)
                         .monospacedDigit()
                         .lineLimit(1)
@@ -160,13 +168,16 @@ public struct MenuBarPopoverView: View {
 
                     Spacer(minLength: 8)
 
-                    VStack(alignment: .trailing, spacing: 3) {
+                    // Spend is a value, not a health state. Rendering it in the
+                    // success green made a routine cost read as a status light
+                    // and competed with the freshness marker for the same hue.
+                    VStack(alignment: .trailing, spacing: 1) {
                         Text(localization.localized(.estimatedCost))
-                            .font(.caption)
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .font(AppTheme.Typography.caption)
+                            .foregroundColor(AppTheme.Text.tertiary)
                         Text(pricingEngine.spendString(summary.totalCostUSD))
-                            .font(.system(size: 19, weight: .semibold, design: .rounded))
-                            .foregroundColor(AppTheme.Status.success)
+                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                            .foregroundColor(AppTheme.Text.primary)
                             .monospacedDigit()
                             .lineLimit(1)
                             .minimumScaleFactor(0.68)
@@ -174,19 +185,6 @@ public struct MenuBarPopoverView: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(localization.localized(.popoverAccessibilityDescription))
-
-                if let top = active.first {
-                    HStack(spacing: 5) {
-                        Text(localization.localized(.popoverTopAgent, arguments: AgentFilterBarView.displayName(for: top.id)))
-                            .font(.caption2)
-                            .foregroundColor(AppTheme.Text.secondary)
-                            .lineLimit(1)
-                        Spacer(minLength: 8)
-                        Text(localization.localized(.distributionShare, arguments: topShare(for: top, in: active)))
-                            .font(.caption2.monospacedDigit().weight(.medium))
-                            .foregroundColor(AppTheme.Text.primary)
-                    }
-                }
             } else {
                 HStack(spacing: 9) {
                     Image(systemName: summary == nil ? "questionmark.circle" : "chart.bar")
@@ -197,7 +195,7 @@ public struct MenuBarPopoverView: View {
                         .font(.headline)
                         .foregroundColor(AppTheme.Text.primary)
                 }
-                .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
                 .accessibilityElement(children: .combine)
             }
 
@@ -209,66 +207,8 @@ public struct MenuBarPopoverView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 16)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.Surface.primary.opacity(0.72))
-    }
-
-    private var freshnessStatus: some View {
-        let isRefreshing = model.freshness.isRefreshing
-        let hasFailure = model.freshness.partialFailure != nil
-        let hasSuccessfulRefresh = model.freshness.hasSuccessfulRefresh
-        let systemImage: String
-        let color: Color
-        if isRefreshing {
-            systemImage = "arrow.triangle.2.circlepath"
-            color = AppTheme.Status.accent
-        } else if hasFailure {
-            systemImage = "exclamationmark.triangle.fill"
-            color = AppTheme.Status.error
-        } else if hasSuccessfulRefresh {
-            systemImage = "checkmark.circle.fill"
-            color = AppTheme.Status.success
-        } else {
-            systemImage = "clock.badge.exclamationmark"
-            color = AppTheme.Text.secondary
-        }
-
-        let detail = isRefreshing
-            ? localization.localized(.syncInProgress)
-            : hasFailure
-                ? localization.localized(.syncFailed)
-                : dataFreshnessText
-
-        return HStack(spacing: 9) {
-            Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(color)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(localization.localized(.syncFreshness))
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(AppTheme.Text.primary)
-                Text(detail)
-                    .font(.caption2.monospacedDigit())
-                    .foregroundColor(AppTheme.Text.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.76)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(color.opacity(0.10))
-        )
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            localization.localized(.popoverSyncStatus, arguments: detail)
-        )
-        .help(detail)
     }
 
     private var actionBar: some View {
@@ -323,22 +263,37 @@ public struct MenuBarPopoverView: View {
         return localization.localized(.dataUpdatedMinutesAgo, arguments: minutes)
     }
 
+    /// A sparkline with a baseline and a named peak. Without them the mark
+    /// floated in its own whitespace and gave no scale, so "is this a spike or
+    /// a plateau" was unanswerable from the glance it was meant to support.
     private func glanceTrend(points: [TrendPoint]) -> some View {
         let total = points.reduce(0) { $0 + $1.tokens }
-        return VStack(alignment: .leading, spacing: 7) {
-            HStack {
+        let peak = points.max { $0.tokens < $1.tokens }
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(localization.localized(.hourlyTrendToday))
                     .font(AppTheme.Typography.label)
+                    .foregroundColor(AppTheme.Text.tertiary)
+                Spacer(minLength: 6)
+                if let peak, peak.tokens > 0 {
+                    Text(localization.localized(.popoverPeakAt, arguments: peak.label))
+                        .font(AppTheme.Typography.caption)
+                        .foregroundColor(AppTheme.Text.quaternary)
+                        .lineLimit(1)
+                }
+                Text(TokenFormatter.formatCompact(peak?.tokens ?? 0))
+                    .font(AppTheme.Typography.tabular)
                     .foregroundColor(AppTheme.Text.secondary)
-                Spacer()
-                Text(TokenFormatter.formatCompact(total))
-                    .font(.caption.monospacedDigit().weight(.semibold))
-                    .foregroundColor(AppTheme.Text.primary)
             }
 
             SparkLine(points: points)
-                .fill(AppTheme.Chart.primaryLine.gradient)
-                .frame(height: 32)
+                .fill(AppTheme.Data.series.opacity(0.28))
+                .frame(height: 26)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(AppTheme.Data.track)
+                        .frame(height: AppTheme.Layout.hairline)
+                }
                 .accessibilityLabel(localization.localized(.hourlyTrendToday))
                 .accessibilityValue(TokenFormatter.formatFull(total))
         }
@@ -346,11 +301,10 @@ public struct MenuBarPopoverView: View {
 
     private func sourceBreakdown(active: [ActiveTool], toolColors: [String: Color]) -> some View {
         let visibleTools = Array(active.prefix(3))
+        let totalActive = active.reduce(0) { $0 + $1.tokens }
 
         return VStack(alignment: .leading, spacing: 8) {
-            Text(localization.localized(.toolBreakdownToday))
-                .font(.caption.weight(.semibold))
-                .foregroundColor(AppTheme.Text.secondary)
+            SectionEyebrow(localization.localized(.toolBreakdownToday))
 
             if visibleTools.isEmpty {
                 HStack(spacing: 8) {
@@ -365,39 +319,60 @@ public struct MenuBarPopoverView: View {
                 .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                 .accessibilityElement(children: .combine)
             } else {
-                miniDistributionBar(active: active, toolColors: toolColors)
+                // Same neutral-track treatment as the Dashboard, so the two
+                // surfaces read as one product rather than two bar styles.
+                ProportionBar(
+                    segments: active.map { tool in
+                        ProportionBar.Segment(
+                            id: tool.id,
+                            share: totalActive > 0 ? Double(tool.tokens) / Double(totalActive) : 0,
+                            color: toolColors[tool.id]
+                                ?? AppTheme.Agent.knownColor(for: tool.id)
+                                ?? AppTheme.Harmonic.color(for: tool.id)
+                        )
+                    },
+                    height: 6
+                )
+                .accessibilityValue(
+                    Self.distributionAccessibilityValue(for: active, localization: localization)
+                )
 
-                ForEach(visibleTools, id: \.id) { tool in
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(
-                                toolColors[tool.id]
-                                    ?? AppTheme.Agent.knownColor(for: tool.id)
-                                    ?? AppTheme.Harmonic.color(for: tool.id)
-                            )
-                            .frame(width: 7, height: 7)
-                            .accessibilityHidden(true)
+                VStack(spacing: 0) {
+                    ForEach(Array(visibleTools.enumerated()), id: \.element.id) { index, tool in
+                        if index > 0 {
+                            PanelDivider(inset: 15)
+                        }
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(
+                                    toolColors[tool.id]
+                                        ?? AppTheme.Agent.knownColor(for: tool.id)
+                                        ?? AppTheme.Harmonic.color(for: tool.id)
+                                )
+                                .frame(width: 7, height: 7)
+                                .accessibilityHidden(true)
 
-                        Text(AgentFilterBarView.displayName(for: tool.id))
-                            .font(.caption.weight(.medium))
-                            .foregroundColor(AppTheme.Text.primary)
-                            .lineLimit(1)
+                            Text(AgentFilterBarView.displayName(for: tool.id))
+                                .font(AppTheme.Typography.rowTitle)
+                                .foregroundColor(AppTheme.Text.primary)
+                                .lineLimit(1)
 
-                        Spacer(minLength: 8)
+                            Spacer(minLength: 8)
 
-                        Text(TokenFormatter.formatCompact(tool.tokens))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundColor(AppTheme.Text.secondary)
-                            .lineLimit(1)
+                            Text(TokenFormatter.formatCompact(tool.tokens))
+                                .font(AppTheme.Typography.tabular)
+                                .foregroundColor(AppTheme.Text.secondary)
+                                .lineLimit(1)
 
-                        Text(localization.localized(.distributionShare, arguments: topShare(for: tool, in: active)))
-                            .font(.caption2.monospacedDigit().weight(.medium))
-                            .foregroundColor(AppTheme.Text.primary)
-                            .frame(width: 42, alignment: .trailing)
+                            Text(String(format: "%.1f%%", topShare(for: tool, in: active)))
+                                .font(AppTheme.Typography.tabular)
+                                .foregroundColor(AppTheme.Text.quaternary)
+                                .frame(width: 40, alignment: .trailing)
+                        }
+                        .frame(height: 28)
+                        .accessibilityElement(children: .combine)
+                        .help(TokenFormatter.formatFull(tool.tokens))
                     }
-                    .padding(.vertical, 3)
-                    .accessibilityElement(children: .combine)
-                    .help(TokenFormatter.formatFull(tool.tokens))
                 }
 
                 if active.count > visibleTools.count {
@@ -405,8 +380,8 @@ public struct MenuBarPopoverView: View {
                         format: localization.localized(.moreToolsCount),
                         active.count - visibleTools.count
                     ))
-                    .font(.caption2.weight(.medium))
-                    .foregroundColor(AppTheme.Text.tertiary)
+                    .font(AppTheme.Typography.caption)
+                    .foregroundColor(AppTheme.Text.quaternary)
                     .padding(.top, 2)
                     .accessibilityLabel(
                         String(

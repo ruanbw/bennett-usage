@@ -57,7 +57,7 @@ Requires macOS 14 or later, on Apple Silicon or Intel.
 swift build -c release
 swift test                          # run the test suite
 ./scripts/package-dmg.sh            # builds arm64, x86_64 and universal DMGs
-./scripts/package-dmg.sh 1.4.1      # pin the version number
+./scripts/package-dmg.sh 1.5.0      # pin the version number
 ./scripts/package-dmg.sh 1.3.0 --only universal   # just one variant
 # outputs dist/BennettUsage-<version>-<arch>.dmg and dist/SHA256SUMS.txt
 ```

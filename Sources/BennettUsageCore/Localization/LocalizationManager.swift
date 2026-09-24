@@ -228,6 +228,9 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case tokenValue
     case cacheHitRateValue
     case distributionShare
+    case peakUsage
+    case averageUsage
+    case activeBuckets
 
     // Sync freshness and loading/error presentation states
     case lastSynced
@@ -264,6 +267,7 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case popoverAccessibilityDescription
     case popoverNoUsage
     case popoverTopAgent
+    case popoverPeakAt
     case popoverSyncStatus
     case openDashboardAction
     case openSettingsAction
@@ -612,6 +616,9 @@ private let englishDictionary: [LocalizedKey: String] = [
     .tokenValue: "%@ tokens",
     .cacheHitRateValue: "%.1f%% cache hit rate",
     .distributionShare: "%.1f%% of total",
+    .peakUsage: "Peak",
+    .averageUsage: "Average",
+    .activeBuckets: "Active",
 
     // Sync freshness and loading/error presentation states
     .lastSynced: "Last synced",
@@ -648,6 +655,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     .popoverAccessibilityDescription: "Quick glance of today's token usage and estimated cost",
     .popoverNoUsage: "No usage today",
     .popoverTopAgent: "Top agent: %@",
+    .popoverPeakAt: "peak %@",
     .popoverSyncStatus: "Sync status: %@",
     .openDashboardAction: "Open Dashboard",
     .openSettingsAction: "Open Settings",
@@ -873,6 +881,9 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .tokenValue: "%@ Token",
     .cacheHitRateValue: "缓存命中率 %.1f%%",
     .distributionShare: "占总量 %.1f%%",
+    .peakUsage: "峰值",
+    .averageUsage: "均值",
+    .activeBuckets: "活跃区间",
 
     // Sync freshness and loading/error presentation states
     .lastSynced: "上次同步",
@@ -909,6 +920,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .popoverAccessibilityDescription: "快速查看今日 Token 用量和预估费用",
     .popoverNoUsage: "今日暂无用量",
     .popoverTopAgent: "主要 Agent：%@",
+    .popoverPeakAt: "峰值 %@",
     .popoverSyncStatus: "同步状态：%@",
     .openDashboardAction: "打开用量看板",
     .openSettingsAction: "打开设置",
