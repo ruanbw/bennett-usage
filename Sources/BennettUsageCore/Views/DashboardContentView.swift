@@ -1100,9 +1100,9 @@ public struct DashboardContentView: View {
         }
         let minutes = max(0, Int(Date().timeIntervalSince(lastDataRefreshAt) / 60))
         if minutes == 0 {
-            return localization.localized(.syncedJustNow)
+            return localization.localized(.dataUpdatedJustNow)
         }
-        return String(format: localization.localized(.syncedMinutesAgo), minutes)
+        return localization.localized(.dataUpdatedMinutesAgo, arguments: minutes)
     }
 
     // MARK: - Top Projects

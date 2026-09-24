@@ -122,7 +122,7 @@ public struct MenuBarPopoverView: View {
             HStack(spacing: 5) {
                 Image(systemName: "checkmark.circle")
                     .font(.system(size: 9, weight: .semibold))
-                Text(syncFreshnessText)
+                Text(dataFreshnessText)
                     .font(.caption2)
                 Spacer(minLength: 0)
             }
@@ -175,22 +175,22 @@ public struct MenuBarPopoverView: View {
         .background(.regularMaterial)
     }
 
-    private var syncFreshnessText: String {
+    private var dataFreshnessText: String {
         guard let lastRefreshedAt = model.lastRefreshedAt else {
             return localization.localized(.noToolsActiveToday)
         }
         let minutes = max(0, Int(Date().timeIntervalSince(lastRefreshedAt) / 60))
         if minutes == 0 {
-            return localization.localized(.syncedJustNow)
+            return localization.localized(.dataUpdatedJustNow)
         }
-        return String(format: localization.localized(.syncedMinutesAgo), minutes)
+        return localization.localized(.dataUpdatedMinutesAgo, arguments: minutes)
     }
 
     private func glanceTrend(points: [TrendPoint]) -> some View {
         let total = points.reduce(0) { $0 + $1.tokens }
         return VStack(alignment: .leading, spacing: 7) {
             HStack {
-                Text(localization.localized(.tokenActivity, arguments: ""))
+                Text(localization.localized(.hourlyTrendToday))
                     .font(AppTheme.Typography.label)
                     .foregroundColor(AppTheme.Text.secondary)
                 Spacer()
@@ -202,7 +202,7 @@ public struct MenuBarPopoverView: View {
             SparkLine(points: points)
                 .fill(AppTheme.Chart.primaryLine.gradient)
                 .frame(height: 32)
-                .accessibilityLabel(localization.localized(.tokenActivity, arguments: ""))
+                .accessibilityLabel(localization.localized(.hourlyTrendToday))
                 .accessibilityValue(TokenFormatter.formatFull(total))
         }
     }
@@ -242,6 +242,13 @@ public struct MenuBarPopoverView: View {
                         color: toolColors[tool.id] ?? AppTheme.Agent.knownColor(for: tool.id) ?? AppTheme.Harmonic.color(for: tool.id)
                     )
                 }
+                if active.count > 3 {
+                    Text(localization.localized(.moreToolsCount, arguments: active.count - 3))
+                        .font(.caption)
+                        .foregroundColor(AppTheme.Text.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .accessibilityLabel(localization.localized(.moreToolsCount, arguments: active.count - 3))
+                }
             }
         }
     }
@@ -250,6 +257,10 @@ public struct MenuBarPopoverView: View {
 
     private func miniDistributionBar(active: [ActiveTool], toolColors: [String: Color]) -> some View {
         let totalActive = active.reduce(0) { $0 + $1.tokens }
+        let accessibilityValue = Self.distributionAccessibilityValue(
+            for: active,
+            localization: localization
+        )
         return GeometryReader { proxy in
             let totalWidth = proxy.size.width
             if active.isEmpty || totalActive <= 0 {
@@ -273,6 +284,25 @@ public struct MenuBarPopoverView: View {
             }
         }
         .frame(height: 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(localization.localized(.toolBreakdownToday))
+        .accessibilityValue(accessibilityValue)
+    }
+
+    static func distributionAccessibilityValue(
+        for active: [ActiveTool],
+        localization: LocalizationManager
+    ) -> String {
+        let totalTokens = active.reduce(0) { $0 + $1.tokens }
+        guard totalTokens > 0 else { return localization.localized(.noToolsActiveToday) }
+
+        let tokenUnit = localization.localized(.tokenUnit)
+        return active.map { tool in
+            let name = AgentFilterBarView.displayName(for: tool.id)
+            let share = Double(tool.tokens) / Double(totalTokens) * 100
+            let shareText = localization.localized(.distributionShare, arguments: share)
+            return "\(name), \(TokenFormatter.formatFull(tool.tokens)) \(tokenUnit), \(shareText)"
+        }.joined(separator: ", ")
     }
 
     // MARK: - Tool Row
@@ -290,10 +320,10 @@ public struct MenuBarPopoverView: View {
             Text(tokens > 0 ? TokenFormatter.formatCompact(tokens) : "-")
                 .font(.caption.monospacedDigit())
                 .foregroundColor(tokens > 0 ? AppTheme.Text.secondary : AppTheme.Text.quaternary)
-                .help(tokens > 0 ? "\(TokenFormatter.formatFull(tokens)) tokens" : "")
+                .help(tokens > 0 ? "\(TokenFormatter.formatFull(tokens)) \(localization.localized(.tokenUnit))" : "")
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(name), \(TokenFormatter.formatFull(tokens)) tokens")
+        .accessibilityLabel("\(name), \(TokenFormatter.formatFull(tokens)) \(localization.localized(.tokenUnit))")
     }
 
     // MARK: - Update Banner

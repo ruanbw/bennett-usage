@@ -106,6 +106,32 @@ final class MenuBarPopoverViewTests: XCTestCase {
     }
 
     @MainActor
+    func testPopoverDistributionAccessibilityEnumeratesAllShares() {
+        let defaults = UserDefaults(suiteName: "MenuBarPopoverAccessibilityTests_\(UUID().uuidString)")!
+        let localization = LocalizationManager(userDefaults: defaults)
+        localization.setLanguage(.en)
+        let active = [
+            MenuBarPopoverView.ActiveTool(id: "claude", tokens: 40),
+            MenuBarPopoverView.ActiveTool(id: "cursor", tokens: 30),
+            MenuBarPopoverView.ActiveTool(id: "codex", tokens: 20),
+            MenuBarPopoverView.ActiveTool(id: "pi", tokens: 10)
+        ]
+
+        let value = MenuBarPopoverView.distributionAccessibilityValue(
+            for: active,
+            localization: localization
+        )
+
+        for tool in active {
+            XCTAssertTrue(value.contains(AgentFilterBarView.displayName(for: tool.id)))
+            XCTAssertTrue(value.contains("\(tool.tokens) tokens"))
+        }
+        XCTAssertTrue(value.contains("40.0% of total"))
+        XCTAssertTrue(value.contains("30.0% of total"))
+        XCTAssertTrue(value.contains("20.0% of total"))
+        XCTAssertTrue(value.contains("10.0% of total"))
+    }
+
     func testPopoverMiniDistributionActiveTools() throws {
         let summary = TodaySummary(
             totalTokens: 100_000,

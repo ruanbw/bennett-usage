@@ -32,6 +32,10 @@ public final class SettingsWindowManager: NSObject, NSWindowDelegate {
                 window = nil
                 isClosingWindow = false
             } else {
+                updateLocalizedTitle(localization: localization)
+                if existingWindow.isMiniaturized {
+                    existingWindow.deminiaturize(nil)
+                }
                 existingWindow.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
                 return
@@ -76,6 +80,10 @@ public final class SettingsWindowManager: NSObject, NSWindowDelegate {
 
     public func close() {
         window?.performClose(nil)
+    }
+
+    public func updateLocalizedTitle(localization: LocalizationManager = .shared) {
+        window?.title = localization.localized(.settings)
     }
 
     public func windowWillClose(_ notification: Notification) {
@@ -196,6 +204,10 @@ public final class DashboardWindowManager: NSObject, NSWindowDelegate {
     /// away; a later Dashboard request builds a new window.
     public func close() {
         window?.performClose(nil)
+    }
+
+    public func updateLocalizedTitle(localization: LocalizationManager = .shared) {
+        window?.title = localization.localized(.dashboardTitle)
     }
 
     // MARK: - NSWindowDelegate

@@ -1,5 +1,6 @@
 import AppKit
 import BennettUsageCore
+import Combine
 
 /// Retained command target for the accessory app's local application menu.
 ///
@@ -144,6 +145,19 @@ quitMenuItem.target = commandTarget
 applicationMenu.addItem(quitMenuItem)
 app.mainMenu = mainMenu
 
+let localizationObservation = LocalizationManager.shared.objectWillChange
+    .sink { _ in
+        Task { @MainActor in
+            let localization = LocalizationManager.shared
+            dashboardMenuItem.title = localization.localized(.navDashboard)
+            settingsMenuItem.title = localization.localized(.navSettings)
+            syncMenuItem.title = localization.localized(.syncNow)
+            quitMenuItem.title = localization.localized(.quit)
+            DashboardWindowManager.shared.updateLocalizedTitle(localization: localization)
+            SettingsWindowManager.shared.updateLocalizedTitle(localization: localization)
+        }
+    }
+
 let arguments = CommandLine.arguments
 let shouldOpenDashboard = arguments.contains("--dashboard")
     || arguments.contains("-d")
@@ -186,6 +200,6 @@ Task {
 
 // `commandTarget` is intentionally a top-level strong binding. It owns the
 // menu targets for the entire accessory-app lifetime.
-withExtendedLifetime(commandTarget) {
+withExtendedLifetime((commandTarget, localizationObservation)) {
     app.run()
 }

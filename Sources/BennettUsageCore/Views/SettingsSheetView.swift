@@ -26,7 +26,14 @@ public struct SettingsSheetView: View {
             initialCategory: initialCategory,
             onDismiss: onDismiss
         )
-        .frame(width: 750, height: 510)
+        .frame(
+            minWidth: 750,
+            idealWidth: 750,
+            maxWidth: .infinity,
+            minHeight: 510,
+            idealHeight: 510,
+            maxHeight: .infinity
+        )
         .background(AppTheme.Canvas.background)
     }
 }

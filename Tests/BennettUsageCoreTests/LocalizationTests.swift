@@ -61,6 +61,18 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(manager.localized(.tokenUnit), "Token")
     }
 
+    func testQueryFreshnessAndOverflowCopyIsBilingual() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+
+        XCTAssertEqual(manager.localized(.dataUpdatedJustNow, language: .en), "Data updated just now")
+        XCTAssertEqual(manager.localized(.dataUpdatedMinutesAgo, language: .en, arguments: 5), "Data updated 5 mins ago")
+        XCTAssertEqual(manager.localized(.moreToolsCount, language: .en, arguments: 2), "+2 More")
+
+        XCTAssertEqual(manager.localized(.dataUpdatedJustNow, language: .zh), "数据刚刚更新")
+        XCTAssertEqual(manager.localized(.dataUpdatedMinutesAgo, language: .zh, arguments: 5), "数据更新于 5 分钟前")
+        XCTAssertEqual(manager.localized(.moreToolsCount, language: .zh, arguments: 2), "+2 更多")
+    }
+
     func testTranslationWithArguments() {
         let manager = LocalizationManager(userDefaults: testDefaults)
 
@@ -226,6 +238,8 @@ final class LocalizationTests: XCTestCase {
             .rescanNow,
             .syncedJustNow,
             .syncedMinutesAgo,
+            .dataUpdatedJustNow,
+            .dataUpdatedMinutesAgo,
             .filterAllAgents,
             .allAgentsUsage,
             .clearFocus,
@@ -273,7 +287,8 @@ final class LocalizationTests: XCTestCase {
             .viewingAnnualDashboard,
             .exitAnnualDashboard,
             .calendarView,
-            .monthlyTrend
+            .monthlyTrend,
+            .moreToolsCount
         ]
 
         for key in requiredKeys {

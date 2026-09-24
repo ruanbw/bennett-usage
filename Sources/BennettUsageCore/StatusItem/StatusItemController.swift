@@ -13,7 +13,10 @@ public final class StatusItemController: NSObject {
     private let syncCoordinator: SyncCoordinator
     private let summaryModel = StatusSummaryModel()
     private let updateChecker: UpdateChecker
-    private var lastSyncDate: Date?
+    /// The last fully successful source sync shown in the status item.
+    /// Kept internal so tests can verify that normal partial-failure returns do
+    /// not fabricate a successful timestamp.
+    private(set) var lastSyncDate: Date?
     private let openDashboardAction: () -> Void
     private let openSettingsAction: () -> Void
     private let localization: LocalizationManager
@@ -21,6 +24,7 @@ public final class StatusItemController: NSObject {
     private var heartbeatTask: Task<Void, Never>?
     private var updateObservation: AnyCancellable?
     private var localizationObservation: AnyCancellable?
+    private var syncStatusObservation: AnyCancellable?
 
     public init(
         aggregator: MetricsAggregator,
@@ -73,6 +77,13 @@ public final class StatusItemController: NSObject {
                     self?.applyStatusItemAppearance()
                 }
             }
+        syncStatusObservation = NotificationCenter.default.publisher(for: .bennettUsageSyncStatusDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.updateDisplayedSyncStatus()
+                }
+            }
         refreshData()
 
         if let heartbeatInterval, heartbeatInterval > 0 {
@@ -82,6 +93,7 @@ public final class StatusItemController: NSObject {
                     guard !Task.isCancelled else { break }
                     _ = try? await syncCoordinator.syncForUI(minInterval: 10)
                     guard !Task.isCancelled, let self else { break }
+                    self.recordSuccessfulSync()
                     self.refreshData()
                 }
             }
@@ -200,6 +212,7 @@ public final class StatusItemController: NSObject {
         Task {
             do {
                 _ = try await syncCoordinator.syncForUI()
+                recordSuccessfulSync()
             } catch {
                 // Keep the previous last-sync time when a sync attempt fails;
                 // the cached summary remains useful while the watcher retries.
@@ -298,11 +311,24 @@ public final class StatusItemController: NSObject {
         return localization.localized(.syncedMinutesAgo, arguments: minutes)
     }
 
-    /// Records a sync that the coordinator has actually completed. Callers
-    /// should invoke this only after awaiting a real sync operation; a display
-    /// refresh or a throttled no-op is not proof that ingestion ran.
+    /// Re-reads the coordinator's completed status before recording a sync.
+    /// The synchronous API remains source-compatible for existing callers, but
+    /// a normal return from a partially failed sync no longer implies success.
     public func recordSuccessfulSync() {
-        lastSyncDate = Date()
+        Task { [weak self] in
+            await self?.updateDisplayedSyncStatus()
+        }
+    }
+
+    func updateDisplayedSyncStatus() async {
+        let status = await syncCoordinator.currentSyncStatus()
+        guard status.phase == .idle,
+              status.failures.isEmpty,
+              let lastSuccessfulAt = status.lastSuccessfulAt else {
+            return
+        }
+        guard lastSyncDate != lastSuccessfulAt else { return }
+        lastSyncDate = lastSuccessfulAt
         applyStatusItemAppearance()
     }
 

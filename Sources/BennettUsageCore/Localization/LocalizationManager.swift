@@ -113,6 +113,7 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case quit
     case openDashboardShortcut
     case statusItemAccessibility
+    case moreToolsCount
 
     // Navigation & Redesign
     case navDashboard
@@ -121,6 +122,8 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case rescanNow
     case syncedJustNow
     case syncedMinutesAgo
+    case dataUpdatedJustNow
+    case dataUpdatedMinutesAgo
     case filterAllAgents
     case allAgentsUsage
     case clearFocus
@@ -488,6 +491,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     .quit: "Quit",
     .openDashboardShortcut: "Open Dashboard (⌘D)",
     .statusItemAccessibility: "Bennett Usage",
+    .moreToolsCount: "+%d More",
 
     // Navigation & Redesign
     .navDashboard: "Dashboard",
@@ -496,6 +500,8 @@ private let englishDictionary: [LocalizedKey: String] = [
     .rescanNow: "Sync Now",
     .syncedJustNow: "Synced just now",
     .syncedMinutesAgo: "Synced %d mins ago",
+    .dataUpdatedJustNow: "Data updated just now",
+    .dataUpdatedMinutesAgo: "Data updated %d mins ago",
     .filterAllAgents: "All Agents",
     .allAgentsUsage: "All Agents Usage",
     .clearFocus: "Clear Focus",
@@ -741,6 +747,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .quit: "退出",
     .openDashboardShortcut: "打开数据看板 (⌘D)",
     .statusItemAccessibility: "Bennett Usage",
+    .moreToolsCount: "+%d 更多",
 
     // Navigation & Redesign
     .navDashboard: "用量看板",
@@ -749,6 +756,8 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .rescanNow: "立即同步",
     .syncedJustNow: "刚刚同步",
     .syncedMinutesAgo: "%d 分钟前同步",
+    .dataUpdatedJustNow: "数据刚刚更新",
+    .dataUpdatedMinutesAgo: "数据更新于 %d 分钟前",
     .filterAllAgents: "全部 Agent",
     .allAgentsUsage: "所有 Agent 用量",
     .clearFocus: "清除聚焦",

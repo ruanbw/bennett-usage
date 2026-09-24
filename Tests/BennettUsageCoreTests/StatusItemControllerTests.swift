@@ -10,6 +10,7 @@ private final class MockHeartbeatAdapter: AgentSourceAdapter, @unchecked Sendabl
     let path: URL
 
     var fetchCallCount = 0
+    var shouldFail = false
 
     init(path: URL) {
         self.path = path
@@ -21,8 +22,11 @@ private final class MockHeartbeatAdapter: AgentSourceAdapter, @unchecked Sendabl
 
     func fetchIncrementalRecords(from directory: URL, since cursor: SyncCursor?) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
         fetchCallCount += 1
+        if shouldFail { throw MockError.expected }
         return ([], .rowId(1))
     }
+
+    private enum MockError: Error { case expected }
 }
 
 @MainActor
@@ -60,6 +64,41 @@ final class StatusItemControllerTests: XCTestCase {
 
         try await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertNotNil(controller)
+    }
+
+    func testStatusItemUsesOnlyFullySuccessfulCoordinatorTimestamp() async throws {
+        let db = try DatabaseManager.inMemory()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let registry = AdapterRegistry()
+        let adapter = MockHeartbeatAdapter(path: directory)
+        registry.register(adapter)
+        let aggregator = MetricsAggregator(database: db)
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+        let controller = StatusItemController(
+            aggregator: aggregator,
+            syncCoordinator: coordinator,
+            heartbeatInterval: nil
+        )
+
+        _ = try await coordinator.syncAll()
+        let successfulStatus = await coordinator.currentSyncStatus()
+        controller.recordSuccessfulSync()
+        await controller.updateDisplayedSyncStatus()
+        let displayedSuccess = try XCTUnwrap(controller.lastSyncDate)
+        XCTAssertEqual(displayedSuccess, successfulStatus.lastSuccessfulAt)
+
+        try await Task.sleep(nanoseconds: 20_000_000)
+        adapter.shouldFail = true
+        _ = try await coordinator.syncAll()
+        controller.recordSuccessfulSync()
+        await controller.updateDisplayedSyncStatus()
+        let failedStatus = await coordinator.currentSyncStatus()
+
+        XCTAssertEqual(failedStatus.failures, [SyncFailureSummary(sourceId: adapter.sourceId, stage: .fetch)])
+        XCTAssertEqual(controller.lastSyncDate, displayedSuccess)
     }
 
     func testPeriodicHeartbeatTriggersSync() async throws {
