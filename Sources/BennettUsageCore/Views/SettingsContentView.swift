@@ -114,6 +114,8 @@ public struct SettingsContentView: View {
     @State private var exchangeRateText: String = ""
     @State private var selectedCurrency: PreferredCurrency = .usd
     @State private var autoRefreshSeconds: Int = 0
+    @AppStorage(AppThemeMode.storageKey)
+    private var themeModeRaw: String = AppThemeMode.dark.rawValue
     @State private var isShowingClearAlert: Bool = false
     @State private var isRebuilding = false
     @State private var isClearingRecords = false
@@ -158,6 +160,18 @@ public struct SettingsContentView: View {
         }
     }
 
+    private var themeModeBinding: Binding<AppThemeMode> {
+        Binding(
+            get: { Self.resolvedThemeMode(rawValue: themeModeRaw) },
+            set: { themeModeRaw = $0.rawValue }
+        )
+    }
+
+    static func resolvedThemeMode(rawValue: String?) -> AppThemeMode {
+        guard let rawValue else { return .dark }
+        return AppThemeMode(rawValue: rawValue) ?? .dark
+    }
+
     public var body: some View {
         HStack(spacing: 0) {
             sidebarView
@@ -190,6 +204,9 @@ public struct SettingsContentView: View {
         }
         .onChange(of: autoRefreshSeconds) { _, newValue in
             UserDefaults.standard.set(newValue, forKey: "bennett_auto_refresh_seconds")
+        }
+        .onChange(of: themeModeRaw) { _, newValue in
+            AppThemeMode(rawValue: newValue)?.apply(to: .shared)
         }
     }
 
@@ -391,6 +408,31 @@ public struct SettingsContentView: View {
                     }
                 }
                 .padding(.vertical, 4)
+
+                rowDivider
+
+                // Appearance row
+                HStack(spacing: 12) {
+                    cardRowIcon("circle.lefthalf.filled", color: AppTheme.Agent.claude)
+                    Text(localization.localized(.appearance))
+                        .font(.body.weight(.medium))
+                        .foregroundColor(AppTheme.Text.primary)
+                        .lineLimit(1)
+                    Spacer(minLength: 12)
+                    Picker(localization.localized(.appearance), selection: themeModeBinding) {
+                        ForEach(AppThemeMode.allCases) { mode in
+                            Text(mode.localizedTitle(localization: localization))
+                                .tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 220)
+                    .controlSize(.small)
+                    .accessibilityIdentifier(Self.themePickerID)
+                }
+                .frame(minHeight: 44)
+                .padding(.vertical, 2)
 
                 rowDivider
 
@@ -845,6 +887,7 @@ public struct SettingsContentView: View {
     // MARK: - Update Check Card
 
     /// Stable identifiers so the settings tests can reach the new controls.
+    static let themePickerID = "settings.general.themePicker"
     static let autoCheckToggleID = "settings.update.autoCheck"
     static let checkNowButtonID = "settings.update.checkNow"
     static let downloadUpdateButtonID = "settings.update.download"

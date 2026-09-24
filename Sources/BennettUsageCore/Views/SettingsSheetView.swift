@@ -6,6 +6,8 @@ public struct SettingsSheetView: View {
     @ObservedObject public var localization: LocalizationManager
     public let initialCategory: SettingsCategory
     public let onDismiss: () -> Void
+    @AppStorage(AppThemeMode.storageKey)
+    private var themeModeRaw: String = AppThemeMode.dark.rawValue
 
     public init(
         aggregator: MetricsAggregator? = nil,
@@ -26,6 +28,7 @@ public struct SettingsSheetView: View {
             initialCategory: initialCategory,
             onDismiss: onDismiss
         )
+        .preferredColorScheme(AppThemeMode(rawValue: themeModeRaw)?.colorScheme)
         .frame(
             minWidth: 750,
             idealWidth: 750,

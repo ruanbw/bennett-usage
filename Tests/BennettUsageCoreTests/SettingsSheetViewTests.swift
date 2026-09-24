@@ -125,6 +125,78 @@ final class SettingsSheetViewTests: XCTestCase {
     }
 
     @MainActor
+    func testThemeModeDefaultAndPersistedModes() {
+        let originalRawValue = UserDefaults.standard.string(forKey: AppThemeMode.storageKey)
+        defer {
+            if let originalRawValue {
+                UserDefaults.standard.set(originalRawValue, forKey: AppThemeMode.storageKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: AppThemeMode.storageKey)
+            }
+        }
+        UserDefaults.standard.removeObject(forKey: AppThemeMode.storageKey)
+
+        XCTAssertEqual(SettingsContentView.resolvedThemeMode(rawValue: nil), .dark)
+        XCTAssertEqual(SettingsContentView.resolvedThemeMode(rawValue: "invalid"), .dark)
+        XCTAssertEqual(SettingsContentView.resolvedThemeMode(rawValue: AppThemeMode.system.rawValue), .system)
+        XCTAssertEqual(SettingsContentView.resolvedThemeMode(rawValue: AppThemeMode.dark.rawValue), .dark)
+        XCTAssertEqual(SettingsContentView.resolvedThemeMode(rawValue: AppThemeMode.light.rawValue), .light)
+
+        let manager = LocalizationManager(userDefaults: testDefaults)
+        let view = SettingsContentView(
+            aggregator: aggregator,
+            localization: manager,
+            onDismiss: {}
+        )
+        XCTAssertNotNil(view.body)
+        XCTAssertNil(
+            UserDefaults.standard.string(forKey: AppThemeMode.storageKey),
+            "Reading a missing preference must not create a stored value"
+        )
+    }
+
+    @MainActor
+    func testThemeModeTitlesAndLocalizationParity() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+        let expectedEnglishTitles: [AppThemeMode: String] = [
+            .system: "Follow System",
+            .dark: "Dark",
+            .light: "Light"
+        ]
+        let expectedChineseTitles: [AppThemeMode: String] = [
+            .system: "跟随系统",
+            .dark: "深色",
+            .light: "浅色"
+        ]
+
+        manager.setLanguage(.en)
+        for mode in AppThemeMode.allCases {
+            XCTAssertEqual(
+                mode.localizedTitle(localization: manager),
+                expectedEnglishTitles[mode]
+            )
+        }
+
+        manager.setLanguage(.zh)
+        for mode in AppThemeMode.allCases {
+            XCTAssertEqual(
+                mode.localizedTitle(localization: manager),
+                expectedChineseTitles[mode]
+            )
+        }
+
+        let themeKeys: [LocalizedKey] = [.themeSystem, .themeDark, .themeLight]
+        for key in themeKeys {
+            let english = manager.localized(key, language: .en)
+            let chinese = manager.localized(key, language: .zh)
+            XCTAssertFalse(english.isEmpty, "Missing English translation for \(key.rawValue)")
+            XCTAssertFalse(chinese.isEmpty, "Missing Chinese translation for \(key.rawValue)")
+            XCTAssertNotEqual(english, key.rawValue)
+            XCTAssertNotEqual(chinese, key.rawValue)
+        }
+    }
+
+    @MainActor
     func testLanguageSwitchingInSettingsSheet() {
         let manager = LocalizationManager(userDefaults: testDefaults)
         XCTAssertEqual(manager.selectedLanguage, .system)
@@ -252,6 +324,14 @@ final class SettingsSheetViewTests: XCTestCase {
     }
 
     @MainActor
+    private func segmentedControls(in view: NSView) -> [NSSegmentedControl] {
+        var found: [NSSegmentedControl] = []
+        if let control = view as? NSSegmentedControl { found.append(control) }
+        for sub in view.subviews { found.append(contentsOf: segmentedControls(in: sub)) }
+        return found
+    }
+
+    @MainActor
     private func valueLabel(in control: SettingsMenuControl) -> NSView? {
         for sub in control.subviews where sub.identifier?.rawValue == "settings.menu.value" {
             return sub
@@ -282,6 +362,43 @@ final class SettingsSheetViewTests: XCTestCase {
                 XCTAssertGreaterThan(labelFrame.minX, 0)
             }
         }
+    }
+
+    @MainActor
+    func testGeneralPaneThemePickerHasThreeLocalizedOptions() {
+        let originalRawValue = UserDefaults.standard.string(forKey: AppThemeMode.storageKey)
+        defer {
+            if let originalRawValue {
+                UserDefaults.standard.set(originalRawValue, forKey: AppThemeMode.storageKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: AppThemeMode.storageKey)
+            }
+        }
+        UserDefaults.standard.removeObject(forKey: AppThemeMode.storageKey)
+
+        let manager = LocalizationManager(userDefaults: testDefaults)
+        manager.setLanguage(.en)
+        let hosting = hostedGeneralPane(localization: manager)
+
+        let controls = segmentedControls(in: hosting)
+        XCTAssertEqual(controls.count, 1, "general pane should expose one segmented theme picker")
+        guard let picker = controls.first else {
+            return XCTFail("theme picker not found")
+        }
+        XCTAssertEqual(picker.segmentCount, 3)
+        XCTAssertEqual(
+            (0..<picker.segmentCount).map { picker.label(forSegment: $0) },
+            ["Follow System", "Dark", "Light"]
+        )
+
+        manager.setLanguage(.zh)
+        hosting.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertEqual(
+            (0..<picker.segmentCount).map { picker.label(forSegment: $0) },
+            ["跟随系统", "深色", "浅色"]
+        )
     }
 
     @MainActor
@@ -323,7 +440,7 @@ final class SettingsSheetViewTests: XCTestCase {
         let hosting = hostedGeneralPane(localization: manager)
 
         let controls = menuControls(in: hosting)
-        XCTAssertEqual(controls.count, 2)
+        XCTAssertEqual(controls.count, 2, "the theme picker is segmented and must not add a menu control")
         guard let languageControl = controls.first else {
             return XCTFail("language dropdown not found")
         }

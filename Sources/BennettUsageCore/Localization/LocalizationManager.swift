@@ -33,6 +33,10 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case language
     case version
     case systemDefault
+    case appearance
+    case themeSystem
+    case themeDark
+    case themeLight
     case aboutDescription
 
     // Dashboard Header & Range Picker
@@ -411,6 +415,10 @@ private let englishDictionary: [LocalizedKey: String] = [
     .language: "Language",
     .version: "Version",
     .systemDefault: "System Default",
+    .appearance: "Appearance",
+    .themeSystem: "Follow System",
+    .themeDark: "Dark",
+    .themeLight: "Light",
     .aboutDescription: "Unified local AI agent token usage, activity, and cost tracking for macOS.",
 
     // Dashboard Header & Range Picker
@@ -667,6 +675,10 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .language: "语言",
     .version: "版本",
     .systemDefault: "跟随系统",
+    .appearance: "外观",
+    .themeSystem: "跟随系统",
+    .themeDark: "深色",
+    .themeLight: "浅色",
     .aboutDescription: "专为 macOS 设计的本地 AI Agent Token 消耗、活跃度与费用统一追踪面板。",
 
     // Dashboard Header & Range Picker
