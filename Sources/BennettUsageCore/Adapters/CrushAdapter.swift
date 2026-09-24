@@ -7,9 +7,10 @@ import SQLite3
 /// `data_dir` can contain a `crush.db`. The database stores cumulative usage on
 /// top-level sessions, so every scan compares the current snapshot with the
 /// cursor and emits either a first full snapshot or a non-negative delta. The
-/// per-database/per-session state is encoded in `fileOffsets`; database
-/// replacement is surfaced as `databaseIdentity` so SyncCoordinator performs
-/// its existing cutover before any new records are ingested.
+/// per-database/per-session state is encoded in `fileOffsets`; a database that
+/// is registered but temporarily absent keeps its identity placeholder in the
+/// aggregate, while a real replacement is surfaced as `databaseIdentity` so
+/// SyncCoordinator performs its existing cutover before new records are ingested.
 public struct CrushAdapter: AgentSourceAdapter, @unchecked Sendable {
     public let sourceId: String = "crush"
     public let displayName: String = "Crush"
@@ -117,25 +118,25 @@ public struct CrushAdapter: AgentSourceAdapter, @unchecked Sendable {
     }
 
     public func auxiliaryWatchRoots(for dataRoot: URL) -> [URL] {
-        let projects = parseProjects(at: Self.projectsFileURL(under: dataRoot))
+        let projects = parseProjects(at: Self.projectsFileURL(under: dataRoot)) ?? []
         var seen = Set<String>()
         return projects.compactMap { project in
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(
-                atPath: project.dataDirectory.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-                return nil
-            }
-            return seen.insert(project.dataDirectory.standardizedFileURL.path).inserted
-                ? project.dataDirectory
-                : nil
+            let dataDirectory = Self.canonicalURL(project.dataDirectory)
+            guard seen.insert(dataDirectory.path).inserted else { return nil }
+            // The Coordinator watches the nearest existing ancestor of a root
+            // that is not present yet. Keep registered but missing data dirs in
+            // this list so creating one later can trigger another scan.
+            return dataDirectory
         }
     }
 
-    private func parseProjects(at projectsFile: URL) -> [Project] {
+    /// Return nil when the registry cannot be read, so a transiently missing or
+    /// malformed projects.json does not look like a real registry removal.
+    private func parseProjects(at projectsFile: URL) -> [Project]? {
         guard let data = try? Data(contentsOf: projectsFile),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let entries = root["projects"] as? [[String: Any]] else {
-            return []
+            return nil
         }
         let globalRoot = projectsFile.deletingLastPathComponent()
         return entries.compactMap { entry in
@@ -151,12 +152,13 @@ public struct CrushAdapter: AgentSourceAdapter, @unchecked Sendable {
             let expanded = URL(fileURLWithPath: (rawDataDirectory as NSString).expandingTildeInPath)
             let dataDirectory: URL
             if expanded.path.hasPrefix("/") {
-                dataDirectory = expanded.standardizedFileURL
+                dataDirectory = Self.canonicalURL(expanded)
             } else if !projectPath.isEmpty {
-                dataDirectory = URL(fileURLWithPath: projectPath)
-                    .appendingPathComponent(expanded.path).standardizedFileURL
+                dataDirectory = Self.canonicalURL(
+                    URL(fileURLWithPath: projectPath).appendingPathComponent(expanded.path)
+                )
             } else {
-                dataDirectory = globalRoot.appendingPathComponent(expanded.path).standardizedFileURL
+                dataDirectory = Self.canonicalURL(globalRoot.appendingPathComponent(expanded.path))
             }
             return Project(path: projectPath, dataDirectory: dataDirectory)
         }
@@ -171,44 +173,58 @@ public struct CrushAdapter: AgentSourceAdapter, @unchecked Sendable {
         var offsets: [String: Int64] = [:]
         if case .fileOffsets(let stored) = cursor { offsets = stored }
 
-        let projects = parseProjects(at: Self.projectsFileURL(under: directory))
+        guard let projects = parseProjects(at: Self.projectsFileURL(under: directory)) else {
+            // projects.json can be replaced while Crush is writing it. Keep the
+            // prior state until the registry can be parsed again.
+            return ([], .fileOffsets(offsets))
+        }
+
         var databases: [Database] = []
+        var seenDatabaseURLs = Set<String>()
         var seenDatabaseKeys = Set<String>()
 
         for project in projects {
-            let databaseURL = project.dataDirectory.appendingPathComponent("crush.db").standardizedFileURL
-            guard Self.isRegularFile(databaseURL) else { continue }
+            let databaseURL = Self.canonicalURL(
+                project.dataDirectory.appendingPathComponent("crush.db")
+            )
+            // Registry aliases can resolve to one physical database. Preserve
+            // the first mapping so a stable database path always has a stable
+            // project attribution.
+            guard seenDatabaseURLs.insert(databaseURL.path).inserted else { continue }
+
             let pathHash = Self.stableHash(databaseURL.path)
             let identityKey = Self.databaseIdentityKey(pathHash: pathHash)
             seenDatabaseKeys.insert(identityKey)
-            guard let (identity, sessions) = Self.readDatabase(at: databaseURL) else {
-                // A transient lock or an in-flight database replacement must
-                // not advance this database's state. Keep its prior identity in
-                // the aggregate so another readable project can still sync.
-                if let previousIdentity = offsets[identityKey] {
-                    databases.append(Database(
-                        url: databaseURL,
-                        projectPath: project.path,
-                        identity: previousIdentity,
-                        sessions: []
-                    ))
-                }
-                continue
+
+            if Self.isRegularFile(databaseURL),
+               let (identity, sessions) = Self.readDatabase(at: databaseURL) {
+                databases.append(Database(
+                    url: databaseURL,
+                    projectPath: project.path,
+                    identity: identity,
+                    sessions: sessions
+                ))
+            } else {
+                // A missing data_dir, locked database, or in-flight replacement
+                // remains part of the aggregate. Reuse its last known identity
+                // when available so a transient absence is not a source-wide
+                // cutover; a never-seen database gets a deterministic
+                // placeholder until it becomes readable.
+                databases.append(Database(
+                    url: databaseURL,
+                    projectPath: project.path,
+                    identity: offsets[identityKey]
+                        ?? Self.placeholderDatabaseIdentity(for: databaseURL),
+                    sessions: []
+                ))
             }
-            databases.append(Database(
-                url: databaseURL,
-                projectPath: project.path,
-                identity: identity,
-                sessions: sessions
-            ))
-        }
-        if databases.isEmpty, Self.hasAnyStoredDatabaseState(offsets) {
-            return ([], .fileOffsets(offsets))
         }
 
         // A changed database set, path mapping, inode, or schema requires the
         // coordinator's existing databaseIdentity cutover. Do not emit a delta
         // in the same fetch: the coordinator refetches from nil after clearing.
+        // Missing registered databases are represented above, so this path is
+        // reached only for a real registry removal or identity change.
         let currentIdentity = Self.aggregateIdentity(databases)
         if let previousIdentity = offsets[Self.identityKey], previousIdentity != currentIdentity,
            Self.hasAnyStoredDatabaseState(offsets) {
@@ -261,7 +277,7 @@ public struct CrushAdapter: AgentSourceAdapter, @unchecked Sendable {
                     timestamp: timestamp,
                     timestampSource: .sourceModified,
                     sessionKey: session.id,
-                    projectFolder: database.projectPath.isEmpty ? nil : database.projectPath,
+                    projectFolder: database.projectPath.isEmpty ? database.url.path : database.projectPath,
                     // A session can contain messages from different models, so
                     // never attribute its cumulative total to any one message.
                     model: "crush",
@@ -396,6 +412,14 @@ public struct CrushAdapter: AgentSourceAdapter, @unchecked Sendable {
     }
 
     // MARK: - Stable state keys
+
+    private static func canonicalURL(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    private static func placeholderDatabaseIdentity(for url: URL) -> Int64 {
+        Int64(bitPattern: stableHash("crush.missing:\(url.path)"))
+    }
 
     private static func databaseIdentityKey(pathHash: UInt64) -> String {
         "crush.db.identity.\(pathHash)"

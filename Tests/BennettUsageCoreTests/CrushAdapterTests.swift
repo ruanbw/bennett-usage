@@ -74,6 +74,85 @@ final class CrushAdapterTests: XCTestCase {
         XCTAssertEqual(Set(result.records.map(\.inputTokens)), [10, 20])
     }
 
+    func testSymlinkAliasesImportOneDatabaseWithStableProjectMapping() async throws {
+        let global = tempDir.appendingPathComponent("global")
+        let data = tempDir.appendingPathComponent("data")
+        let alias = tempDir.appendingPathComponent("data-alias")
+        let projectA = tempDir.appendingPathComponent("project-a")
+        let projectB = tempDir.appendingPathComponent("project-b")
+        try createDatabase(at: data, sessions: [session("shared", 10, 2, 0.1, 100, 90)])
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: data)
+        try writeProjects(global, [(projectA.path, alias.path), (projectB.path, data.path)])
+
+        let adapter = CrushAdapter()
+        let result = try await adapter.fetchIncrementalRecords(from: global, since: nil)
+        XCTAssertEqual(result.records.count, 1)
+        XCTAssertEqual(result.records.first?.projectFolder, projectA.standardizedFileURL.path)
+        XCTAssertEqual(adapter.auxiliaryWatchRoots(for: global), [data.standardizedFileURL])
+
+        let repeated = try await adapter.fetchIncrementalRecords(from: global, since: result.newCursor)
+        XCTAssertTrue(repeated.records.isEmpty, "aliases must not import the same physical database twice")
+    }
+
+    func testMissingDatabaseKeepsAggregateUntilRegistryEntryIsRemoved() async throws {
+        let global = tempDir.appendingPathComponent("global")
+        let projectA = tempDir.appendingPathComponent("project-a")
+        let projectB = tempDir.appendingPathComponent("project-b")
+        let dataA = projectA.appendingPathComponent(".crush")
+        let dataB = projectB.appendingPathComponent(".crush")
+        try writeProjects(global, [(projectA.path, dataA.path), (projectB.path, dataB.path)])
+        try createDatabase(at: dataA, sessions: [session("a", 10, 2, 0.1, 100, 90)])
+        try createDatabase(at: dataB, sessions: [session("b", 20, 4, 0.2, 100, 90)])
+
+        let adapter = CrushAdapter()
+        let first = try await adapter.fetchIncrementalRecords(from: global, since: nil)
+        XCTAssertEqual(first.records.count, 2)
+        try FileManager.default.removeItem(at: dataB)
+
+        let temporarilyMissing = try await adapter.fetchIncrementalRecords(from: global, since: first.newCursor)
+        XCTAssertTrue(temporarilyMissing.records.isEmpty)
+        if case .databaseIdentity = temporarilyMissing.newCursor {
+            XCTFail("a missing registered database must not cut over the source")
+        }
+
+        try writeProjects(global, [(projectA.path, dataA.path)])
+        let removed = try await adapter.fetchIncrementalRecords(from: global, since: temporarilyMissing.newCursor)
+        guard case .databaseIdentity = removed.newCursor else {
+            return XCTFail("removing a registry entry must cut over the source")
+        }
+        let fresh = try await adapter.fetchIncrementalRecords(from: global, since: removed.newCursor)
+        XCTAssertEqual(fresh.records.count, 1)
+        XCTAssertEqual(fresh.records.first?.sessionKey, "a")
+    }
+
+    func testAuxiliaryWatchRootKeepsMissingDataDirUntilItIsCreated() async throws {
+        let global = tempDir.appendingPathComponent("global")
+        let data = tempDir.appendingPathComponent("not-created")
+        let project = tempDir.appendingPathComponent("project")
+        try writeProjects(global, [(project.path, data.path)])
+
+        let adapter = CrushAdapter()
+        XCTAssertEqual(adapter.auxiliaryWatchRoots(for: global), [data.standardizedFileURL])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: data.path))
+
+        try createDatabase(at: data, sessions: [session("created", 3, 1, 0.03, 100, 90)])
+        let result = try await adapter.fetchIncrementalRecords(from: global, since: nil)
+        XCTAssertEqual(result.records.count, 1)
+        XCTAssertEqual(result.records.first?.sessionKey, "created")
+    }
+
+    func testMissingProjectPathFallsBackToCanonicalDatabasePath() async throws {
+        let global = tempDir.appendingPathComponent("global")
+        let data = tempDir.appendingPathComponent("data")
+        let alias = tempDir.appendingPathComponent("data-alias")
+        try createDatabase(at: data, sessions: [session("fallback", 4, 2, 0.04, 100, 90)])
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: data)
+        try writeProjects(global, [("", alias.path)])
+
+        let result = try await CrushAdapter().fetchIncrementalRecords(from: global, since: nil)
+        XCTAssertEqual(result.records.first?.projectFolder, data.appendingPathComponent("crush.db").path)
+    }
+
     func testFirstRepeatSameSecondGrowthResetAndZeroCost() async throws {
         let global = tempDir.appendingPathComponent("global")
         let project = tempDir.appendingPathComponent("project")
@@ -187,7 +266,7 @@ final class CrushAdapterTests: XCTestCase {
         try writeProjects(global, [(tempDir.appendingPathComponent("present-project").path, present.path),
                                   (tempDir.appendingPathComponent("absent-project").path, absent.path)])
         try createDatabase(at: present, sessions: [session("s", 1, 1, 0, 10, 9)])
-        XCTAssertEqual(adapter.auxiliaryWatchRoots(for: global), [present.standardizedFileURL])
+        XCTAssertEqual(adapter.auxiliaryWatchRoots(for: global), [present.standardizedFileURL, absent.standardizedFileURL])
         let partial = try await adapter.fetchIncrementalRecords(from: global, since: bad.newCursor)
         XCTAssertEqual(partial.records.count, 1)
     }
