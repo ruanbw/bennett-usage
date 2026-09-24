@@ -259,6 +259,7 @@ public struct CrushAdapter: AgentSourceAdapter, @unchecked Sendable {
                     id: recordID,
                     sourceId: sourceId,
                     timestamp: timestamp,
+                    timestampSource: .sourceModified,
                     sessionKey: session.id,
                     projectFolder: database.projectPath.isEmpty ? nil : database.projectPath,
                     // A session can contain messages from different models, so

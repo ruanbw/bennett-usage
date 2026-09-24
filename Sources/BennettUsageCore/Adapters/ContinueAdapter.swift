@@ -159,6 +159,7 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
                 id: "continue_\(namespacedSessionId)_\(identity)_\(occurrence)",
                 sourceId: "continue",
                 timestamp: timestamp,
+                timestampSource: .sourceModified,
                 sessionKey: sessionId,
                 projectFolder: workspaceDirectory,
                 model: values.model ?? "unknown",

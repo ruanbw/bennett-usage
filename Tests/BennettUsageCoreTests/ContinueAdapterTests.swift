@@ -53,6 +53,7 @@ final class ContinueAdapterTests: XCTestCase {
         XCTAssertEqual(record.model, "vendor/model-redacted")
         XCTAssertNil(record.provider)
         XCTAssertEqual(record.timestamp.timeIntervalSince1970, modifiedAt.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(record.timestampSource, .sourceModified)
 
         let checkpoint = cursorEntries(result.newCursor)
         let checkpointPath = try XCTUnwrap(checkpoint.keys.first {

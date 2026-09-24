@@ -256,6 +256,7 @@ public struct KimiCodeAdapter: AgentSourceAdapter, @unchecked Sendable {
             id: "kimi_\(pathHash)_\(generation)_\(offset)_\(payloadHash)",
             sourceId: sourceId,
             timestamp: Date(timeIntervalSince1970: Double(milliseconds) / 1_000.0),
+            timestampSource: .event,
             sessionKey: sessionKey,
             // `agentId` identifies the wire's agent, but Kimi does not persist
             // a project/worktree field on usage.record and the path work key

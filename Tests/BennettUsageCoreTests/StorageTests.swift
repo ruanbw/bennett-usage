@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import BennettUsageCore
 
 final class StorageTests: XCTestCase {
@@ -6,6 +7,44 @@ final class StorageTests: XCTestCase {
 
     override func setUp() async throws {
         db = try DatabaseManager.inMemory()
+    }
+
+    func testTimestampSourceDefaultsToEventAndRoundTrips() throws {
+        let record = makeRollupTestRecord(input: 1, output: 1, cost: 0.01)
+        XCTAssertEqual(record.timestampSource, .event)
+        try db.insertRecords([record])
+        XCTAssertEqual(try db.fetchRecords(sinceTimestamp: 0).first?.timestampSource, .event)
+
+        let data = try JSONEncoder().encode(record)
+        let decoded = try JSONDecoder().decode(UnifiedTokenRecord.self, from: data)
+        XCTAssertEqual(decoded.timestampSource, .event)
+    }
+
+    func testLegacyDatabaseMigratesTimestampSourceAndRemainsReadable() throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("db").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        var legacy: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &legacy), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(legacy, """
+        CREATE TABLE unified_token_records (
+            id TEXT PRIMARY KEY, source_id TEXT NOT NULL, timestamp INTEGER NOT NULL,
+            day_key TEXT NOT NULL, session_key TEXT NOT NULL, project_folder TEXT,
+            model TEXT NOT NULL, provider TEXT, input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL,
+            cache_write_tokens INTEGER NOT NULL, total_tokens INTEGER NOT NULL,
+            cost_usd REAL NOT NULL DEFAULT 0.0
+        );
+        INSERT INTO unified_token_records VALUES
+            ('legacy', 'old', 1000, '1970-01-01', 'session', NULL, 'model', NULL, 1, 2, 0, 0, 3, 0.5);
+        """, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(legacy)
+
+        let database = try DatabaseManager(path: path)
+        let saved = try XCTUnwrap(try database.fetchRecords(sinceTimestamp: 0).first)
+        XCTAssertEqual(saved.id, "legacy")
+        XCTAssertEqual(saved.timestampSource, .event)
+        XCTAssertEqual(saved.totalTokens, 3)
     }
 
     func testInsertRecordsAndQueryDailyRollup() throws {

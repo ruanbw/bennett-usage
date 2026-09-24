@@ -42,9 +42,9 @@ public final class DatabaseManager: @unchecked Sendable {
 
     /// Column list of `unified_token_records` that `insertRecords` writes; the
     /// order must match `bindRecord`.
-    private static let insertColumnList = "(id, source_id, timestamp, day_key, session_key, project_folder, model, provider, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd)"
-    private static let insertColumnCount: Int32 = 14
-    /// Rows per multi-row INSERT: 14 columns × 50 rows = 700 bound parameters,
+    private static let insertColumnList = "(id, source_id, timestamp, timestamp_source, day_key, session_key, project_folder, model, provider, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd)"
+    private static let insertColumnCount: Int32 = 15
+    /// Rows per multi-row INSERT: 15 columns × 50 rows = 750 bound parameters,
     /// far below SQLite's parameter limit, and a batch needs only a handful of
     /// statement shapes.
     private static let insertChunkRows = 50
@@ -52,7 +52,7 @@ public final class DatabaseManager: @unchecked Sendable {
     private static let recordExistsSQL = "SELECT 1 FROM unified_token_records WHERE id = ?;"
     /// Full existing row used only by explicitly correction-capable adapters.
     private static let existingRecordSQL = """
-    SELECT source_id, timestamp, day_key, session_key, project_folder, model, provider,
+    SELECT source_id, timestamp, timestamp_source, day_key, session_key, project_folder, model, provider,
            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd
     FROM unified_token_records WHERE id = ?;
     """
@@ -60,10 +60,10 @@ public final class DatabaseManager: @unchecked Sendable {
     /// rows to reuse the same binding helper and column ordering as inserts.
     private static let updateRecordSQL = """
     UPDATE unified_token_records SET
-        source_id = ?2, timestamp = ?3, day_key = ?4, session_key = ?5,
-        project_folder = ?6, model = ?7, provider = ?8,
-        input_tokens = ?9, output_tokens = ?10, cache_read_tokens = ?11,
-        cache_write_tokens = ?12, total_tokens = ?13, cost_usd = ?14
+        source_id = ?2, timestamp = ?3, timestamp_source = ?4, day_key = ?5, session_key = ?6,
+        project_folder = ?7, model = ?8, provider = ?9,
+        input_tokens = ?10, output_tokens = ?11, cache_read_tokens = ?12,
+        cache_write_tokens = ?13, total_tokens = ?14, cost_usd = ?15
     WHERE id = ?1;
     """
     /// Constant-shape upserts routed through `cachedStatement` instead of
@@ -93,7 +93,7 @@ public final class DatabaseManager: @unchecked Sendable {
     private func insertRecordsSQL(rowCount: Int, ignoreConflicts: Bool = true) -> String {
         let memoKey = "\(rowCount)-\(ignoreConflicts)"
         if let memoized = insertStatementSQL[memoKey] { return memoized }
-        let boundRow = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        let boundRow = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         let values = Array(repeating: boundRow, count: rowCount).joined(separator: ", ")
         let conflictClause = ignoreConflicts ? "OR IGNORE " : ""
         let sql = "INSERT \(conflictClause)INTO unified_token_records \(Self.insertColumnList) VALUES \(values);"
@@ -105,25 +105,26 @@ public final class DatabaseManager: @unchecked Sendable {
         sqlite3_bind_text(stmt, baseParameter + 1, (r.id as NSString).utf8String, -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, baseParameter + 2, (r.sourceId as NSString).utf8String, -1, SQLITE_TRANSIENT)
         sqlite3_bind_int64(stmt, baseParameter + 3, Int64(r.timestamp.timeIntervalSince1970 * 1000))
-        sqlite3_bind_text(stmt, baseParameter + 4, (r.dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, baseParameter + 5, (r.sessionKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, baseParameter + 4, (r.timestampSource.rawValue as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, baseParameter + 5, (r.dayKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, baseParameter + 6, (r.sessionKey as NSString).utf8String, -1, SQLITE_TRANSIENT)
         if let pf = r.projectFolder {
-            sqlite3_bind_text(stmt, baseParameter + 6, (pf as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, baseParameter + 7, (pf as NSString).utf8String, -1, SQLITE_TRANSIENT)
         } else {
-            sqlite3_bind_null(stmt, baseParameter + 6)
+            sqlite3_bind_null(stmt, baseParameter + 7)
         }
-        sqlite3_bind_text(stmt, baseParameter + 7, (r.model as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, baseParameter + 8, (r.model as NSString).utf8String, -1, SQLITE_TRANSIENT)
         if let prov = r.provider {
-            sqlite3_bind_text(stmt, baseParameter + 8, (prov as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, baseParameter + 9, (prov as NSString).utf8String, -1, SQLITE_TRANSIENT)
         } else {
-            sqlite3_bind_null(stmt, baseParameter + 8)
+            sqlite3_bind_null(stmt, baseParameter + 9)
         }
-        sqlite3_bind_int(stmt, baseParameter + 9, Int32(r.inputTokens))
-        sqlite3_bind_int(stmt, baseParameter + 10, Int32(r.outputTokens))
-        sqlite3_bind_int(stmt, baseParameter + 11, Int32(r.cacheReadTokens))
-        sqlite3_bind_int(stmt, baseParameter + 12, Int32(r.cacheWriteTokens))
-        sqlite3_bind_int(stmt, baseParameter + 13, Int32(r.totalTokens))
-        sqlite3_bind_double(stmt, baseParameter + 14, r.rawCostUSD ?? 0.0)
+        sqlite3_bind_int(stmt, baseParameter + 10, Int32(r.inputTokens))
+        sqlite3_bind_int(stmt, baseParameter + 11, Int32(r.outputTokens))
+        sqlite3_bind_int(stmt, baseParameter + 12, Int32(r.cacheReadTokens))
+        sqlite3_bind_int(stmt, baseParameter + 13, Int32(r.cacheWriteTokens))
+        sqlite3_bind_int(stmt, baseParameter + 14, Int32(r.totalTokens))
+        sqlite3_bind_double(stmt, baseParameter + 15, r.rawCostUSD ?? 0.0)
     }
 
     public init(path: String) throws {
@@ -181,6 +182,7 @@ public final class DatabaseManager: @unchecked Sendable {
             id TEXT PRIMARY KEY,
             source_id TEXT NOT NULL,
             timestamp INTEGER NOT NULL,
+            timestamp_source TEXT NOT NULL DEFAULT 'event',
             day_key TEXT NOT NULL,
             session_key TEXT NOT NULL,
             project_folder TEXT,
@@ -229,6 +231,7 @@ public final class DatabaseManager: @unchecked Sendable {
         );
         """
         try execute(sql: sql)
+        try migrateTimestampSourceIfNeeded()
 
         // Self-heal: clean up legacy records where DSH source used "dsh" as model name or emitted duplicate projcache deltas
         var dshCorruptCheck: OpaquePointer?
@@ -240,6 +243,26 @@ public final class DatabaseManager: @unchecked Sendable {
             } else {
                 sqlite3_finalize(dshCorruptCheck)
             }
+        }
+    }
+
+    private func migrateTimestampSourceIfNeeded() throws {
+        let sql = "PRAGMA table_info(unified_token_records);"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw NSError(domain: "DatabaseManager", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to inspect unified_token_records schema: \(lastErrorMessage())"])
+        }
+        defer { sqlite3_finalize(statement) }
+        var hasTimestampSource = false
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let name = sqlite3_column_text(statement, 1),
+               String(cString: name) == "timestamp_source" {
+                hasTimestampSource = true
+                break
+            }
+        }
+        if !hasTimestampSource {
+            try execute(sql: "ALTER TABLE unified_token_records ADD COLUMN timestamp_source TEXT NOT NULL DEFAULT 'event';")
         }
     }
 
@@ -302,17 +325,23 @@ public final class DatabaseManager: @unchecked Sendable {
             id: "",
             sourceId: String(cString: sqlite3_column_text(stmt, 0)),
             timestamp: Date(timeIntervalSince1970: Double(timestampMillis) / 1000.0),
-            dayKey: String(cString: sqlite3_column_text(stmt, 2)),
-            sessionKey: String(cString: sqlite3_column_text(stmt, 3)),
-            projectFolder: sqlite3_column_type(stmt, 4) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(stmt, 4)),
-            model: String(cString: sqlite3_column_text(stmt, 5)),
-            provider: sqlite3_column_type(stmt, 6) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(stmt, 6)),
-            inputTokens: Int(sqlite3_column_int(stmt, 7)),
-            outputTokens: Int(sqlite3_column_int(stmt, 8)),
-            cacheReadTokens: Int(sqlite3_column_int(stmt, 9)),
-            cacheWriteTokens: Int(sqlite3_column_int(stmt, 10)),
-            rawCostUSD: sqlite3_column_double(stmt, 12)
+            timestampSource: Self.timestampSource(from: stmt, column: 2),
+            dayKey: String(cString: sqlite3_column_text(stmt, 3)),
+            sessionKey: String(cString: sqlite3_column_text(stmt, 4)),
+            projectFolder: sqlite3_column_type(stmt, 5) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(stmt, 5)),
+            model: String(cString: sqlite3_column_text(stmt, 6)),
+            provider: sqlite3_column_type(stmt, 7) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(stmt, 7)),
+            inputTokens: Int(sqlite3_column_int(stmt, 8)),
+            outputTokens: Int(sqlite3_column_int(stmt, 9)),
+            cacheReadTokens: Int(sqlite3_column_int(stmt, 10)),
+            cacheWriteTokens: Int(sqlite3_column_int(stmt, 11)),
+            rawCostUSD: sqlite3_column_double(stmt, 13)
         )
+    }
+
+    private static func timestampSource(from stmt: OpaquePointer, column: Int32) -> TimestampSource {
+        guard let value = sqlite3_column_text(stmt, column) else { return .event }
+        return TimestampSource(rawValue: String(cString: value)) ?? .unknown
     }
 
     private static func recordsHaveSameStorageValues(
@@ -321,6 +350,7 @@ public final class DatabaseManager: @unchecked Sendable {
     ) -> Bool {
         Int64(lhs.timestamp.timeIntervalSince1970 * 1000) == Int64(rhs.timestamp.timeIntervalSince1970 * 1000)
             && lhs.sourceId == rhs.sourceId
+            && lhs.timestampSource == rhs.timestampSource
             && lhs.dayKey == rhs.dayKey
             && lhs.sessionKey == rhs.sessionKey
             && lhs.projectFolder == rhs.projectFolder
@@ -791,7 +821,7 @@ public final class DatabaseManager: @unchecked Sendable {
     public func fetchRecords(sinceTimestamp: Int64) throws -> [UnifiedTokenRecord] {
         lock.lock(); defer { lock.unlock() }
         let sql = """
-        SELECT id, source_id, timestamp, day_key, session_key, project_folder, model, provider,
+        SELECT id, source_id, timestamp, timestamp_source, day_key, session_key, project_folder, model, provider,
                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost_usd
         FROM unified_token_records
         WHERE timestamp >= ?
@@ -802,6 +832,7 @@ public final class DatabaseManager: @unchecked Sendable {
             throw NSError(domain: "DatabaseManager", code: 15, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare fetchRecords statement: \(lastErrorMessage())"])
         }
         defer { sqlite3_finalize(stmt) }
+        guard let stmt else { return [] }
 
         sqlite3_bind_int64(stmt, 1, sinceTimestamp)
         var result: [UnifiedTokenRecord] = []
@@ -811,21 +842,23 @@ public final class DatabaseManager: @unchecked Sendable {
                 let id = String(cString: sqlite3_column_text(stmt, 0))
                 let sourceId = String(cString: sqlite3_column_text(stmt, 1))
                 let timestamp = Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 2)) / 1000.0)
-                let dayKey = String(cString: sqlite3_column_text(stmt, 3))
-                let sessionKey = String(cString: sqlite3_column_text(stmt, 4))
-                let projectFolder: String? = sqlite3_column_type(stmt, 5) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 5)) : nil
-                let model = String(cString: sqlite3_column_text(stmt, 6))
-                let provider: String? = sqlite3_column_type(stmt, 7) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 7)) : nil
-                let inputTokens = Int(sqlite3_column_int(stmt, 8))
-                let outputTokens = Int(sqlite3_column_int(stmt, 9))
-                let cacheReadTokens = Int(sqlite3_column_int(stmt, 10))
-                let cacheWriteTokens = Int(sqlite3_column_int(stmt, 11))
-                let rawCostUSD: Double? = sqlite3_column_type(stmt, 13) != SQLITE_NULL ? sqlite3_column_double(stmt, 13) : nil
+                let timestampSource = Self.timestampSource(from: stmt, column: 3)
+                let dayKey = String(cString: sqlite3_column_text(stmt, 4))
+                let sessionKey = String(cString: sqlite3_column_text(stmt, 5))
+                let projectFolder: String? = sqlite3_column_type(stmt, 6) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 6)) : nil
+                let model = String(cString: sqlite3_column_text(stmt, 7))
+                let provider: String? = sqlite3_column_type(stmt, 8) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 8)) : nil
+                let inputTokens = Int(sqlite3_column_int(stmt, 9))
+                let outputTokens = Int(sqlite3_column_int(stmt, 10))
+                let cacheReadTokens = Int(sqlite3_column_int(stmt, 11))
+                let cacheWriteTokens = Int(sqlite3_column_int(stmt, 12))
+                let rawCostUSD: Double? = sqlite3_column_type(stmt, 14) != SQLITE_NULL ? sqlite3_column_double(stmt, 14) : nil
 
                 result.append(UnifiedTokenRecord(
                     id: id,
                     sourceId: sourceId,
                     timestamp: timestamp,
+                    timestampSource: timestampSource,
                     dayKey: dayKey,
                     sessionKey: sessionKey,
                     projectFolder: projectFolder,
