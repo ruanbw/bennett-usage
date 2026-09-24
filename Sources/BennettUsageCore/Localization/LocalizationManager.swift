@@ -199,6 +199,80 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case updateErrorServer
     case updateErrorDecoding
     case updateErrorNoReleases
+
+    // Dashboard context and compact metric labels
+    case dashboardContext
+    case dashboardContextDescription
+    case selectedRange
+    case todayFocus
+    case todayFocusDescription
+    case topAgent
+    case tokenComposition
+    case agentUsage
+    case syncFreshness
+    case exactValue
+    case compactTotal
+    case inputLabel
+    case outputLabel
+    case cacheLabel
+    case costLabel
+    case approxValue
+    case tokenValue
+    case cacheHitRateValue
+    case distributionShare
+
+    // Sync freshness and loading/error presentation states
+    case lastSynced
+    case notSyncedYet
+    case syncInProgress
+    case syncFailed
+    case syncedHoursAgo
+    case syncedOn
+    case showingCachedData
+    case staleData
+    case dataUnavailable
+    case loadingUsage
+    case loadedUsage
+    case emptyUsage
+    case errorLoadingUsage
+    case updatingUsage
+    case retry
+    case retrySync
+    case noDataToDisplay
+
+    // Chart accessibility summaries
+    case trendChartSummary
+    case distributionChartSummary
+    case chartDataPoint
+    case chartNoData
+    case chartLegend
+    case chartAccessibleHint
+    case heatmapSummary
+    case heatmapDaySummary
+    case heatmapNoData
+
+    // Compact menu-bar popover actions
+    case quickGlance
+    case popoverAccessibilityDescription
+    case popoverNoUsage
+    case popoverTopAgent
+    case popoverSyncStatus
+    case openDashboardAction
+    case openSettingsAction
+
+    // Settings privacy and keyboard commands
+    case privacy
+    case privacyFooter
+    case privacyLocalOnly
+    case privacyNoUpload
+    case privacyNoSourceInspection
+    case privacyUpdateNote
+    case keyboardShortcuts
+    case keyboardShortcutsDescription
+    case openSettingsShortcut
+    case syncNowShortcut
+    case closeSettingsShortcut
+    case showPopoverShortcut
 }
 public typealias LocalizationKey = LocalizedKey
 
@@ -500,7 +574,81 @@ private let englishDictionary: [LocalizedKey: String] = [
     .updateErrorNetwork: "No network connection, or the update server is unreachable.",
     .updateErrorServer: "The update server returned HTTP %d.",
     .updateErrorDecoding: "The update server sent a response this version can't read.",
-    .updateErrorNoReleases: "No published release with a usable version tag was found."
+    .updateErrorNoReleases: "No published release with a usable version tag was found.",
+
+    // Dashboard context and compact metric labels
+    .dashboardContext: "Usage Dashboard",
+    .dashboardContextDescription: "Token activity across local AI coding agents",
+    .selectedRange: "Selected range: %@",
+    .todayFocus: "Today",
+    .todayFocusDescription: "Today's activity at a glance",
+    .topAgent: "Top agent",
+    .tokenComposition: "Token composition",
+    .agentUsage: "Agent usage",
+    .syncFreshness: "Data freshness",
+    .exactValue: "Exact value",
+    .compactTotal: "Total tokens",
+    .inputLabel: "Input",
+    .outputLabel: "Output",
+    .cacheLabel: "Cache",
+    .costLabel: "Cost",
+    .approxValue: "Approx. %@",
+    .tokenValue: "%@ tokens",
+    .cacheHitRateValue: "%.1f%% cache hit rate",
+    .distributionShare: "%.1f%% of total",
+
+    // Sync freshness and loading/error presentation states
+    .lastSynced: "Last synced",
+    .notSyncedYet: "Not synced yet",
+    .syncInProgress: "Syncing…",
+    .syncFailed: "Sync failed",
+    .syncedHoursAgo: "Synced %d hours ago",
+    .syncedOn: "Synced on %@",
+    .showingCachedData: "Showing cached data",
+    .staleData: "Data may be out of date",
+    .dataUnavailable: "Usage data is unavailable",
+    .loadingUsage: "Loading usage…",
+    .loadedUsage: "Usage loaded",
+    .emptyUsage: "No usage yet",
+    .errorLoadingUsage: "Usage could not be loaded",
+    .updatingUsage: "Updating usage…",
+    .retry: "Retry",
+    .retrySync: "Retry sync",
+    .noDataToDisplay: "No data to display",
+
+    // Chart accessibility summaries
+    .trendChartSummary: "Token trend chart for %@",
+    .distributionChartSummary: "%@ distribution chart",
+    .chartDataPoint: "%@: %@ tokens, %@",
+    .chartNoData: "No chart data available",
+    .chartLegend: "Chart legend",
+    .chartAccessibleHint: "Use the chart controls to explore token activity",
+    .heatmapSummary: "Daily token activity heatmap for %@",
+    .heatmapDaySummary: "%@: %@ tokens, %@",
+    .heatmapNoData: "No heatmap data available",
+
+    // Compact menu-bar popover actions
+    .quickGlance: "Quick Glance",
+    .popoverAccessibilityDescription: "Quick glance of today's token usage and estimated cost",
+    .popoverNoUsage: "No usage today",
+    .popoverTopAgent: "Top agent: %@",
+    .popoverSyncStatus: "Sync status: %@",
+    .openDashboardAction: "Open Dashboard",
+    .openSettingsAction: "Open Settings",
+
+    // Settings privacy and keyboard commands
+    .privacy: "Privacy",
+    .privacyFooter: "Your usage data stays on this Mac.",
+    .privacyLocalOnly: "Analytics stay on this Mac",
+    .privacyNoUpload: "Usage data is never uploaded",
+    .privacyNoSourceInspection: "Bennett Usage does not inspect your prompts, source code, or API keys",
+    .privacyUpdateNote: "Only the public GitHub Releases feed is contacted for update checks.",
+    .keyboardShortcuts: "Keyboard shortcuts",
+    .keyboardShortcutsDescription: "Use these shortcuts to move quickly between Bennett Usage surfaces.",
+    .openSettingsShortcut: "Open Settings (⌘,)",
+    .syncNowShortcut: "Sync Now (⌘R)",
+    .closeSettingsShortcut: "Close Settings (Esc)",
+    .showPopoverShortcut: "Show Quick Glance (⌘Q)"
 ]
 private let chineseDictionary: [LocalizedKey: String] = [
     // App & Common
@@ -679,5 +827,79 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .updateErrorNetwork: "网络不可用，或无法连接更新服务器。",
     .updateErrorServer: "更新服务器返回 HTTP %d。",
     .updateErrorDecoding: "更新服务器返回的内容无法解析。",
-    .updateErrorNoReleases: "未找到带有效版本号的已发布版本。"
+    .updateErrorNoReleases: "未找到带有效版本号的已发布版本。",
+
+    // Dashboard context and compact metric labels
+    .dashboardContext: "用量看板",
+    .dashboardContextDescription: "本地 AI 编程 Agent 的 Token 活动",
+    .selectedRange: "所选范围：%@",
+    .todayFocus: "今日",
+    .todayFocusDescription: "快速查看今日活动",
+    .topAgent: "主要 Agent",
+    .tokenComposition: "Token 构成",
+    .agentUsage: "Agent 用量",
+    .syncFreshness: "数据新鲜度",
+    .exactValue: "精确值",
+    .compactTotal: "Token 总量",
+    .inputLabel: "输入",
+    .outputLabel: "输出",
+    .cacheLabel: "缓存",
+    .costLabel: "费用",
+    .approxValue: "约 %@",
+    .tokenValue: "%@ Token",
+    .cacheHitRateValue: "缓存命中率 %.1f%%",
+    .distributionShare: "占总量 %.1f%%",
+
+    // Sync freshness and loading/error presentation states
+    .lastSynced: "上次同步",
+    .notSyncedYet: "尚未同步",
+    .syncInProgress: "正在同步…",
+    .syncFailed: "同步失败",
+    .syncedHoursAgo: "%d 小时前同步",
+    .syncedOn: "同步于 %@",
+    .showingCachedData: "正在显示缓存数据",
+    .staleData: "数据可能已过期",
+    .dataUnavailable: "用量数据不可用",
+    .loadingUsage: "正在加载用量…",
+    .loadedUsage: "用量已加载",
+    .emptyUsage: "暂无用量",
+    .errorLoadingUsage: "无法加载用量",
+    .updatingUsage: "正在更新用量…",
+    .retry: "重试",
+    .retrySync: "重试同步",
+    .noDataToDisplay: "暂无可显示的数据",
+
+    // Chart accessibility summaries
+    .trendChartSummary: "%@ 的 Token 趋势图",
+    .distributionChartSummary: "%@ 分布图",
+    .chartDataPoint: "%@：%@ Token，%@",
+    .chartNoData: "暂无图表数据",
+    .chartLegend: "图表图例",
+    .chartAccessibleHint: "使用图表控件查看 Token 活动",
+    .heatmapSummary: "%@ 的每日 Token 活跃度热力图",
+    .heatmapDaySummary: "%@：%@ Token，%@",
+    .heatmapNoData: "暂无热力图数据",
+
+    // Compact menu-bar popover actions
+    .quickGlance: "快速概览",
+    .popoverAccessibilityDescription: "快速查看今日 Token 用量和预估费用",
+    .popoverNoUsage: "今日暂无用量",
+    .popoverTopAgent: "主要 Agent：%@",
+    .popoverSyncStatus: "同步状态：%@",
+    .openDashboardAction: "打开用量看板",
+    .openSettingsAction: "打开设置",
+
+    // Settings privacy and keyboard commands
+    .privacy: "隐私",
+    .privacyFooter: "你的用量数据只保存在这台 Mac 上。",
+    .privacyLocalOnly: "分析数据仅保存在本机",
+    .privacyNoUpload: "用量数据绝不上传",
+    .privacyNoSourceInspection: "Bennett Usage 不会检查你的提示词、源代码或 API 密钥",
+    .privacyUpdateNote: "仅在检查更新时访问公开的 GitHub Releases 信息源。",
+    .keyboardShortcuts: "键盘快捷键",
+    .keyboardShortcutsDescription: "使用快捷键在 Bennett Usage 的各个界面之间快速切换。",
+    .openSettingsShortcut: "打开设置（⌘,）",
+    .syncNowShortcut: "立即同步（⌘R）",
+    .closeSettingsShortcut: "关闭设置（Esc）",
+    .showPopoverShortcut: "显示快速概览（⌘Q）"
 ]

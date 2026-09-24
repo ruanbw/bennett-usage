@@ -115,7 +115,80 @@ final class LocalizationTests: XCTestCase {
             XCTAssertFalse(zh.isEmpty, "Missing Chinese translation for \(key.rawValue)")
             // Ensure it didn't just return the raw key name
             XCTAssertNotEqual(en, key.rawValue, "English translation seems to be unlocalized key: \(key.rawValue)")
+            XCTAssertNotEqual(zh, key.rawValue, "Chinese translation seems to be unlocalized key: \(key.rawValue)")
         }
+    }
+
+    func testRedesignCopyIsCompleteAndLocalized() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+        let requiredKeys: [LocalizedKey] = [
+            .dashboardContext, .dashboardContextDescription, .selectedRange,
+            .todayFocus, .todayFocusDescription, .topAgent, .tokenComposition,
+            .agentUsage, .syncFreshness, .exactValue, .compactTotal,
+            .inputLabel, .outputLabel, .cacheLabel, .costLabel, .approxValue,
+            .tokenValue, .cacheHitRateValue, .distributionShare,
+            .lastSynced, .notSyncedYet, .syncInProgress, .syncFailed,
+            .syncedHoursAgo, .syncedOn, .showingCachedData, .staleData,
+            .dataUnavailable, .loadingUsage, .loadedUsage, .emptyUsage,
+            .errorLoadingUsage, .updatingUsage, .retry, .retrySync, .noDataToDisplay,
+            .trendChartSummary, .distributionChartSummary, .chartDataPoint,
+            .chartNoData, .chartLegend, .chartAccessibleHint, .heatmapSummary,
+            .heatmapDaySummary, .heatmapNoData, .quickGlance,
+            .popoverAccessibilityDescription, .popoverNoUsage, .popoverTopAgent,
+            .popoverSyncStatus, .openDashboardAction, .openSettingsAction,
+            .privacy, .privacyFooter, .privacyLocalOnly, .privacyNoUpload,
+            .privacyNoSourceInspection, .privacyUpdateNote, .keyboardShortcuts,
+            .keyboardShortcutsDescription, .openSettingsShortcut, .syncNowShortcut,
+            .closeSettingsShortcut, .showPopoverShortcut
+        ]
+
+        XCTAssertEqual(requiredKeys.count, 64)
+        for key in requiredKeys {
+            XCTAssertFalse(manager.localized(key, language: .en).isEmpty, "Missing English copy for \(key.rawValue)")
+            XCTAssertFalse(manager.localized(key, language: .zh).isEmpty, "Missing Chinese copy for \(key.rawValue)")
+        }
+
+        XCTAssertEqual(manager.localized(.dashboardContext, language: .en), "Usage Dashboard")
+        XCTAssertEqual(manager.localized(.dashboardContext, language: .zh), "用量看板")
+        XCTAssertEqual(manager.localized(.quickGlance, language: .en), "Quick Glance")
+        XCTAssertEqual(manager.localized(.quickGlance, language: .zh), "快速概览")
+    }
+
+    func testRedesignFormattingUsesLocalizedPlaceholders() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+
+        XCTAssertEqual(
+            manager.localized(.selectedRange, language: .en, arguments: "7 Days"),
+            "Selected range: 7 Days"
+        )
+        XCTAssertEqual(
+            manager.localized(.selectedRange, language: .zh, arguments: "7天"),
+            "所选范围：7天"
+        )
+        XCTAssertEqual(
+            manager.localized(.syncedHoursAgo, language: .en, arguments: 2),
+            "Synced 2 hours ago"
+        )
+        XCTAssertEqual(
+            manager.localized(.syncedHoursAgo, language: .zh, arguments: 2),
+            "2 小时前同步"
+        )
+        XCTAssertEqual(
+            manager.localized(.chartDataPoint, language: .en, arguments: "10:00", "2.4K", "$0.42"),
+            "10:00: 2.4K tokens, $0.42"
+        )
+        XCTAssertEqual(
+            manager.localized(.chartDataPoint, language: .zh, arguments: "10:00", "2.4K", "¥3.02"),
+            "10:00：2.4K Token，¥3.02"
+        )
+        XCTAssertEqual(
+            manager.localized(.openSettingsShortcut, language: .en),
+            "Open Settings (⌘,)"
+        )
+        XCTAssertEqual(
+            manager.localized(.openSettingsShortcut, language: .zh),
+            "打开设置（⌘,）"
+        )
     }
 
     func testSettingsCopyTranslationsAreComplete() {
