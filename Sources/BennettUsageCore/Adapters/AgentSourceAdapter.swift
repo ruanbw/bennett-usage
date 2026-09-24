@@ -8,6 +8,7 @@ public protocol AgentSourceAdapter: Sendable {
     var defaultPath: String { get }
 
     func detectDefaultPath() -> URL?
+    func auxiliaryWatchRoots(for dataRoot: URL) -> [URL]
     func fetchIncrementalRecords(
         from directory: URL,
         since cursor: SyncCursor?
@@ -79,6 +80,10 @@ extension AgentSourceAdapter {
             return nil
         }
     }
+
+    /// Additional source trees that should trigger synchronization without
+    /// replacing the primary data root passed to `fetchIncrementalRecords`.
+    public func auxiliaryWatchRoots(for dataRoot: URL) -> [URL] { [] }
 
     /// `true` marks adapters whose `fetchIncrementalRecords` is a stub
     /// (returns no records); the coordinator then skips syncing and watching

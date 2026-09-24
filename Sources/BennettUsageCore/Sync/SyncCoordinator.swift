@@ -94,10 +94,11 @@ public actor SyncCoordinator {
         var eligible: [(adapter: any AgentSourceAdapter, path: URL)] = []
         for adapter in registry.allAdapters() {
             guard let path = dataRoot(for: adapter) else { continue }
-            // Event-driven sync: skip adapters whose watched tree contains
-            // none of the changed paths — no new consumption there to read.
+            // Event-driven sync: skip adapters whose primary or auxiliary trees
+            // contain none of the changed paths — no new consumption there to read.
+            let roots = watchDirectories(for: adapter, dataRoot: path)
             if let changedPaths, !changedPaths.isEmpty,
-               !Self.isPathAffected(root: path.path, changedPaths: changedPaths) {
+               !Self.isPathAffected(roots: roots, changedPaths: changedPaths) {
                 continue
             }
             eligible.append((adapter, path))
@@ -220,17 +221,21 @@ public actor SyncCoordinator {
 
     /// True when a changed path lies inside the adapter's watched root (or is
     /// the root itself, or a parent of it — FSEvents may coalesce upward).
-    private static func isPathAffected(root: String, changedPaths: [String]) -> Bool {
-        let normalizedRoot = root.hasSuffix("/") ? String(root.dropLast()) : root
-        for changed in changedPaths {
-            let normalized = changed.hasSuffix("/") ? String(changed.dropLast()) : changed
-            if normalized == normalizedRoot
-                || normalized.hasPrefix(normalizedRoot + "/")
-                || normalizedRoot.hasPrefix(normalized + "/") {
-                return true
+    private static func isPathAffected(roots: [URL], changedPaths: [String]) -> Bool {
+        let normalizedRoots = roots.map { normalizedPath($0.path) }
+        let normalizedChanges = changedPaths.map(normalizedPath)
+        return normalizedRoots.contains { root in
+            normalizedChanges.contains { changed in
+                changed == root
+                    || changed.hasPrefix(root + "/")
+                    || root.hasPrefix(changed + "/")
             }
         }
-        return false
+    }
+
+    private static func normalizedPath(_ path: String) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        return URL(fileURLWithPath: expanded).standardizedFileURL.path
     }
 
     public func currentWatchingPaths() -> [String] {
@@ -244,11 +249,11 @@ public actor SyncCoordinator {
     /// Checks if any newly created adapter directories appeared since watching started,
     /// and restarts FSEventsWatcher with the expanded path list if needed.
     public func updateWatchingPathsIfNeeded() {
-        let activePaths = registry.allAdapters().compactMap { adapter -> String? in
-            guard let root = dataRoot(for: adapter) else { return nil }
-            return Self.watchDirectory(for: root).path
+        let activePaths = registry.allAdapters().flatMap { adapter -> [String] in
+            guard let root = dataRoot(for: adapter) else { return [] }
+            return watchDirectories(for: adapter, dataRoot: root).map(\.path)
         }
-        let uniquePaths = Array(Set(activePaths)).sorted()
+        let uniquePaths = Array(Set(activePaths.map(Self.normalizedPath))).sorted()
         if uniquePaths != watchedPaths {
             watchedPaths = uniquePaths
             self.watcher = FSEventsWatcher(paths: uniquePaths) { [weak self] eventPaths in
@@ -259,17 +264,31 @@ public actor SyncCoordinator {
         }
     }
 
-    /// FSEvents requires directory paths. If an adapter root points directly to a file
-    /// (e.g. ~/.omp/stats.db), watch its parent directory instead.
+    private func watchDirectories(for adapter: any AgentSourceAdapter, dataRoot: URL) -> [URL] {
+        let roots = ([dataRoot] + adapter.auxiliaryWatchRoots(for: dataRoot))
+            .map { URL(fileURLWithPath: Self.normalizedPath($0.path)) }
+        var seen = Set<String>()
+        return roots.compactMap { root in
+            let directory = Self.watchDirectory(for: root)
+            return seen.insert(directory.path).inserted ? directory : nil
+        }
+    }
+
+    /// FSEvents requires an existing directory. File roots use their parent;
+    /// missing directory roots use the nearest existing ancestor so creation of
+    /// the root is observed and the watcher can be refreshed on the next sync.
     private static func watchDirectory(for url: URL) -> URL {
-        var isDir: ObjCBool = false
-        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) {
-            return isDir.boolValue ? url : url.deletingLastPathComponent()
+        var candidate = url
+        while true {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDir) {
+                if isDir.boolValue { return candidate }
+                return candidate.deletingLastPathComponent()
+            }
+            let parent = candidate.deletingLastPathComponent()
+            if parent.path == candidate.path { return candidate }
+            candidate = parent
         }
-        if !url.pathExtension.isEmpty {
-            return url.deletingLastPathComponent()
-        }
-        return url
     }
 
     /// Adapter fetches do full-tree enumeration + JSON parsing synchronously.

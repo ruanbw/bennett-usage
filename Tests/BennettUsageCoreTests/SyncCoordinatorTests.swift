@@ -7,6 +7,7 @@ private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
     let brandColorHex: String = "#FF0000"
     let sfSymbolIcon: String = "hammer"
     let path: URL?
+    var auxiliaryRoots: [URL] = []
     var recordsToReturn: [UnifiedTokenRecord] = []
     var receivedCursors: [SyncCursor?] = []
     var fetchCallCount = 0
@@ -21,6 +22,10 @@ private final class MockSyncAdapter: AgentSourceAdapter, @unchecked Sendable {
 
     func detectDefaultPath() -> URL? {
         return path
+    }
+
+    func auxiliaryWatchRoots(for dataRoot: URL) -> [URL] {
+        auxiliaryRoots
     }
 
     func fetchIncrementalRecords(from directory: URL, since cursor: SyncCursor?) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
@@ -347,6 +352,73 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(mockB.fetchCallCount, 1)
     }
 
+    func testAuxiliaryRootTriggersAdapterAndWatcherUsesNormalizedUniquePaths() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let primary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let auxiliary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: primary, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: auxiliary, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: primary)
+            try? FileManager.default.removeItem(at: auxiliary)
+        }
+
+        let mock = MockSyncAdapter(sourceId: "aux_mock", path: primary)
+        mock.auxiliaryRoots = [
+            auxiliary,
+            URL(fileURLWithPath: auxiliary.path + "/./"),
+            primary
+        ]
+        registry.register(mock)
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+        await coordinator.startWatching()
+
+        let watched = await coordinator.currentWatchingPaths()
+        XCTAssertEqual(watched, [auxiliary.standardizedFileURL.path, primary.standardizedFileURL.path].sorted())
+
+        _ = try await coordinator.syncAll(changedPaths: [auxiliary.appendingPathComponent("event.jsonl").path])
+        XCTAssertEqual(mock.fetchCallCount, 1)
+    }
+
+    func testUnrelatedChangedPathDoesNotTriggerAuxiliaryWatchAdapter() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let primary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let auxiliary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: primary, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: auxiliary, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: primary)
+            try? FileManager.default.removeItem(at: auxiliary)
+        }
+
+        let mock = MockSyncAdapter(sourceId: "aux_mock", path: primary)
+        mock.auxiliaryRoots = [auxiliary]
+        registry.register(mock)
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+
+        _ = try await coordinator.syncAll(changedPaths: [FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path])
+        XCTAssertEqual(mock.fetchCallCount, 0)
+    }
+
+    func testMissingMainRootWatchesExistingParent() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let missing = parent.appendingPathComponent("not-created/main")
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+
+        let mock = MockSyncAdapter(sourceId: "missing_root_mock", path: missing)
+        registry.register(mock)
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+        await coordinator.startWatching()
+
+        let watched = await coordinator.currentWatchingPaths()
+        XCTAssertEqual(watched, [parent.standardizedFileURL.path])
+    }
+
     func testConcurrentSyncAllAccumulatesDistinctChangedPaths() async throws {
         let db = try DatabaseManager.inMemory()
         let registry = AdapterRegistry()
@@ -479,5 +551,35 @@ final class SyncCoordinatorTests: XCTestCase {
 
         let pathsAfter = await coordinator.currentWatchingPaths()
         XCTAssertTrue(pathsAfter.contains(dynamicSubdir.path), "Newly created directory must be added to watching paths")
+    }
+
+    func testAuxiliaryRootsAreDynamicallyAddedAndRemoved() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let primary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let auxiliary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: primary, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: auxiliary, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: primary)
+            try? FileManager.default.removeItem(at: auxiliary)
+        }
+
+        let mock = MockSyncAdapter(sourceId: "dynamic_aux_mock", path: primary)
+        registry.register(mock)
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+        await coordinator.startWatching()
+        var watched = await coordinator.currentWatchingPaths()
+        XCTAssertFalse(watched.contains(auxiliary.path))
+
+        mock.auxiliaryRoots = [auxiliary]
+        await coordinator.updateWatchingPathsIfNeeded()
+        watched = await coordinator.currentWatchingPaths()
+        XCTAssertTrue(watched.contains(auxiliary.path))
+
+        mock.auxiliaryRoots = []
+        await coordinator.updateWatchingPathsIfNeeded()
+        watched = await coordinator.currentWatchingPaths()
+        XCTAssertFalse(watched.contains(auxiliary.path))
     }
 }
