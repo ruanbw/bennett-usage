@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import BennettUsageCore
 
@@ -62,6 +63,7 @@ final class ContinueAdapterTests: XCTestCase {
         XCTAssertEqual(checkpoint[checkpointPath], Int64(modifiedAt.timeIntervalSince1970 * 1_000))
         XCTAssertNotNil(checkpoint[checkpointPath + "::size"])
         XCTAssertNotNil(checkpoint[checkpointPath + "::fileIdentity"])
+        XCTAssertEqual(checkpoint.keys.filter { $0.hasPrefix(checkpointPath + "::contentHash") }.count, 4)
 
         // The index file is not a session and must never become a usage source.
         try #"{"history":[{"message":{"role":"assistant","usage":{"prompt_tokens":8,"completion_tokens":9,"prompt_tokens_details":{}}}}]}"#
@@ -176,6 +178,64 @@ final class ContinueAdapterTests: XCTestCase {
         XCTAssertEqual(cursorEntries(repeated.newCursor), cursorEntries(changed.newCursor))
     }
 
+    func testSameSizeAndModificationTimeContentRewriteIsReplayedAndCorrected() async throws {
+        let modifiedAt = Date(timeIntervalSince1970: 6_000)
+        let file = try writeSession(
+            validSessionJSON(content: "same", completionTokens: 5),
+            modifiedAt: modifiedAt
+        )
+        let originalIdentity = try fileIdentity(file)
+
+        let first = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
+        XCTAssertEqual(first.records.count, 1)
+        XCTAssertEqual(first.records[0].outputTokens, 5)
+
+        let rewritten = validSessionJSON(content: "same", completionTokens: 9)
+        XCTAssertEqual(Data(rewritten.utf8).count, try Data(contentsOf: file).count)
+        // A non-atomic write preserves the inode as well as the explicitly
+        // restored size and mtime, so only the content hash can detect it.
+        try Data(rewritten.utf8).write(to: file)
+        try setModificationDate(file, modifiedAt)
+        XCTAssertEqual(try fileIdentity(file), originalIdentity)
+        XCTAssertEqual(try fileSize(file), Int64(rewritten.utf8.count))
+        XCTAssertEqual(try fileModificationDate(file).timeIntervalSince1970,
+                       modifiedAt.timeIntervalSince1970,
+                       accuracy: 0.001)
+
+        let corrected = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: first.newCursor)
+        XCTAssertEqual(corrected.records.count, 1)
+        XCTAssertEqual(corrected.records[0].id, first.records[0].id)
+        XCTAssertEqual(corrected.records[0].outputTokens, 9)
+
+        let database = try DatabaseManager.inMemory()
+        XCTAssertEqual(try database.insertRecords(first.records), 1)
+        XCTAssertEqual(try database.insertRecords(corrected.records, updateExisting: true), 1)
+        XCTAssertEqual(try database.insertRecords(corrected.records, updateExisting: true), 0)
+        let stored = try XCTUnwrap(try database.fetchRecords(sinceTimestamp: 0).first)
+        XCTAssertEqual(stored.outputTokens, 9)
+    }
+
+    func testLegacyOffsetCursorMigratesByScanningAndStoringContentHash() async throws {
+        try writeSession(validSessionJSON(content: "legacy"))
+        let initial = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: nil)
+        XCTAssertEqual(initial.records.count, 1)
+
+        var legacy = cursorEntries(initial.newCursor)
+        legacy = legacy.filter { !$0.key.contains("::contentHash") }
+        let migrated = try await adapter.fetchIncrementalRecords(
+            from: sessionsRoot,
+            since: .fileOffsets(legacy)
+        )
+
+        XCTAssertEqual(migrated.records.count, 1)
+        XCTAssertEqual(migrated.records[0].id, initial.records[0].id)
+        let migratedEntries = cursorEntries(migrated.newCursor)
+        XCTAssertEqual(migratedEntries.keys.filter { $0.contains("::contentHash") }.count, 4)
+
+        let repeated = try await adapter.fetchIncrementalRecords(from: sessionsRoot, since: migrated.newCursor)
+        XCTAssertTrue(repeated.records.isEmpty)
+    }
+
     func testRejectsInvalidUUIDAndMismatchedSessionID() async throws {
         try #"{"sessionId":"\(sessionId)","history":[]}"#
             .write(to: sessionsRoot.appendingPathComponent("not-a-uuid.json"), atomically: true, encoding: .utf8)
@@ -265,10 +325,14 @@ final class ContinueAdapterTests: XCTestCase {
         XCTAssertEqual(result.records.count, 1)
     }
 
-    private func validSessionJSON(content: String, title: String = "Session") -> String {
+    private func validSessionJSON(
+        content: String,
+        title: String = "Session",
+        completionTokens: Int = 5
+    ) -> String {
         """
         {"sessionId":"\(sessionId)","title":"\(title)","workspaceDirectory":"/workspace","history":[
-          {"message":{"role":"assistant","content":"\(content)","usage":{"prompt_tokens":20,"completion_tokens":5,"prompt_tokens_details":{}}}}
+          {"message":{"role":"assistant","content":"\(content)","usage":{"prompt_tokens":20,"completion_tokens":\(completionTokens),"prompt_tokens_details":{}}}}
         ]}
         """
     }
@@ -291,6 +355,24 @@ final class ContinueAdapterTests: XCTestCase {
 
     private func setModificationDate(_ file: URL, _ date: Date) throws {
         try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: file.path)
+    }
+
+    private func fileIdentity(_ file: URL) throws -> UInt64 {
+        var info = stat()
+        guard lstat(file.path, &info) == 0 else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        return info.st_ino
+    }
+
+    private func fileSize(_ file: URL) throws -> Int64 {
+        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        return try XCTUnwrap(attributes[.size] as? NSNumber).int64Value
+    }
+
+    private func fileModificationDate(_ file: URL) throws -> Date {
+        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        return try XCTUnwrap(attributes[.modificationDate] as? Date)
     }
 
     private func cursorEntries(_ cursor: SyncCursor) -> [String: Int64] {

@@ -91,30 +91,54 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
             let path = fileURL.path
             let sizeKey = path + "::size"
             let identityKey = path + "::fileIdentity"
+            let contentHashKeys = Self.contentHashKeys(for: path)
             let mtimeMillis = Int64(modifiedAt.timeIntervalSince1970 * 1_000)
 
+            // Stat values are only a fast-path hint. Continue can rewrite a
+            // session in place without changing its size, mtime, or inode, so
+            // the complete bytes must be read and hashed before skipping it.
+            guard let data = try? Data(contentsOf: fileURL) else {
+                Self.preserveCheckpoint(
+                    from: previous,
+                    to: &checkpoints,
+                    path: path,
+                    sizeKey: sizeKey,
+                    identityKey: identityKey,
+                    contentHashKeys: contentHashKeys
+                )
+                continue
+            }
+            let contentHash = Self.contentHashValues(for: data)
             let unchanged = previous[path] == mtimeMillis
                 && previous[sizeKey] == Int64(byteCount)
                 && previous[identityKey] == identityHash
+                && contentHashKeys.indices.allSatisfy {
+                    previous[contentHashKeys[$0]] == contentHash[$0]
+                }
             if unchanged {
                 checkpoints[path] = mtimeMillis
                 checkpoints[sizeKey] = Int64(byteCount)
                 checkpoints[identityKey] = identityHash
+                for (key, value) in zip(contentHashKeys, contentHash) {
+                    checkpoints[key] = value
+                }
                 continue
             }
 
-            guard let data = try? Data(contentsOf: fileURL),
-                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let sessionId = root["sessionId"] as? String,
                   UUID(uuidString: sessionId) == fileUUID,
                   let history = root["history"] as? [[String: Any]] else {
                 // A partial or corrupt writer snapshot must be retried. Preserve
                 // the prior checkpoint instead of advertising the bad file as scanned.
-                if let oldMtime = previous[path] {
-                    checkpoints[path] = oldMtime
-                    checkpoints[sizeKey] = previous[sizeKey]
-                    checkpoints[identityKey] = previous[identityKey]
-                }
+                Self.preserveCheckpoint(
+                    from: previous,
+                    to: &checkpoints,
+                    path: path,
+                    sizeKey: sizeKey,
+                    identityKey: identityKey,
+                    contentHashKeys: contentHashKeys
+                )
                 continue
             }
 
@@ -130,6 +154,9 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
             checkpoints[path] = mtimeMillis
             checkpoints[sizeKey] = Int64(byteCount)
             checkpoints[identityKey] = identityHash
+            for (key, value) in zip(contentHashKeys, contentHash) {
+                checkpoints[key] = value
+            }
         }
 
         return (records, .fileOffsets(checkpoints))
@@ -218,6 +245,41 @@ public struct ContinueAdapter: AgentSourceAdapter, @unchecked Sendable {
         guard lstat(url.path, &info) == 0 else { return nil }
         let hash = Self.sha256Hex(Data("\(info.st_dev):\(info.st_ino)".utf8))
         return Int64(hash.prefix(15), radix: 16)
+    }
+
+    // fileOffsets is an Int64 dictionary, so the 256-bit digest is stored as
+    // four big-endian Int64 words. These extra keys leave the old cursor
+    // entries readable while allowing a content-identical fast path.
+    private static func contentHashKeys(for path: String) -> [String] {
+        (0..<4).map { path + "::contentHash\($0)" }
+    }
+
+    private static func contentHashValues(for data: Data) -> [Int64] {
+        let bytes = Array(SHA256.hash(data: data))
+        return (0..<4).map { wordIndex in
+            let start = wordIndex * 8
+            var value: UInt64 = 0
+            for byte in bytes[start..<(start + 8)] {
+                value = (value << 8) | UInt64(byte)
+            }
+            return Int64(bitPattern: value)
+        }
+    }
+
+    private static func preserveCheckpoint(
+        from previous: [String: Int64],
+        to checkpoints: inout [String: Int64],
+        path: String,
+        sizeKey: String,
+        identityKey: String,
+        contentHashKeys: [String]
+    ) {
+        checkpoints[path] = previous[path]
+        checkpoints[sizeKey] = previous[sizeKey]
+        checkpoints[identityKey] = previous[identityKey]
+        for key in contentHashKeys {
+            checkpoints[key] = previous[key]
+        }
     }
 
     private struct UsageValues {
