@@ -5,6 +5,51 @@ import AppKit
 
 final class ThemeColorsTests: XCTestCase {
 
+    func testThemeModeCasesAndDefault() {
+        XCTAssertEqual(AppThemeMode.allCases.map(\.rawValue), ["system", "dark", "light"])
+        XCTAssertEqual(AppThemeMode.defaultMode, .dark)
+        XCTAssertEqual(AppThemeMode.storageKey, "bennett_theme_mode")
+        XCTAssertEqual(AppThemeMode.userDefaultsKey, AppThemeMode.storageKey)
+        XCTAssertEqual(AppThemeMode.allCases.map(\.id), ["system", "dark", "light"])
+        XCTAssertEqual(AppThemeMode.system.titleKey, "theme.system")
+        XCTAssertEqual(AppThemeMode.dark.titleKey, "theme.dark")
+        XCTAssertEqual(AppThemeMode.light.titleKey, "theme.light")
+    }
+
+    func testThemeModeAppearanceAndLocalizedTitles() {
+        let suiteName = "ThemeModeAppearanceTests_\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let localization = LocalizationManager(userDefaults: defaults)
+
+        XCTAssertNil(AppThemeMode.system.colorScheme)
+        XCTAssertNil(AppThemeMode.system.appearance)
+        XCTAssertEqual(AppThemeMode.dark.colorScheme, .dark)
+        XCTAssertEqual(AppThemeMode.dark.appearance?.name, NSAppearance.Name.darkAqua)
+        XCTAssertEqual(AppThemeMode.light.colorScheme, .light)
+        XCTAssertEqual(AppThemeMode.light.appearance?.name, NSAppearance.Name.aqua)
+
+        localization.setLanguage(.en)
+        XCTAssertEqual(AppThemeMode.system.localizedTitle(localization: localization), "Follow System")
+        XCTAssertEqual(AppThemeMode.dark.localizedTitle(localization: localization), "Dark")
+        localization.setLanguage(.zh)
+        XCTAssertEqual(AppThemeMode.system.localizedTitle(localization: localization), "跟随系统")
+        XCTAssertEqual(AppThemeMode.light.localizedTitle(localization: localization), "浅色")
+    }
+
+    func testThemeModePersistenceFallsBackToDark() {
+        let suiteName = "ThemeColorsTests_\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertEqual(AppThemeMode.stored(in: defaults), .dark)
+        defaults.set(AppThemeMode.light.rawValue, forKey: AppThemeMode.storageKey)
+        XCTAssertEqual(AppThemeMode.stored(in: defaults), .light)
+
+        defaults.set("not-a-theme", forKey: AppThemeMode.storageKey)
+        XCTAssertEqual(AppThemeMode.stored(in: defaults), .dark)
+    }
+
     func testDynamicColorResolvesAppearance() {
         let dynamicColor = Color.dynamic(lightHex: "#FFFFFF", darkHex: "#000000")
         XCTAssertNotNil(dynamicColor)

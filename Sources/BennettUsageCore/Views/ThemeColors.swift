@@ -1,6 +1,83 @@
 import SwiftUI
 import AppKit
 
+/// The appearance preference shared by the app's native and SwiftUI surfaces.
+///
+/// The default is deliberately dark to match the approved Penpot design. A
+/// missing or invalid persisted value is treated as dark as well, so a
+/// malformed preference can never leave the app without a usable appearance.
+public enum AppThemeMode: String, CaseIterable, Identifiable, Sendable {
+    case system
+    case dark
+    case light
+
+    /// Stable key used by the settings UI and the app's UserDefaults store.
+    public static let storageKey = "bennett_theme_mode"
+    /// Backward-compatible spelling for callers that used the defaults name.
+    public static let userDefaultsKey = storageKey
+    public static let defaultMode: Self = .dark
+
+    public var id: String { rawValue }
+
+    /// Stable localization key, suitable for a localization system that loads
+    /// strings by key rather than through `LocalizedKey`.
+    public var titleKey: String {
+        switch self {
+        case .system: return "theme.system"
+        case .dark: return "theme.dark"
+        case .light: return "theme.light"
+        }
+    }
+
+    /// Localized title for the built-in English and Chinese managers. The
+    /// stable `titleKey` remains available for dynamically registered packs.
+    public func localizedTitle(localization: LocalizationManager) -> String {
+        let isChinese = localization.effectiveLanguage == .zh
+        switch self {
+        case .system: return isChinese ? "跟随系统" : "Follow System"
+        case .dark: return isChinese ? "深色" : "Dark"
+        case .light: return isChinese ? "浅色" : "Light"
+        }
+    }
+
+    /// SwiftUI's nil value intentionally follows the host appearance.
+    public var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .dark: return .dark
+        case .light: return .light
+        }
+    }
+
+    /// The corresponding AppKit appearance, or nil to follow the system.
+    public var appearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .dark: return NSAppearance(named: .darkAqua)
+        case .light: return NSAppearance(named: .aqua)
+        }
+    }
+
+    /// Alias with an explicit name for code that distinguishes native from
+    /// SwiftUI appearance values.
+    public var nativeAppearance: NSAppearance? { appearance }
+
+    /// Reads a persisted mode, falling back to the approved dark default.
+    public static func stored(in userDefaults: UserDefaults = .standard) -> Self {
+        guard let rawValue = userDefaults.string(forKey: storageKey),
+              let mode = Self(rawValue: rawValue) else {
+            return defaultMode
+        }
+        return mode
+    }
+
+    /// Applies the mode to an AppKit application, including native windows.
+    @MainActor
+    public func apply(to application: NSApplication) {
+        application.appearance = nativeAppearance
+    }
+}
+
 // MARK: - Dynamic Color Extensions for AppKit & SwiftUI
 
 extension NSColor {
