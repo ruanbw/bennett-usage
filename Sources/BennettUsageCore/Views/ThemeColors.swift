@@ -94,8 +94,8 @@ public enum AppTheme {
         public static let secondary = Color.dynamic(lightHex: "#6E6E73", darkHex: "#98989D")
 
         /// Tertiary text for captions, table headers, and axis markers.
-        /// Light: Subtle gray (#86868B), Dark: Muted slate (#636366).
-        public static let tertiary = Color.dynamic(lightHex: "#86868B", darkHex: "#636366")
+        /// Light: Warm graphite (#76767B), Dark: Light slate (#8C8C8F).
+        public static let tertiary = Color.dynamic(lightHex: "#76767B", darkHex: "#8C8C8F")
 
         /// Quaternary text for inactive placeholders and disabled labels.
         public static let quaternary = Color.dynamic(lightHex: "#AEAEC2", darkHex: "#48484A")

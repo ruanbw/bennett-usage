@@ -62,6 +62,56 @@ final class ThemeColorsTests: XCTestCase {
         XCTAssertNil(AppTheme.Agent.inferredModelColor(for: "custom-local-model"))
     }
 
+    func testTertiaryTextMeetsWCAGContrastOnPrimarySurface() throws {
+        let aquaAppearance = try XCTUnwrap(NSAppearance(named: .aqua))
+        let darkAppearance = try XCTUnwrap(NSAppearance(named: .darkAqua))
+
+        let lightContrast = wcagContrastRatio(
+            AppTheme.Text.tertiary,
+            against: AppTheme.Surface.primary,
+            appearance: aquaAppearance
+        )
+        let darkContrast = wcagContrastRatio(
+            AppTheme.Text.tertiary,
+            against: AppTheme.Surface.primary,
+            appearance: darkAppearance
+        )
+
+        XCTAssertGreaterThanOrEqual(lightContrast, 4.5, "Light tertiary contrast: \(lightContrast)")
+        XCTAssertGreaterThanOrEqual(darkContrast, 4.5, "Dark tertiary contrast: \(darkContrast)")
+    }
+
+    private func wcagContrastRatio(
+        _ foreground: Color,
+        against background: Color,
+        appearance: NSAppearance
+    ) -> CGFloat {
+        let foregroundLuminance = wcagRelativeLuminance(foreground, appearance: appearance)
+        let backgroundLuminance = wcagRelativeLuminance(background, appearance: appearance)
+        let lighter = max(foregroundLuminance, backgroundLuminance)
+        let darker = min(foregroundLuminance, backgroundLuminance)
+        return (lighter + 0.05) / (darker + 0.05)
+    }
+
+    private func wcagRelativeLuminance(_ color: Color, appearance: NSAppearance) -> CGFloat {
+        var components: (CGFloat, CGFloat, CGFloat) = (0, 0, 0)
+        appearance.performAsCurrentDrawingAppearance {
+            let srgb = NSColor(color).usingColorSpace(.sRGB)
+            components = (srgb?.redComponent ?? 0, srgb?.greenComponent ?? 0, srgb?.blueComponent ?? 0)
+        }
+
+        func linearize(_ component: CGFloat) -> CGFloat {
+            component <= 0.04045
+                ? component / 12.92
+                : pow((component + 0.055) / 1.055, 2.4)
+        }
+
+        let red = linearize(components.0)
+        let green = linearize(components.1)
+        let blue = linearize(components.2)
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+    }
+
     func testHeatmapFiveLevelScale() {
         let level0 = AppTheme.Heatmap.color(for: 0)
         let level1 = AppTheme.Heatmap.color(for: 1)
