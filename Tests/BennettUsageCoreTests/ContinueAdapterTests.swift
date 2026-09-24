@@ -179,7 +179,7 @@ final class ContinueAdapterTests: XCTestCase {
     func testRewriteAfterUnchangedPrefixChangesGeneration() async throws {
         let modifiedAt = Date(timeIntervalSince1970: 5_500)
         let firstHistory = """
-        {"message":{"role":"assistant","content":"stable","usage":{"prompt_tokens":10,"completion_tokens":1,"prompt_tokens_details":{}}}}
+        {"message":{"role":"assistant","content":"stable","usage":{"prompt_tokens":10,"completion_tokens":1,"prompt_tokens_details":{}}}},
         {"message":{"role":"assistant","content":"rewritten","usage":{"prompt_tokens":20,"completion_tokens":2,"prompt_tokens_details":{}}}}
         """
         let file = try writeSession(
