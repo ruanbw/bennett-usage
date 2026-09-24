@@ -13,12 +13,14 @@ public final class StatusItemController: NSObject {
     private let syncCoordinator: SyncCoordinator
     private let summaryModel = StatusSummaryModel()
     private let updateChecker: UpdateChecker
+    private var lastSyncDate: Date?
     private let openDashboardAction: () -> Void
     private let openSettingsAction: () -> Void
     private let localization: LocalizationManager
     private var refreshTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
     private var updateObservation: AnyCancellable?
+    private var localizationObservation: AnyCancellable?
 
     public init(
         aggregator: MetricsAggregator,
@@ -58,9 +60,18 @@ public final class StatusItemController: NSObject {
         )
         // A background check can land long after launch; the menu bar icon is
         // the only surface a popover-shy user ever looks at.
-        updateObservation = updateChecker.$status
+        updateObservation = Publishers.CombineLatest(
+            updateChecker.$status,
+            updateChecker.$skippedVersion
+        )
+        .sink { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.applyStatusItemAppearance() }
+        }
+        localizationObservation = localization.objectWillChange
             .sink { [weak self] _ in
-                MainActor.assumeIsolated { self?.applyStatusItemAppearance() }
+                Task { @MainActor [weak self] in
+                    self?.applyStatusItemAppearance()
+                }
             }
         refreshData()
 
@@ -96,15 +107,25 @@ public final class StatusItemController: NSObject {
 
     @objc private func handleSystemDidWake() {
         Task { [weak self] in
-            _ = try? await self?.syncCoordinator.syncForUI(force: true)
-            self?.refreshData()
+            guard let self else { return }
+            do {
+                _ = try await self.syncCoordinator.syncForUI(force: true)
+                self.recordSuccessfulSync()
+            } catch {
+                // A wake is a retry opportunity, not proof of a successful sync.
+            }
+            self.refreshData()
         }
     }
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: localization.localized(.statusItemAccessibility))
-            button.toolTip = localization.localized(.statusItemAccessibility)
+            let accessibilityLabel = localization.localized(.statusItemAccessibility)
+            button.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: accessibilityLabel)
+            button.setAccessibilityLabel(accessibilityLabel)
+            button.setAccessibilityRole(.button)
+            button.setAccessibilityHelp(localization.localized(.openDashboardShortcut))
+            button.toolTip = accessibilityLabel
             button.target = self
             button.action = #selector(togglePopover)
         }
@@ -146,6 +167,7 @@ public final class StatusItemController: NSObject {
     /// bar. Keep `contentSize` in sync with the content it will present.
     private func sizePopoverToContent() {
         guard let contentView = popover.contentViewController?.view else { return }
+        contentView.layoutSubtreeIfNeeded()
         let fittingSize = contentView.fittingSize
         guard fittingSize.width > 0, fittingSize.height > 0 else { return }
         popover.contentSize = fittingSize
@@ -155,23 +177,38 @@ public final class StatusItemController: NSObject {
         guard let button = statusItem.button else { return }
         if popover.isShown {
             popover.performClose(nil)
-        } else {
-            sizePopoverToContent()
-            // Show immediately with the cached summary; refresh runs async.
-            // Opening the popover is frequent and must not run a full-tree sync
-            // every click (U-01), so this path uses the throttled UI sync. The
-            // refresh below runs unconditionally after it, so a throttled pass
-            // still re-reads (a concurrent FSEvents sync may have inserted).
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            refreshData()
-            Task {
-                _ = try? await syncCoordinator.syncForUI()
-                // `syncForUI` is throttled and only posts a notification when
-                // it actually inserts rows; always re-read afterwards so a
-                // throttled pass (or a concurrent FSEvents sync) still leaves
-                // the popover showing fresh data instead of the stale cache.
-                refreshData()
+            return
+        }
+
+        sizePopoverToContent()
+        // Show immediately with the cached summary; refresh runs async.
+        // Opening the popover is frequent and must not run a full-tree sync
+        // every click (U-01), so this path uses the throttled UI sync. The
+        // refresh below runs unconditionally after it, so a throttled pass
+        // still re-reads (a concurrent FSEvents sync may have inserted).
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        // A status-item popover can be shown while the accessory app is still
+        // inactive. Explicitly activate and key its panel so SwiftUI controls
+        // receive keyboard focus on the first click, not only after a second
+        // click elsewhere in the app.
+        NSApp.activate(ignoringOtherApps: true)
+        if let popoverWindow = popover.contentViewController?.view.window {
+            popoverWindow.makeKey()
+            popoverWindow.makeFirstResponder(popover.contentViewController?.view)
+        }
+        refreshData()
+        Task {
+            do {
+                _ = try await syncCoordinator.syncForUI()
+            } catch {
+                // Keep the previous last-sync time when a sync attempt fails;
+                // the cached summary remains useful while the watcher retries.
             }
+            // `syncForUI` is throttled and only posts a notification when
+            // it actually inserts rows; always re-read afterwards so a
+            // throttled pass (or a concurrent FSEvents sync) still leaves the
+            // popover showing fresh data instead of the stale cache.
+            refreshData()
         }
     }
 
@@ -202,28 +239,56 @@ public final class StatusItemController: NSObject {
     /// sources never overwrite each other's contribution to the icon/tooltip.
     private func applyStatusItemAppearance() {
         guard let button = statusItem.button else { return }
+        let accessibilityLabel = localization.localized(.statusItemAccessibility)
+        button.setAccessibilityLabel(accessibilityLabel)
+        button.setAccessibilityHelp(localization.localized(.openDashboardShortcut))
         let tokens = summaryModel.summary?.totalTokens ?? 0
-        button.title = TokenFormatter.formatStatusTitle(tokens)
+        let tokenTitle = TokenFormatter.formatStatusTitle(tokens)
+        button.title = tokenTitle
+
+        let syncText = lastSyncText()
         var tooltip = tokens > 0
             ? "\(TokenFormatter.formatFull(tokens)) tokens"
             : localization.localized(.statusItemAccessibility)
+        if let syncText {
+            tooltip += " · " + syncText
+        }
 
-        if let update = updateChecker.availableUpdate {
+        let updateText = updateChecker.availableUpdate.map {
+            String(format: localization.localized(.updateAvailableTitle), $0.version.description)
+        }
+        if let updateText {
             button.image = NSImage(
                 systemSymbolName: "arrow.down.circle",
-                accessibilityDescription: String(
-                    format: localization.localized(.updateAvailableTitle),
-                    update.version.description
-                )
+                accessibilityDescription: updateText
             )
-            tooltip += " · " + String(format: localization.localized(.updateAvailableTitle), update.version.description)
+            tooltip += " · " + updateText
         } else {
             button.image = NSImage(
                 systemSymbolName: "sparkles",
-                accessibilityDescription: localization.localized(.statusItemAccessibility)
+                accessibilityDescription: accessibilityLabel
             )
         }
         button.toolTip = tooltip
+        button.setAccessibilityValue(tooltip)
+    }
+
+    private func lastSyncText() -> String? {
+        guard let lastSyncDate else { return nil }
+        let elapsed = max(0, Date().timeIntervalSince(lastSyncDate))
+        if elapsed < 60 {
+            return localization.localized(.syncedJustNow)
+        }
+        let minutes = max(1, Int(elapsed / 60))
+        return localization.localized(.syncedMinutesAgo, arguments: minutes)
+    }
+
+    /// Records a sync that the coordinator has actually completed. Callers
+    /// should invoke this only after awaiting a real sync operation; a display
+    /// refresh or a throttled no-op is not proof that ingestion ran.
+    public func recordSuccessfulSync() {
+        lastSyncDate = Date()
+        applyStatusItemAppearance()
     }
 
     /// Explicit user-initiated sync (the popover’s “Sync Now” button).
@@ -231,13 +296,25 @@ public final class StatusItemController: NSObject {
     /// swallowed, then the summary is refreshed.
     public func forceSync() {
         Task {
-            _ = try? await syncCoordinator.syncForUI(force: true)
+            do {
+                _ = try await syncCoordinator.syncForUI(force: true)
+                recordSuccessfulSync()
+            } catch {
+                // A failed explicit sync should not claim a successful timestamp.
+            }
             refreshData()
         }
     }
 
-    private func openDashboardWindow() {
+    /// Dismisses the popover without changing the app's current surface.
+    /// Keyboard commands use this before opening a standalone window so a
+    /// status-panel click cannot leave two app-owned surfaces stacked.
+    public func dismissPopover() {
         popover.performClose(nil)
+    }
+
+    private func openDashboardWindow() {
+        dismissPopover()
         openDashboardAction()
     }
 
