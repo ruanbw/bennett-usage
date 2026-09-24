@@ -249,6 +249,27 @@ final class DashboardViewTests: XCTestCase {
         XCTAssertEqual(HeatmapDisplayMode.monthlyTrend.id, "monthlyTrend")
     }
 
+    func testDashboardChartControlsHaveLocalizedAccessibilityLabels() {
+        let defaults = UserDefaults(suiteName: "DashboardChartAccessibilityTests_\(UUID().uuidString)")!
+        let localization = LocalizationManager(userDefaults: defaults)
+
+        localization.setLanguage(.en)
+        XCTAssertEqual(HeatmapDisplayMode.accessibilityTitle(localization: localization), "Heatmap View")
+        XCTAssertEqual(HeatmapDisplayMode.calendar.accessibilityLabel(localization: localization), "Calendar")
+        XCTAssertEqual(HeatmapDisplayMode.monthlyTrend.accessibilityLabel(localization: localization), "Monthly Trend")
+        XCTAssertEqual(TrendChartType.accessibilityTitle(localization: localization), "Chart Type")
+        XCTAssertEqual(TrendChartType.bar.accessibilityLabel(localization: localization), "Bar Chart")
+        XCTAssertEqual(TrendChartType.line.accessibilityLabel(localization: localization), "Line Chart")
+
+        localization.setLanguage(.zh)
+        XCTAssertEqual(HeatmapDisplayMode.accessibilityTitle(localization: localization), "热力图视图")
+        XCTAssertEqual(HeatmapDisplayMode.calendar.accessibilityLabel(localization: localization), "日历视图")
+        XCTAssertEqual(HeatmapDisplayMode.monthlyTrend.accessibilityLabel(localization: localization), "月度趋势")
+        XCTAssertEqual(TrendChartType.accessibilityTitle(localization: localization), "图表类型")
+        XCTAssertEqual(TrendChartType.bar.accessibilityLabel(localization: localization), "柱状图")
+        XCTAssertEqual(TrendChartType.line.accessibilityLabel(localization: localization), "折线图")
+    }
+
     @MainActor
     func testDashboardContentViewAnnualPanoramaStateAndDisplay() async throws {
         let db = try DatabaseManager.inMemory()

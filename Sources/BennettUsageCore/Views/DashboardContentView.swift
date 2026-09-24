@@ -7,6 +7,17 @@ public enum TrendChartType: String, CaseIterable, Identifiable {
     case line
 
     public var id: String { rawValue }
+
+    static func accessibilityTitle(localization: LocalizationManager) -> String {
+        localization.localized(.chartType)
+    }
+
+    func accessibilityLabel(localization: LocalizationManager) -> String {
+        switch self {
+        case .bar: return localization.localized(.chartTypeBar)
+        case .line: return localization.localized(.chartTypeLine)
+        }
+    }
 }
 
 public enum HeatmapDisplayMode: String, CaseIterable, Identifiable {
@@ -14,6 +25,17 @@ public enum HeatmapDisplayMode: String, CaseIterable, Identifiable {
     case monthlyTrend
 
     public var id: String { rawValue }
+
+    static func accessibilityTitle(localization: LocalizationManager) -> String {
+        localization.localized(.heatmapView)
+    }
+
+    func accessibilityLabel(localization: LocalizationManager) -> String {
+        switch self {
+        case .calendar: return localization.localized(.calendarView)
+        case .monthlyTrend: return localization.localized(.monthlyTrend)
+        }
+    }
 }
 
 public struct DashboardContentView: View {
@@ -559,13 +581,18 @@ public struct DashboardContentView: View {
                     }
 
                     // Display Mode Switcher (Calendar vs Monthly Trend)
-                    Picker("", selection: $heatmapDisplayMode) {
+                    Picker(
+                        HeatmapDisplayMode.accessibilityTitle(localization: localization),
+                        selection: $heatmapDisplayMode
+                    ) {
                         Image(systemName: "square.grid.3x3.fill")
-                            .tag(HeatmapDisplayMode.calendar)
                             .help(localization.localized(.calendarView))
+                            .accessibilityLabel(HeatmapDisplayMode.calendar.accessibilityLabel(localization: localization))
+                            .tag(HeatmapDisplayMode.calendar)
                         Image(systemName: "chart.bar.xaxis")
-                            .tag(HeatmapDisplayMode.monthlyTrend)
                             .help(localization.localized(.monthlyTrend))
+                            .accessibilityLabel(HeatmapDisplayMode.monthlyTrend.accessibilityLabel(localization: localization))
+                            .tag(HeatmapDisplayMode.monthlyTrend)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -1253,13 +1280,18 @@ private struct TrendChartCard: View {
                 Text(trendTitle)
                     .font(.headline)
                 Spacer()
-                Picker("", selection: $trendChartType) {
+                Picker(
+                    TrendChartType.accessibilityTitle(localization: localization),
+                    selection: $trendChartType
+                ) {
                     Image(systemName: "chart.bar.fill")
-                        .tag(TrendChartType.bar)
                         .help(localization.localized(.chartTypeBar))
+                        .accessibilityLabel(TrendChartType.bar.accessibilityLabel(localization: localization))
+                        .tag(TrendChartType.bar)
                     Image(systemName: "chart.xyaxis.line")
-                        .tag(TrendChartType.line)
                         .help(localization.localized(.chartTypeLine))
+                        .accessibilityLabel(TrendChartType.line.accessibilityLabel(localization: localization))
+                        .tag(TrendChartType.line)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()

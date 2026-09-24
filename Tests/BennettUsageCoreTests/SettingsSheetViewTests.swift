@@ -285,6 +285,38 @@ final class SettingsSheetViewTests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsMenuControlExposesDynamicAccessibilityState() {
+        let control = SettingsMenuControl(
+            title: "System Default",
+            accessibilityLabel: "Language",
+            options: ["System Default", "English"],
+            onSelect: { _ in }
+        )
+
+        XCTAssertTrue(control.isAccessibilityElement())
+        XCTAssertEqual(control.accessibilityRole(), .popUpButton)
+        XCTAssertEqual(control.accessibilityLabel(), "Language")
+        XCTAssertEqual(control.accessibilityValue() as? String, "System Default")
+        XCTAssertFalse(control.isAccessibilityExpanded())
+
+        control.setMenuExpandedForTesting(true)
+        XCTAssertTrue(control.isAccessibilityExpanded())
+        control.update(
+            title: "English",
+            accessibilityLabel: "语言",
+            options: ["System Default", "English"],
+            onSelect: { _ in }
+        )
+        XCTAssertEqual(control.accessibilityLabel(), "语言")
+        XCTAssertEqual(control.accessibilityValue() as? String, "English")
+        XCTAssertTrue(control.isAccessibilityExpanded())
+
+        control.performSelectionForTesting(at: 0)
+        XCTAssertEqual(control.accessibilityValue() as? String, "System Default")
+        XCTAssertTrue(control.isAccessibilityExpanded())
+    }
+
+    @MainActor
     func testLanguageDropdownSelectionUpdatesLocalization() {
         let manager = LocalizationManager(userDefaults: testDefaults)
         manager.setLanguage(.system)

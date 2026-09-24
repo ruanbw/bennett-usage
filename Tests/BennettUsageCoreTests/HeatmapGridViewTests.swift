@@ -203,6 +203,12 @@ final class HeatmapGridViewTests: XCTestCase {
             HeatmapGridView.accessibilityValue(for: empty, localization: localization),
             "No token usage"
         )
+
+        localization.setLanguage(.zh)
+        XCTAssertEqual(
+            HeatmapGridView.accessibilityValue(for: empty, localization: localization),
+            "无 Token 消耗"
+        )
     }
 
     @MainActor

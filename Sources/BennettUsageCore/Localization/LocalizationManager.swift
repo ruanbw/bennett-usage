@@ -68,6 +68,7 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case viewAnnualDashboard
     case viewingAnnualDashboard
     case exitAnnualDashboard
+    case heatmapView
     case calendarView
     case monthlyTrend
     case tokenActivity
@@ -86,6 +87,7 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case noToolData
     case noModelData
     case noActivityRecorded
+    case chartType
     case chartTypeBar
     case chartTypeLine
     case hourlyTrendLast24h
@@ -366,6 +368,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     .viewAnnualDashboard: "Full Year View",
     .viewingAnnualDashboard: "Viewing Year %@",
     .exitAnnualDashboard: "Exit Year View",
+    .heatmapView: "Heatmap View",
     .calendarView: "Calendar",
     .monthlyTrend: "Monthly Trend",
     .tokenActivity: "Token Activity (%@)",
@@ -384,6 +387,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     .noToolData: "No tool data for %@",
     .noModelData: "No model data for %@",
     .noActivityRecorded: "No activity recorded for %@",
+    .chartType: "Chart Type",
     .chartTypeBar: "Bar Chart",
     .chartTypeLine: "Line Chart",
     .hourlyTrendLast24h: "Hourly Token Trend (Last 24h)",
@@ -542,6 +546,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .viewAnnualDashboard: "全盘年度分析",
     .viewingAnnualDashboard: "当前为 %@ 年全盘分析",
     .exitAnnualDashboard: "退出年度分析",
+    .heatmapView: "热力图视图",
     .calendarView: "日历视图",
     .monthlyTrend: "月度趋势",
     .tokenActivity: "Token 活跃度 (%@)",
@@ -560,6 +565,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .noToolData: "%@ 暂无工具数据",
     .noModelData: "%@ 暂无模型数据",
     .noActivityRecorded: "%@ 暂无活动记录",
+    .chartType: "图表类型",
     .chartTypeBar: "柱状图",
     .chartTypeLine: "折线图",
     .hourlyTrendLast24h: "小时级 Token 趋势 (最近 24 小时)",

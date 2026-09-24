@@ -322,6 +322,7 @@ public struct SettingsContentView: View {
                     Spacer()
                     trailingMenuPicker(
                         displayName(for: localization.selectedLanguage),
+                        accessibilityLabel: localization.localized(.language),
                         options: localization.availableLanguages.map(displayName(for:))
                     ) { index in
                         let languages = localization.availableLanguages
@@ -347,6 +348,7 @@ public struct SettingsContentView: View {
                     Spacer()
                     trailingMenuPicker(
                         autoRefreshSubtitle,
+                        accessibilityLabel: localization.localized(.autoRefreshLabel),
                         options: [
                             localization.localized(.autoRefreshOff),
                             String(format: localization.localized(.autoRefreshSeconds), 10),
@@ -986,10 +988,16 @@ public struct SettingsContentView: View {
     /// value flush with the card's trailing edge and draws its own chrome.
     private func trailingMenuPicker(
         _ title: String,
+        accessibilityLabel: String,
         options: [String],
         onSelect: @escaping (Int) -> Void
     ) -> some View {
-        SettingsMenuControlView(title: title, options: options, onSelect: onSelect)
+        SettingsMenuControlView(
+            title: title,
+            accessibilityLabel: accessibilityLabel,
+            options: options,
+            onSelect: onSelect
+        )
     }
 
     private var isPerformingMaintenance: Bool {
@@ -1141,19 +1149,29 @@ final class SettingsMenuControl: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let chevronView = NSImageView()
     private var currentTitle: String
+    private var accessibilityLabelText: String
     private var options: [String]
     private var onSelect: (Int) -> Void
     private var isHovered = false
+    private var isMenuExpanded = false
 
     private let minWidth: CGFloat = 140
     private let maxWidth: CGFloat = 260
 
-    init(title: String, options: [String], onSelect: @escaping (Int) -> Void) {
+    init(
+        title: String,
+        accessibilityLabel: String? = nil,
+        options: [String],
+        onSelect: @escaping (Int) -> Void
+    ) {
         self.currentTitle = title
+        self.accessibilityLabelText = accessibilityLabel ?? title
         self.options = options
         self.onSelect = onSelect
         super.init(frame: .zero)
+        setAccessibilityElement(true)
         setAccessibilityIdentifier(Self.accessibilityID)
+        updateAccessibilityState()
 
         titleLabel.font = .systemFont(ofSize: NSFont.systemFontSize)
         titleLabel.textColor = .labelColor
@@ -1243,18 +1261,37 @@ final class SettingsMenuControl: NSView {
         }
     }
 
-    func update(title: String, options: [String], onSelect: @escaping (Int) -> Void) {
+    func update(
+        title: String,
+        accessibilityLabel: String? = nil,
+        options: [String],
+        onSelect: @escaping (Int) -> Void
+    ) {
         self.options = options
         self.onSelect = onSelect
-        guard title != currentTitle else { return }
+        let updatedAccessibilityLabel = accessibilityLabel ?? title
+        let didChangeValue = title != currentTitle
+        let didChangeAccessibilityLabel = updatedAccessibilityLabel != accessibilityLabelText
+        guard didChangeValue || didChangeAccessibilityLabel else { return }
         currentTitle = title
+        accessibilityLabelText = updatedAccessibilityLabel
         titleLabel.stringValue = title
         toolTip = title
-        invalidateIntrinsicContentSize()
-        needsLayout = true
+        updateAccessibilityState()
+        if didChangeValue {
+            invalidateIntrinsicContentSize()
+            needsLayout = true
+        }
     }
 
     private func presentMenu() {
+        isMenuExpanded = true
+        updateAccessibilityState()
+        defer {
+            isMenuExpanded = false
+            updateAccessibilityState()
+        }
+
         let menu = NSMenu()
         menu.font = .systemFont(ofSize: NSFont.systemFontSize)
         let selected = options.firstIndex(of: currentTitle)
@@ -1277,6 +1314,7 @@ final class SettingsMenuControl: NSView {
         currentTitle = options[sender.tag]
         titleLabel.stringValue = currentTitle
         toolTip = currentTitle
+        updateAccessibilityState()
         invalidateIntrinsicContentSize()
         needsLayout = true
         onSelect(sender.tag)
@@ -1290,19 +1328,44 @@ final class SettingsMenuControl: NSView {
         item.tag = index
         selectItem(item)
     }
+
+    /// Test hook: mirrors the expanded state while the native menu is open.
+    func setMenuExpandedForTesting(_ expanded: Bool) {
+        isMenuExpanded = expanded
+        updateAccessibilityState()
+    }
+
+    private func updateAccessibilityState() {
+        setAccessibilityRole(.popUpButton)
+        setAccessibilityLabel(accessibilityLabelText)
+        setAccessibilityValue(currentTitle)
+        setAccessibilityValueDescription(currentTitle)
+        setAccessibilityExpanded(isMenuExpanded)
+    }
 }
 
 struct SettingsMenuControlView: NSViewRepresentable {
     let title: String
+    let accessibilityLabel: String
     let options: [String]
     let onSelect: (Int) -> Void
 
     func makeNSView(context: Context) -> SettingsMenuControl {
-        SettingsMenuControl(title: title, options: options, onSelect: onSelect)
+        SettingsMenuControl(
+            title: title,
+            accessibilityLabel: accessibilityLabel,
+            options: options,
+            onSelect: onSelect
+        )
     }
 
     func updateNSView(_ control: SettingsMenuControl, context: Context) {
-        control.update(title: title, options: options, onSelect: onSelect)
+        control.update(
+            title: title,
+            accessibilityLabel: accessibilityLabel,
+            options: options,
+            onSelect: onSelect
+        )
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: SettingsMenuControl, context: Context) -> CGSize? {
