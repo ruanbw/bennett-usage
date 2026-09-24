@@ -17,6 +17,7 @@ public actor SyncCoordinator {
     // dashboard / popover fires a sync on every interaction, so a full pass is
     // coalesced to at most one per `minInterval` (U-01).
     private var lastUISyncAt: Date?
+    private var syncStatus = SyncStatus()
 
     public init(
         database: DatabaseManager,
@@ -45,21 +46,52 @@ public actor SyncCoordinator {
         }
         isSyncing = true
         pendingChangedPaths = Set<String>()
+        let attemptAt = Date()
+        syncStatus = SyncStatus(
+            phase: .syncing,
+            lastAttemptAt: attemptAt,
+            lastSuccessfulAt: syncStatus.lastSuccessfulAt
+        )
+        Self.postSyncStatusDidChange()
         defer {
             isSyncing = false
             pendingChangedPaths = Set<String>()
         }
+
+        var failures: [SyncFailureSummary] = []
         var currentPaths = changedPaths
         var total = 0
-        repeat {
-            needsResync = false
-            total += try await syncAllOnce(changedPaths: currentPaths)
-            if needsResync {
-                currentPaths = pendingChangedPaths.map { Array($0) }
-                pendingChangedPaths = Set<String>()
-            }
-        } while needsResync
-        return total
+        do {
+            repeat {
+                needsResync = false
+                let result = try await syncAllOnce(changedPaths: currentPaths)
+                total += result.ingestedCount
+                failures.append(contentsOf: result.failures)
+                if needsResync {
+                    currentPaths = pendingChangedPaths.map { Array($0) }
+                    pendingChangedPaths = Set<String>()
+                }
+            } while needsResync
+
+            let completedAt = Date()
+            syncStatus = SyncStatus(
+                phase: .idle,
+                lastAttemptAt: attemptAt,
+                lastSuccessfulAt: failures.isEmpty ? completedAt : syncStatus.lastSuccessfulAt,
+                failures: failures
+            )
+            Self.postSyncStatusDidChange()
+            return total
+        } catch {
+            syncStatus = SyncStatus(
+                phase: .idle,
+                lastAttemptAt: attemptAt,
+                lastSuccessfulAt: syncStatus.lastSuccessfulAt,
+                failures: failures
+            )
+            Self.postSyncStatusDidChange()
+            throw error
+        }
     }
 
     /// UI-triggered sync entry point.
@@ -88,8 +120,14 @@ public actor SyncCoordinator {
         return result
     }
 
-    private func syncAllOnce(changedPaths: [String]? = nil) async throws -> Int {
+    private func syncAllOnce(changedPaths: [String]? = nil) async throws -> (ingestedCount: Int, failures: [SyncFailureSummary]) {
         updateWatchingPathsIfNeeded()
+        let eligible = eligibleAdapters(changedPaths: changedPaths)
+        let result = await fetchEligibleAdapters(eligible)
+        return await persist(fetched: result.fetched, failures: result.failures)
+    }
+
+    private func eligibleAdapters(changedPaths: [String]?) -> [(adapter: any AgentSourceAdapter, path: URL)] {
         // Phase 1 (actor, cheap): eligibility is a few path-prefix checks.
         var eligible: [(adapter: any AgentSourceAdapter, path: URL)] = []
         for adapter in registry.allAdapters() {
@@ -103,20 +141,31 @@ public actor SyncCoordinator {
             }
             eligible.append((adapter, path))
         }
+        return eligible
+    }
 
-        // Phase 2 (concurrent): cursor reads + the heavy fetch per adapter.
+    private struct Fetched: Sendable {
+        let adapter: any AgentSourceAdapter
+        let path: URL
+        let cursor: SyncCursor?
+        let records: [UnifiedTokenRecord]
+        let newCursor: SyncCursor
+    }
+
+    private struct FetchBatch: Sendable {
+        let fetched: [Fetched?]
+        let failures: [SyncFailureSummary]
+    }
+
+    private func fetchEligibleAdapters(
+        _ eligible: [(adapter: any AgentSourceAdapter, path: URL)]
+    ) async -> FetchBatch {
         // `DatabaseManager` is lock-guarded and `fetchOffActor` is nonisolated,
         // so per-adapter enumeration + parse latencies overlap instead of
         // adding up. Only Sendable locals cross into the group, never `self`.
-        struct Fetched: Sendable {
-            let adapter: any AgentSourceAdapter
-            let path: URL
-            let cursor: SyncCursor?
-            let records: [UnifiedTokenRecord]
-            let newCursor: SyncCursor
-        }
         let database = self.database
         var fetched: [Fetched?] = Array(repeating: nil, count: eligible.count)
+        var fetchFailures: [SyncFailureSummary] = []
         await withTaskGroup(of: (Int, Fetched?).self) { group in
             for (index, item) in eligible.enumerated() {
                 group.addTask {
@@ -132,13 +181,24 @@ public actor SyncCoordinator {
             }
             for await (index, result) in group {
                 fetched[index] = result
+                if result == nil {
+                    let sourceId = eligible[index].adapter.sourceId
+                    fetchFailures.append(SyncFailureSummary(sourceId: sourceId, stage: .fetch))
+                }
             }
         }
+        return FetchBatch(fetched: fetched, failures: fetchFailures)
+    }
 
-        // Phase 3 (actor, serial, registry order): cutover handling, pricing,
+    private func persist(
+        fetched: [Fetched?],
+        failures initialFailures: [SyncFailureSummary]
+    ) async -> (ingestedCount: Int, failures: [SyncFailureSummary]) {
+        // Actor-serial, registry order: cutover handling, pricing,
         // persistence. Cursor writes stay ordered and deterministic.
         var totalIngested = 0
         var dataDidChange = false
+        var failures = initialFailures
         for slot in fetched {
             guard let fetch = slot else { continue }
             let adapter = fetch.adapter
@@ -152,7 +212,13 @@ public actor SyncCoordinator {
                     // Never delete the old source state before a complete fresh
                     // snapshot has been read and priced. Persistence below swaps
                     // records, rollups, and cursor in one transaction.
-                    (finalRecords, finalCursor) = try await Self.fetchCompleteSnapshotOffActor(adapter, from: fetch.path)
+                    do {
+                        (finalRecords, finalCursor) = try await Self.fetchCompleteSnapshotOffActor(adapter, from: fetch.path)
+                    } catch {
+                        print("Error syncing adapter \(adapter.sourceId): \(error)")
+                        failures.append(SyncFailureSummary(sourceId: adapter.sourceId, stage: .completeSnapshot))
+                        continue
+                    }
                 } else {
                     finalRecords = fetch.records
                     finalCursor = fetch.newCursor
@@ -198,6 +264,7 @@ public actor SyncCoordinator {
                 totalIngested += changed
             } catch {
                 print("Error syncing adapter \(adapter.sourceId): \(error)")
+                failures.append(SyncFailureSummary(sourceId: adapter.sourceId, stage: .persistence))
             }
         }
         if dataDidChange {
@@ -210,7 +277,7 @@ public actor SyncCoordinator {
                 )
             }
         }
-        return totalIngested
+        return (totalIngested, failures)
     }
 
     /// A changed database or file-generation identity invalidates an otherwise
@@ -259,6 +326,10 @@ public actor SyncCoordinator {
         return watchedPaths
     }
 
+    public func currentSyncStatus() -> SyncStatus {
+        return syncStatus
+    }
+
     public func startWatching() {
         updateWatchingPathsIfNeeded()
     }
@@ -279,6 +350,13 @@ public actor SyncCoordinator {
                 }
             }
         }
+    }
+
+    private nonisolated static func postSyncStatusDidChange() {
+        NotificationCenter.default.post(
+            name: .bennettUsageSyncStatusDidChange,
+            object: nil
+        )
     }
 
     private func watchDirectories(for adapter: any AgentSourceAdapter, dataRoot: URL) -> [URL] {
