@@ -31,7 +31,9 @@ Everything is parsed from local session stores — no API keys, no accounts, no 
 
 - **Menu bar at a glance** — today's tokens always visible; click for today's usage, estimated cost, and a per-tool breakdown, plus one-click sync.
 - **Dashboard** — 24 hours / today / 7 days / 30 days / past year / by year. Hourly token trend stacked by model (bar or line), spend share by tool and by model, annual heatmap (calendar or monthly trend), project leaderboard, and cache hit statistics.
-- **Settings** — General (language, refresh interval, automatic update checks), Agents (installed or not, rescan now), Pricing & FX (USD / CNY, custom rate), Data & Storage (database location, reset), About (check for updates).
+- **Period-over-period, without guessing** — every range states its change against the window of the same length immediately before it (today against yesterday up to the same time, 24 hours against the previous 24). When there is no comparable window, or nothing was ever cacheable, it says so instead of printing a number: no 97% "drops" caused by missing history, no 0% cache hit rate standing in for "not measured".
+- **Keyboard** — ⌘1–⌘5 choose the time range, ⌘D opens the dashboard, ⌘, opens settings, ⌘R syncs now.
+- **Settings** — General (language, appearance, refresh interval, automatic update checks), Agents (log path status, record counts, re-detect), Pricing & FX (USD / CNY, custom rate), Data & Storage (database location and on-disk footprint, reset), About (check for updates).
 - **Update checks** — compares against GitHub Releases, automatic (once a day, can be turned off) or manual. New versions surface in the menu bar icon and popover, with the DMG for your architecture and an option to skip a version.
 - **18 data sources** — local session logs parsed directly. No API keys, plain SQLite storage, FSEvents file watching for automatic sync.
 - **English & Simplified Chinese** — or follow the system language.
