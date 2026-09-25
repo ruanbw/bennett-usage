@@ -35,13 +35,24 @@ public final class StatusSummaryModel: ObservableObject {
     /// trend. nil when the comparison is unavailable.
     @Published public var yesterdayTotal: Int?
 
-    /// Cache-hit rate for the popover's ring.
+    /// True when the last attempt to read the local database failed.
     ///
-    /// `TodaySummary` carries totals and a per-tool breakdown but no token-kind
-    /// split, so the ring stays at zero rather than reading a second query on
-    /// every popover open. An empty ring is an honest "not measured here"; a
-    /// plausible-looking arc built from the wrong denominator would not be.
-    public var cacheHitRate: Double { 0 }
+    /// A failed read leaves the previous snapshot on screen, and the sync
+    /// freshness above it says nothing about the database: without this flag the
+    /// popover kept a green "just updated" capsule over numbers it could no
+    /// longer read. Published only on transition, so the view tree is not
+    /// invalidated on every read.
+    @Published public var dataReadFailed: Bool = false
+
+    /// Cache-hit rate for the popover's ring, or nil when nothing was
+    /// cacheable today.
+    ///
+    /// This used to be a hard-coded `0`, described as an honest “not measured
+    /// here” — but a zero renders as a drawn empty ring with an amber warning
+    /// dot, which claims “cache is failing”. `TodaySummary` now carries the
+    /// rate from the rollups it already read, so the popover and the Dashboard
+    /// state the same number for the same day.
+    public var cacheHitRate: Double? { summary?.cacheHitRate }
 
     /// Whether the numbers on screen are current enough to act on.
     public var freshnessLevel: StateCapsule.Level {
@@ -187,7 +198,7 @@ public struct MenuBarPopoverView: View {
                     // The one ratio that earns a shape. At 62pt it fits the
                     // 360pt width beside the total without pushing either
                     // reading into truncation.
-                    CacheHitRing(rate: model.cacheHitRate, diameter: 62)
+                    CacheHitReadout(rate: model.cacheHitRate, diameter: 62)
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel(localization.localized(.popoverAccessibilityDescription))
@@ -220,19 +231,31 @@ public struct MenuBarPopoverView: View {
     /// have to open the Dashboard for, and each says what period it covers.
     private func glanceFacts(active: [ActiveTool]) -> some View {
         HStack(alignment: .center, spacing: DesignTokens.Metrics.modulePadding) {
+            // `Readout` expands by default, which suits a row of equal-weight
+            // columns. Here it stole the state capsule's width instead, so the
+            // pill every popover shows read "数据刚刚…".
             Readout(
                 label: localization.localized(.estimatedCost),
-                value: pricingEngine.spendString(summary?.totalCostUSD ?? 0),
+                // A missing summary is "not measured yet", which is not the
+                // same claim as "spent nothing": the block above already says
+                // there is no data, so $0.00 here contradicted it.
+                value: summary == nil ? "—" : pricingEngine.spendString(summary?.totalCostUSD ?? 0),
                 valueFont: DesignTokens.TypeScale.value
             )
+            .fixedSize(horizontal: true, vertical: false)
             InlineDivider(axis: .vertical).frame(height: 30)
             Readout(
                 label: localization.localized(.popoverSourceCount),
-                value: String(active.count),
+                value: summary == nil ? "—" : String(active.count),
                 valueFont: DesignTokens.TypeScale.value
             )
+            .fixedSize(horizontal: true, vertical: false)
             Spacer(minLength: 8)
-            StateCapsule(model.freshnessLevel, text: dataFreshnessText)
+            // The capsule states the state. It used to show the success
+            // timestamp even while sources were failing, so a partial failure
+            // read as "data updated just now".
+            StateCapsule(model.freshnessLevel, text: freshnessText)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, DesignTokens.Metrics.windowPadding)
         .padding(.vertical, DesignTokens.Metrics.modulePaddingTight)
@@ -322,6 +345,22 @@ public struct MenuBarPopoverView: View {
         SecondaryIconAction(systemImage: systemImage, label: label, action: action)
     }
 
+    /// What the capsule says: the failure if there was one, otherwise how old
+    /// the last successful sync is.
+    ///
+    /// The failure branch used only to color the dot red while the text kept
+    /// promising "just updated" — the copy has to carry the state, because the
+    /// color is never the only signal.
+    private var freshnessText: String {
+        if model.dataReadFailed {
+            return localization.localized(.staleData)
+        }
+        if model.freshness.partialFailure != nil {
+            return localization.localized(.syncFailed)
+        }
+        return dataFreshnessText
+    }
+
     private var dataFreshnessText: String {
         guard let lastSuccessfulAt = model.freshness.lastSuccessful?.completedAt else {
             return localization.localized(.notSyncedYet)
@@ -330,7 +369,16 @@ public struct MenuBarPopoverView: View {
         if minutes == 0 {
             return localization.localized(.dataUpdatedJustNow)
         }
-        return localization.localized(.dataUpdatedMinutesAgo, arguments: minutes)
+        if minutes < 60 {
+            return localization.localized(.dataUpdatedMinutesAgo, arguments: minutes)
+        }
+        let hours = minutes / 60
+        if hours < 48 {
+            return localization.localized(.syncedHoursAgo, arguments: hours)
+        }
+        // "Synced 43200 minutes ago" was the alternative, and it is not a
+        // duration anyone reads.
+        return localization.localized(.syncedDaysAgo, arguments: hours / 24)
     }
 
     /// A sparkline with a baseline and a named peak. Without them the mark
@@ -365,7 +413,9 @@ public struct MenuBarPopoverView: View {
                         .frame(height: DesignTokens.Metrics.hairline)
                 }
                 .accessibilityLabel(localization.localized(.hourlyTrendToday))
-                .accessibilityValue(TokenFormatter.formatFull(total))
+                .accessibilityValue(
+                    String(format: localization.localized(.tokenValue), TokenFormatter.formatFull(total))
+                )
         }
     }
 
@@ -408,7 +458,8 @@ public struct MenuBarPopoverView: View {
                                 ?? AppTheme.Harmonic.color(for: tool.id)
                         )
                     },
-                    height: 6
+                    height: 6,
+                    label: localization.localized(.toolBreakdownToday)
                 )
                 .accessibilityValue(
                     Self.distributionAccessibilityValue(for: active, localization: localization)
@@ -444,7 +495,11 @@ public struct MenuBarPopoverView: View {
                             Text(String(format: "%.1f%%", topShare(for: tool, in: active)))
                                 .font(DesignTokens.TypeScale.numeric)
                                 .foregroundColor(DesignTokens.Ink.muted)
-                                .frame(width: 40, alignment: .trailing)
+                                // 13pt monospaced digits need ~7.8pt each, so
+                                // "100.0%" wants 47pt. At 40 the fullest row in
+                                // the list — the one every screenshot shows —
+                                // rendered as "100…".
+                                .frame(width: 50, alignment: .trailing)
                         }
                         .frame(height: 24)
                         .accessibilityElement(children: .combine)

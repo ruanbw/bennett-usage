@@ -66,9 +66,17 @@ public struct DashboardContentView: View {
     @State private var isSettingsHovered: Bool = false
     @State private var todaySummary: TodaySummary?
     @State private var lastDataRefreshAt: Date?
+    /// True while the last attempt to read the selected range failed. The band
+    /// keeps its previous numbers in that case and marks them stale, rather than
+    /// rendering an unread database as "no usage recorded".
+    @State private var periodMetricsFailed: Bool = false
     /// The preceding window of equal length, for the period-over-period delta
     /// in the conclusion band. nil until the first comparison query resolves.
     @State private var comparisonPeriod: MetricsAggregator.ComparisonPeriod?
+    /// How much of the selected window is backed by records. Both halves of the
+    /// fraction come from this one value, so they always describe the same
+    /// window. nil until the first coverage query resolves.
+    @State private var rangeCoverage: MetricsAggregator.RangeCoverage?
 
     public init(
         aggregator: MetricsAggregator,
@@ -124,6 +132,7 @@ public struct DashboardContentView: View {
     /// says the data may be incomplete, while every figure stays visible — an
     /// error that hides the numbers is worse than an error that admits it.
     private var freshnessLevel: StateCapsule.Level {
+        if periodMetricsFailed { return .stale }
         guard let lastDataRefreshAt else { return .stale }
         let minutes = Int(Date().timeIntervalSince(lastDataRefreshAt) / 60)
         return minutes < Self.staleThresholdMinutes ? .ok : .stale
@@ -136,22 +145,13 @@ public struct DashboardContentView: View {
     ///
     /// A reader who sees "3.28B tokens, last 30 days" is entitled to know when
     /// the tool has only been running for three of them, because those are very
-    /// different claims.
+    /// different claims. The numerator and the denominator both come from
+    /// `fetchRangeCoverage`, which scopes them to the selected window — an
+    /// earlier version counted days from the annual heatmap and divided them by
+    /// the range's day span, so the 24-hour view read `34 / 1`.
     private var coverageDaysText: String {
-        let recorded = heatmapCells.filter { $0.totalTokens > 0 }.count
-        let spanDays = Self.expectedDayCount(for: selectedRange)
-        guard spanDays > 0 else { return "—" }
-        return "\(recorded) / \(spanDays)"
-    }
-
-    private static func expectedDayCount(for range: TimeRangeOption) -> Int {
-        switch range {
-        case .last24Hours, .today: return 1
-        case .last7Days: return 7
-        case .last30Days: return 30
-        case .pastYear: return 365
-        case .year: return 365
-        }
+        guard let coverage = rangeCoverage, coverage.expectedDays > 0 else { return "—" }
+        return "\(coverage.recordedDays) / \(coverage.expectedDays)"
     }
 
     // MARK: - Body
@@ -605,9 +605,18 @@ public struct DashboardContentView: View {
     /// that is really just missing history.
     @ViewBuilder
     private func conclusionDelta(metrics: PeriodMetrics?) -> some View {
-        let totalTokens = metrics?.totalTokens ?? 0
-
-        if let previous = comparisonPeriod?.totalTokens, previous > 0 {
+        // Order matters. A window whose predecessor is only partly covered is not
+        // comparable, and `totalTokens` is non-nil as soon as a single comparison
+        // day exists — so testing for a number first made the partial branch
+        // unreachable and stated, for example, a ~97% drop for a 30-day window
+        // over three days of history. The contract is "partialCoverage, never as
+        // a 97% drop".
+        if comparisonPeriod?.isPartialCoverage == true {
+            ScopeTag(localization.localized(.partialComparisonCoverage, arguments: comparisonPeriod?.coveredDays ?? 0))
+        } else if let previous = comparisonPeriod?.totalTokens,
+                  previous > 0,
+                  // A failed metrics read must not be rendered as a -100% delta.
+                  let totalTokens = metrics?.totalTokens {
             let change = (Double(totalTokens) - Double(previous)) / Double(previous)
             DeltaLabel(
                 DeltaBadge(
@@ -623,8 +632,6 @@ public struct DashboardContentView: View {
             .accessibilityLabel(
                 Text(verbatim: "\(localization.localized(.vsPreviousPeriod)) \(String(format: "%+.0f%%", change * 100))")
             )
-        } else if comparisonPeriod?.isPartialCoverage == true {
-            ScopeTag(localization.localized(.partialComparisonCoverage, arguments: comparisonPeriod?.coveredDays ?? 0))
         } else {
             ScopeTag(localization.localized(.noComparablePeriod))
         }
@@ -680,24 +687,13 @@ public struct DashboardContentView: View {
     /// The one ratio that needs a shape, because a percentage beside two other
     /// percentages is not a comparison — it is three numbers.
     private func conclusionCacheRing(metrics: PeriodMetrics?) -> some View {
-        let rate = metrics?.cacheHitRate ?? 0
         // A period with no cache reads has no hit rate. The ring says "not
         // measured" in words instead of drawing a confident empty arc, which
         // would read as "cache is broken" — a diagnosis the data cannot make.
-        let hasMeasurement = (metrics?.cacheReadTokens ?? 0) > 0
+        let rate = (metrics?.cacheReadTokens ?? 0) > 0 ? metrics?.cacheHitRate : nil
 
         return VStack(spacing: 6) {
-            if hasMeasurement {
-                CacheHitRing(rate: rate, diameter: 104)
-            } else {
-                Text("—")
-                    .font(DesignTokens.TypeScale.numericLarge)
-                    .foregroundColor(DesignTokens.Ink.muted)
-                    .frame(width: 104, height: 104)
-                    .background(Circle().strokeBorder(DesignTokens.Ink.track, lineWidth: 4))
-                    .accessibilityLabel(Text(verbatim: localization.localized(.cacheHitRate)))
-                    .accessibilityValue(Text(verbatim: localization.localized(.notMeasured)))
-            }
+            CacheHitReadout(rate: rate, diameter: 104)
             Text(localization.localized(.cacheHitRate))
                 .font(DesignTokens.TypeScale.caption)
                 .foregroundColor(DesignTokens.Ink.muted)
@@ -1726,15 +1722,38 @@ public struct DashboardContentView: View {
             range: range,
             toolFilter: toolFilter
         )
+        // Coverage rides the same refresh: its fraction is only meaningful when
+        // both halves come from the window the range selector currently names.
+        async let coverageRequest = try? await aggregator.fetchRangeCoverage(
+            range: range,
+            toolFilter: toolFilter
+        )
 
         let metrics = try? await metricsRequest
         let comparison = await comparisonRequest
+        let coverage = await coverageRequest
         if Task.isCancelled { return }
-        if metrics != periodMetrics {
-            periodMetrics = metrics
+        if let metrics {
+            if metrics != periodMetrics {
+                periodMetrics = metrics
+            }
+            if periodMetricsFailed {
+                periodMetricsFailed = false
+            }
+        } else {
+            // A failed read keeps the previous numbers and says they are stale.
+            // It used to nil out `periodMetrics`, which the band rendered as
+            // "no usage recorded", $0.00 and 0 tokens — three claims that the
+            // database never made.
+            if !periodMetricsFailed {
+                periodMetricsFailed = true
+            }
         }
         if comparison != comparisonPeriod {
             comparisonPeriod = comparison
+        }
+        if coverage != rangeCoverage {
+            rangeCoverage = coverage
         }
         refreshDerivedToolState()
     }
@@ -1772,6 +1791,12 @@ public struct DashboardContentView: View {
         if Task.isCancelled { return }
         if cells != heatmapCells {
             heatmapCells = cells
+            // The day banner holds a value copy taken when the cell was clicked,
+            // so after a refresh it described a snapshot the grid no longer
+            // showed. Re-bind it to the cell with the same day key.
+            if let selected = selectedCell {
+                selectedCell = cells.first { $0.dayKey == selected.dayKey } ?? selected
+            }
         }
         // Tuples are not Equatable; compare field-wise before assigning so an
         // unchanged year does not invalidate the whole heatmap section.
@@ -1805,10 +1830,15 @@ public struct DashboardContentView: View {
     /// range. It is a quick operational summary, while the hero and charts
     /// continue to represent the active range/filter.
     private func loadTodaySummary() async {
-        let summary = try? await aggregator.fetchTodaySummary()
+        let summary = try? await aggregator.fetchTodaySummary(toolFilter: selectedToolFilter)
         if Task.isCancelled { return }
         todaySummary = summary
-        lastDataRefreshAt = Date()
+        // Only a successful read proves the data on screen is current; stamping
+        // the clock on a failure made the freshness pill claim "updated just
+        // now" over numbers the app could not read.
+        if summary != nil {
+            lastDataRefreshAt = Date()
+        }
     }
 
     /// Full refresh used by the throttled data-update notification path. Reuses
@@ -2230,7 +2260,11 @@ private struct TrendChartCard: View {
                     detail: peak?.label
                 )
                 trendSummaryItem(
-                    title: localization.localized(.averageUsage),
+                    // The mean is over buckets that have tokens, not over every
+                    // bucket: it used to be labelled simply "Average" while
+                    // "Active 12/24" sat next to it, so a reader dividing the
+                    // total by 24 got a different number and no explanation.
+                    title: localization.localized(.averageActiveUsage),
                     value: TokenFormatter.formatCompact(mean),
                     detail: nil
                 )
@@ -2386,7 +2420,8 @@ struct ProportionalDistributionCard: View {
                                 color: $0.color
                             )
                         },
-                        height: 8
+                        height: 8,
+                        label: localization.localized(.toolDistribution)
                     )
 
                     VStack(spacing: 0) {
@@ -2475,14 +2510,18 @@ private struct AnnualMonthlyTrendCard: View {
                             x: .value("Month", item.label),
                             y: .value("Tokens", item.tokens)
                         )
-                        .foregroundStyle(Color.accentColor.gradient)
+                        // `Color.accentColor` is the *system* accent: a user who
+                        // sets a red or graphite accent got annual bars in a hue
+                        // no other chart in the product uses, and red is a state
+                        // colour here. Data ink comes from the token.
+                        .foregroundStyle(DesignTokens.Accent.base.gradient)
                         .cornerRadius(4)
                         .opacity(hoveredAnnualMonth == nil || hoveredAnnualMonth == item.label ? 1.0 : 0.4)
                     }
 
                     if let hovered = hoveredAnnualMonth, annualTrendPoints.contains(where: { $0.label == hovered }) {
                         RuleMark(x: .value("Month", hovered))
-                            .foregroundStyle(Color.secondary.opacity(0.5))
+                            .foregroundStyle(DesignTokens.Ink.faint)
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     }
                 }
@@ -2529,13 +2568,22 @@ private struct AnnualMonthlyTrendCard: View {
                                let point = annualTrendPoints.first(where: { $0.label == hovered }) {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(point.label)
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                    Text("\(TokenFormatter.formatFull(point.tokens)) tokens")
-                                        .font(.caption).bold()
+                                        .font(DesignTokens.TypeScale.caption)
+                                        .foregroundColor(DesignTokens.Ink.muted)
+                                    // The unit was the English word "tokens" in a
+                                    // bilingual product, and the amount was
+                                    // rendered in the success colour — the exact
+                                    // reading the colour roles were separated to
+                                    // stop.
+                                    Text(String(
+                                        format: localization.localized(.tokenValue),
+                                        TokenFormatter.formatFull(point.tokens)
+                                    ))
+                                    .font(DesignTokens.TypeScale.numeric)
+                                    .foregroundColor(DesignTokens.Ink.strong)
                                     Text(pricingEngine.spendString(point.costUSD))
-                                        .font(.caption2)
-                                        .foregroundColor(DesignTokens.State.ok)
+                                        .font(DesignTokens.TypeScale.caption)
+                                        .foregroundColor(DesignTokens.Ink.muted)
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 5)

@@ -226,6 +226,16 @@ public struct SettingsContentView: View {
             guard !Task.isCancelled else { return }
             preferenceFeedbackVisible = false
         }
+        .onReceive(NotificationCenter.default.publisher(for: .bennettUsageDataDidUpdate)) { _ in
+            // The window stays open while a background sync keeps importing, so
+            // its counts used to freeze at the values read when it appeared.
+            Task {
+                // Coalesce: a burst of source updates should cost one refresh.
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard !Task.isCancelled else { return }
+                await rescanAgents()
+            }
+        }
         .onExitCommand {
             // Keep the original callback/API for callers, while leaving window
             // chrome to the native title bar (there is no duplicate close button).
@@ -261,15 +271,20 @@ public struct SettingsContentView: View {
         .background(DesignTokens.Surfaces.inset.opacity(0.6))
     }
 
-    /// Four permanent facts about this install, in the one place a user looks
+    /// Three permanent facts about this install, in the one place a user looks
     /// before changing anything.
     ///
-    /// They used to be spread across four panes: how many agents are connected
-    /// lived in the sidebar, record count in Storage, update state in General,
-    /// privacy in a footer. Each was correct and none of them was available
-    /// when you were on a different page, so "is this thing working" was four
-    /// navigations. Stating all four permanently means the answer is always on
-    /// screen and the panes are for changing things, not for reporting status.
+    /// They used to be spread across three panes: how many agents are connected
+    /// lived in the sidebar, record count in Storage, update state in General.
+    /// Each was correct and none of them was available when you were on a
+    /// different page, so "is this thing working" was three navigations.
+    /// Stating all three permanently means the answer is always on screen and
+    /// the panes are for changing things, not for reporting status.
+    ///
+    /// Privacy is deliberately not one of them: it is a reassurance, not a
+    /// fact about this install, and it is already stated once at the bottom of
+    /// the detail column where it is visible on every pane. Two copies of the
+    /// same sentence, side by side in one window, read as two claims.
     private var sidebarStatusFooter: some View {
         VStack(alignment: .leading, spacing: 7) {
             InlineDivider()
@@ -277,31 +292,24 @@ public struct SettingsContentView: View {
 
             sidebarStatusRow(
                 systemImage: "bolt.shield.fill",
-                text: String(
-                    format: localization.localized(.agentsConnected),
-                    connectedAgentCount
-                ),
+                // The row stated “8 Agents Connected” with no total, so a reader
+                // could not tell whether that was 8 of 18 or all of them.
+                text: agentCountText,
                 tint: isAnyAgentConnected ? DesignTokens.State.ok : DesignTokens.Ink.muted
             )
 
-            if let recordDaysText {
+            if let recordCountText {
                 sidebarStatusRow(
                     systemImage: "tray.full",
-                    text: recordDaysText,
+                    text: recordCountText,
                     tint: DesignTokens.Ink.muted
                 )
             }
 
             sidebarStatusRow(
                 systemImage: updateStatusIcon,
-                text: updateStatusDetail,
+                text: sidebarUpdateText,
                 tint: updateStatusColor
-            )
-
-            sidebarStatusRow(
-                systemImage: "lock.shield.fill",
-                text: localization.localized(.privacyFooter),
-                tint: DesignTokens.State.ok
             )
         }
         .padding(.horizontal, 16)
@@ -334,17 +342,34 @@ public struct SettingsContentView: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// How many days of usage the local database actually holds.
+    /// How many usage records the local database holds.
     ///
-    /// A usage tool that has only run for two days should say so: presenting a
-    /// thirty-day average over a two-day history is the kind of number that
-    /// makes a product look broken in a way the user cannot diagnose. nil when
-    /// the count is not known yet, which is a different statement from zero.
-    private var recordDaysText: String? {
+    /// Not days: this is the row count, and the copy says so. (The comment here
+    /// used to describe a different metric from the one the view rendered.) nil
+    /// while the count is unknown, which is a different statement from zero.
+    private var recordCountText: String? {
         guard !storageIsLoading, !storageIsUnavailable, let count = storageRecordCount else {
             return nil
         }
         return String(format: localization.localized(.recordCountLabel), count)
+    }
+
+    /// The sidebar's source count, in the x/y form the interface spec asks for.
+    ///
+    /// While the probe is in flight the honest answer is “checking”, not a zero;
+    /// the previous version rendered “0 个 Agent 正常” for the first moments of
+    /// every open.
+    private var agentCountText: String {
+        guard !agentHealthInfos.isEmpty else {
+            return agentHealthLoadFailed
+                ? localization.localized(.dataUnavailable)
+                : localization.localized(.loadingUsage)
+        }
+        return String(
+            format: localization.localized(.agentsActiveOfTotal),
+            connectedAgentCount,
+            agentHealthInfos.count
+        )
     }
 
     private var detailColumn: some View {
@@ -421,7 +446,11 @@ public struct SettingsContentView: View {
                 Text(selectedCategory.subtitle(localization: localization))
                     .font(DesignTokens.TypeScale.caption)
                     .foregroundColor(DesignTokens.Ink.muted)
-                    .lineLimit(1)
+                    // The longest subtitle (Data & Storage) needs ~338pt at this
+                    // size while the status capsule beside it wants ~217pt in a
+                    // ~471pt header, so a single line always elided. Let it wrap
+                    // instead of silently dropping the end of the sentence.
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
             detailStatusView
@@ -529,8 +558,6 @@ public struct SettingsContentView: View {
             ) {
                 settingsCard {
                     generalDatabaseRow
-                    rowDivider
-                    generalPrivacyRow
                 }
             }
         }
@@ -698,30 +725,13 @@ public struct SettingsContentView: View {
         .frame(minHeight: 52)
     }
 
-    private var generalPrivacyRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            cardRowIcon("lock.shield.fill", color: DesignTokens.Ink.muted)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(localization.localized(.localFirstPrivate))
-                    .font(.body.weight(.medium))
-                    .foregroundColor(DesignTokens.Ink.strong)
-                Text(localization.localized(.privacyDescription))
-                    .font(.caption)
-                    .foregroundColor(DesignTokens.Ink.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-        }
-        .padding(.vertical, 4)
-    }
-
     // MARK: - Section 2: Agent Health & Diagnostics Pane
     private var agentsPane: some View {
         leadingSettingsGroup {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label(
-                        String(format: localization.localized(.agentsConnected), connectedAgentCount),
+                        agentCountText,
                         systemImage: isAnyAgentConnected ? "checkmark.circle.fill" : "circle.dashed"
                     )
                     .font(.subheadline.weight(.medium))
@@ -763,7 +773,10 @@ public struct SettingsContentView: View {
                                 if agentHealthLoadFailed {
                                     Text(localization.localized(.dataUnavailable))
                                 } else {
-                                    Text(String(format: localization.localized(.agentsConnected), 0))
+                                    // Not "0 Agents Connected": the probe has not
+                                    // answered yet, and zero is a claim it cannot
+                                    // make.
+                                    Text(localization.localized(.loadingUsage))
                                 }
                             }
                             Spacer()
@@ -788,15 +801,69 @@ public struct SettingsContentView: View {
         String(format: localization.localized(.agentRecords), info.recordCount)
     }
 
+    /// What a row's badge is allowed to claim, given that "this source's folder
+    /// exists" and "this source has records" are two different facts.
+    ///
+    /// The badge used to read the folder alone, so four rows read
+    /// `未找到 · 15662 条记录` — a contradiction the reader has to resolve by
+    /// guessing which half is about the path and which about the history. Four
+    /// states, and each one now agrees with the numbers next to it.
+    enum AgentRowState {
+        case active
+        case noRecordsYet
+        case pathMissing
+        case notFound
+
+        init(isInstalled: Bool, hasRecords: Bool) {
+            switch (isInstalled, hasRecords) {
+            case (true, true): self = .active
+            case (true, false): self = .noRecordsYet
+            case (false, true): self = .pathMissing
+            case (false, false): self = .notFound
+            }
+        }
+
+        var labelKey: LocalizedKey {
+            switch self {
+            case .active: return .agentActive
+            case .noRecordsYet: return .agentNoRecords
+            case .pathMissing: return .agentPathMissing
+            case .notFound: return .agentNotFound
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .active: return "checkmark.circle.fill"
+            case .noRecordsYet: return "circle.dashed"
+            case .pathMissing: return "questionmark.circle.fill"
+            case .notFound: return "circle.dashed"
+            }
+        }
+
+        /// Amber for a source whose folder is gone while its history is kept:
+        /// the data is still counted, so this is a state to act on, not a
+        /// neutral absence.
+        var tint: Color {
+            switch self {
+            case .active: return DesignTokens.State.ok
+            case .pathMissing: return DesignTokens.State.warn
+            case .noRecordsYet, .notFound: return DesignTokens.Ink.muted
+            }
+        }
+    }
+
     private func agentHealthRow(_ info: AgentHealthInfo) -> some View {
-        HStack(spacing: 12) {
+        let state = AgentRowState(isInstalled: info.isInstalled, hasRecords: info.recordCount > 0)
+
+        return HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(info.isInstalled ? DesignTokens.State.ok.opacity(0.14) : DesignTokens.Ink.muted.opacity(0.12))
+                    .fill(state.tint.opacity(state == .active ? 0.14 : 0.12))
                     .frame(width: 32, height: 32)
-                Image(systemName: info.isInstalled ? "checkmark.circle.fill" : "circle.dashed")
+                Image(systemName: state.systemImage)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(info.isInstalled ? DesignTokens.State.ok : DesignTokens.Ink.muted)
+                    .foregroundColor(state.tint)
             }
 
             VStack(alignment: .leading, spacing: 3) {
@@ -804,23 +871,13 @@ public struct SettingsContentView: View {
                     Text(info.displayName)
                         .font(.body.weight(.semibold))
                         .foregroundColor(DesignTokens.Ink.strong)
-                    if info.isInstalled {
-                        Text(localization.localized(.agentActive))
-                            .font(.system(size: 10, weight: .bold))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(DesignTokens.State.ok.opacity(0.15))
-                            .foregroundColor(DesignTokens.State.ok)
-                            .cornerRadius(4)
-                    } else {
-                        Text(localization.localized(.agentNotFound))
-                            .font(.system(size: 10, weight: .medium))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(DesignTokens.Surfaces.inset)
-                            .foregroundColor(DesignTokens.Ink.muted)
-                            .cornerRadius(4)
-                    }
+                    Text(localization.localized(state.labelKey))
+                        .font(.system(size: 10, weight: .semibold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(state.tint.opacity(0.15))
+                        .foregroundColor(state.tint)
+                        .cornerRadius(4)
                 }
 
                 Text(info.defaultPath)
@@ -834,13 +891,17 @@ public struct SettingsContentView: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 3) {
-                Text(Self.agentRecordsText(for: info, localization: localization))
-                    .font(.caption.weight(.medium).monospacedDigit())
-                    .foregroundColor(DesignTokens.Ink.strong)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(DesignTokens.Surfaces.inset)
-                    .cornerRadius(6)
+                // A zero count is not worth a chip: the badge already states it,
+                // and "暂无记录 · 0 条记录" is the same fact twice.
+                if info.recordCount > 0 {
+                    Text(Self.agentRecordsText(for: info, localization: localization))
+                        .font(.caption.weight(.medium).monospacedDigit())
+                        .foregroundColor(DesignTokens.Ink.strong)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(DesignTokens.Surfaces.inset)
+                        .cornerRadius(6)
+                }
 
                 if let lastTimestamp = info.lastRecordTimestamp {
                     Text(relativeTimestamp(lastTimestamp))
@@ -891,7 +952,7 @@ public struct SettingsContentView: View {
                         Text(localization.localized(.exchangeRateLabel))
                             .font(.body.weight(.medium))
                             .foregroundColor(DesignTokens.Ink.strong)
-                        Text(String(format: localization.localized(.exchangeRateSummary), exchangeRateText))
+                        Text(localization.localized(.exchangeRateSummary))
                             .font(.caption)
                             .foregroundColor(DesignTokens.Ink.muted)
                     }
@@ -1089,23 +1150,6 @@ public struct SettingsContentView: View {
                 .padding(.vertical, 4)
             }
 
-            // Privacy Card
-            settingsCard {
-                HStack(alignment: .top, spacing: 14) {
-                    cardRowIcon("lock.shield.fill", color: DesignTokens.Ink.muted)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(localization.localized(.localFirstPrivate))
-                            .font(.body.weight(.semibold))
-                            .foregroundColor(DesignTokens.Ink.strong)
-                        Text(localization.localized(.privacyDescription))
-                            .font(.caption)
-                            .foregroundColor(DesignTokens.Ink.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
             // Repository Link Card
             settingsCard {
                 HStack {
@@ -1219,6 +1263,29 @@ public struct SettingsContentView: View {
     }
 
     /// “Version v1.2.0 · Last checked 3 minutes ago”.
+    /// The sidebar states the update *state*, not a second copy of the update
+    /// card's line.
+    ///
+    /// It used to repeat “当前版本 v1.6.0 · 上次检查：10 小时前” verbatim — the same
+    /// sentence the card below carries, in the same window, while the version
+    /// itself is stated twice more in the About pane. A status row is for the
+    /// answer; the evidence lives in the card it belongs to.
+    private var sidebarUpdateText: String {
+        if updateChecker.isChecking { return localization.localized(.checkingForUpdates) }
+        if case .failed = updateChecker.status { return localization.localized(.updateCheckFailed) }
+        if let release = updateChecker.availableUpdate {
+            return String(format: localization.localized(.updateAvailableTitle), release.version.description)
+        }
+        if case .upToDate = updateChecker.status { return localization.localized(.updateUpToDate) }
+        // `.idle` means both “never checked” and “checked before, throttled
+        // since”. Reporting the second as “尚未检查” contradicted the card in the
+        // same window, which states when the last check happened.
+        if let lastCheckAt = updateChecker.lastCheckAt {
+            return String(format: localization.localized(.updateLastChecked), relativeTimestamp(lastCheckAt))
+        }
+        return localization.localized(.updateNeverChecked)
+    }
+
     private var updateStatusDetail: String {
         let checkedText: String
         if let lastCheckAt = updateChecker.lastCheckAt {
@@ -1502,6 +1569,9 @@ public struct SettingsContentView: View {
         Task {
             do {
                 try await aggregator.clearAllRecords()
+                // Freed pages stay in the write-ahead log until it is
+                // checkpointed, which made "clear" look like it had failed.
+                await aggregator.compactStorage()
                 await rescanAgents()
                 await updateStorageStatus()
                 maintenanceFeedback = .succeeded
@@ -1514,8 +1584,10 @@ public struct SettingsContentView: View {
 
     // MARK: - Helpers
     private func displayName(for lang: AppLanguage) -> String {
+        // `.system` used to render as "跟随系统 (System Default)" — the same
+        // sentence twice in one line, half of it in the wrong language.
         if lang.code == AppLanguage.system.code {
-            return "\(localization.localized(.systemDefault)) (\(lang.displayName))"
+            return localization.localized(.systemDefault)
         }
         return lang.displayName
     }
@@ -1550,7 +1622,14 @@ public struct SettingsContentView: View {
             storageIsLoading = false
             return
         }
-        let sizeBytes = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
+        // The row counted only the main database file, so a cleared database
+        // still read "0 records · 45 MB on disk" (the WAL holds the freed pages
+        // until it is checkpointed) and the number never matched what the folder
+        // actually costs.
+        let sizeBytes = ["", "-wal", "-shm"].reduce(Int64(0)) { total, suffix in
+            let attributes = try? FileManager.default.attributesOfItem(atPath: path + suffix)
+            return total + ((attributes?[.size] as? Int64) ?? 0)
+        }
         let sizeFormatted = ByteCountFormatter.string(fromByteCount: sizeBytes, countStyle: .file)
         storageStatusText = String(format: localization.localized(.storageStatus), count, sizeFormatted)
         storageRecordCount = count

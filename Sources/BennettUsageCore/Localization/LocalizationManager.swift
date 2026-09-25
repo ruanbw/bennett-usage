@@ -140,6 +140,8 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case navDashboard
     case navSettings
     case agentsConnected
+    /// “%d/%d” form: how many sources are active out of how many are known.
+    case agentsActiveOfTotal
     case rescanNow
     case syncedJustNow
     case syncedMinutesAgo
@@ -171,6 +173,8 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case cnyOption
     case agentActive
     case agentNotFound
+    case agentNoRecords
+    case agentPathMissing
     case agentRecords
     case currencySummary
     case exchangeRateSummary
@@ -247,6 +251,9 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case distributionShare
     case peakUsage
     case averageUsage
+    /// The mean over buckets that carry tokens, named as such: dividing the
+    /// total by the bucket count yields a different number.
+    case averageActiveUsage
     case activeBuckets
 
     // Sync freshness and loading/error presentation states
@@ -255,6 +262,7 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case syncInProgress
     case syncFailed
     case syncedHoursAgo
+    case syncedDaysAgo
     case syncedOn
     case showingCachedData
     case staleData
@@ -477,7 +485,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     .conclusionSummary: "%@ tokens recorded in this period.",
     .conclusionLeadingTool: "Most usage came from %@.",
     .popoverSourceCount: "Sources",
-    .recordCountLabel: "%@ records stored locally",
+    .recordCountLabel: "%d records stored locally",
     .notMeasured: "not measured",
 
     // Heatmap Section
@@ -540,7 +548,8 @@ private let englishDictionary: [LocalizedKey: String] = [
     .navDashboard: "Dashboard",
     .navSettings: "Settings",
     .agentsConnected: "%d Agents Connected",
-    .rescanNow: "Sync Now",
+    .agentsActiveOfTotal: "%d/%d Agents Active",
+    .rescanNow: "Re-detect",
     .syncedJustNow: "Synced just now",
     .syncedMinutesAgo: "Synced %d mins ago",
     .dataUpdatedJustNow: "Data updated just now",
@@ -571,9 +580,11 @@ private let englishDictionary: [LocalizedKey: String] = [
     .cnyOption: "CNY (¥)",
     .agentActive: "Active",
     .agentNotFound: "Not Found",
+    .agentNoRecords: "No Records Yet",
+    .agentPathMissing: "Path Missing",
     .agentRecords: "%d records",
-    .currencySummary: "USD ($) / CNY (¥)",
-    .exchangeRateSummary: "1 USD = %@ CNY",
+    .currencySummary: "Every cost in the app is shown in this currency.",
+    .exchangeRateSummary: "Only used to convert agent spend from USD into CNY.",
     .exchangeRatePrefix: "1 USD =",
     .exchangeRatePlaceholder: "7.30",
     .invalidExchangeRate: "Enter an exchange rate greater than 0.",
@@ -648,6 +659,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     .distributionShare: "%.1f%% of total",
     .peakUsage: "Peak",
     .averageUsage: "Average",
+    .averageActiveUsage: "Average (active)",
     .activeBuckets: "Active",
 
     // Sync freshness and loading/error presentation states
@@ -657,6 +669,7 @@ private let englishDictionary: [LocalizedKey: String] = [
     .syncFailed: "Sync failed",
     .syncedHoursAgo: "Synced %d hours ago",
     .syncedOn: "Synced on %@",
+    .syncedDaysAgo: "Synced %d days ago",
     .showingCachedData: "Showing cached data",
     .staleData: "Data may be out of date",
     .dataUnavailable: "Usage data is unavailable",
@@ -755,7 +768,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .conclusionSummary: "本周期共记录 %@ Token。",
     .conclusionLeadingTool: "其中 %@ 占用最多。",
     .popoverSourceCount: "来源数",
-    .recordCountLabel: "本地已存 %@ 条记录",
+    .recordCountLabel: "本地已存 %d 条记录",
     .notMeasured: "未测得",
 
     // Heatmap Section
@@ -818,7 +831,8 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .navDashboard: "用量看板",
     .navSettings: "系统设置",
     .agentsConnected: "%d 个 Agent 正常",
-    .rescanNow: "立即同步",
+    .agentsActiveOfTotal: "%d/%d 个 Agent 正常",
+    .rescanNow: "重新检测",
     .syncedJustNow: "刚刚同步",
     .syncedMinutesAgo: "%d 分钟前同步",
     .dataUpdatedJustNow: "数据刚刚更新",
@@ -849,9 +863,11 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .cnyOption: "人民币 CNY (¥)",
     .agentActive: "正常",
     .agentNotFound: "未找到",
+    .agentNoRecords: "暂无记录",
+    .agentPathMissing: "路径缺失",
     .agentRecords: "%d 条记录",
-    .currencySummary: "美元 USD ($) / 人民币 CNY (¥)",
-    .exchangeRateSummary: "1 USD = %@ CNY",
+    .currencySummary: "应用内所有费用都按此币种显示。",
+    .exchangeRateSummary: "仅用于把各 Agent 的美元费用换算为人民币。",
     .exchangeRatePrefix: "1 USD =",
     .exchangeRatePlaceholder: "7.30",
     .invalidExchangeRate: "请输入大于 0 的汇率。",
@@ -926,6 +942,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .distributionShare: "占总量 %.1f%%",
     .peakUsage: "峰值",
     .averageUsage: "均值",
+    .averageActiveUsage: "活跃均值",
     .activeBuckets: "活跃区间",
 
     // Sync freshness and loading/error presentation states
@@ -935,6 +952,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .syncFailed: "同步失败",
     .syncedHoursAgo: "%d 小时前同步",
     .syncedOn: "同步于 %@",
+    .syncedDaysAgo: "%d 天前同步",
     .showingCachedData: "正在显示缓存数据",
     .staleData: "数据可能已过期",
     .dataUnavailable: "用量数据不可用",

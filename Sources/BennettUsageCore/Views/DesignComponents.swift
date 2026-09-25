@@ -233,8 +233,48 @@ public struct CacheHitRing: View {
         }
         .frame(width: diameter, height: diameter)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: "Cache"))
+        .accessibilityLabel(Text(verbatim: LocalizationManager.shared.localized(.cacheHitRate)))
         .accessibilityValue(Text(verbatim: String(format: "%.1f%%", rate * 100)))
+    }
+}
+
+/// The cache-hit ring, or an honest dash when the window had nothing to hit.
+///
+/// A drawn-empty ring at 0% reads as “cache is broken”, which the data cannot
+/// say: no cache tokens at all means the ratio was never measured. The
+/// Dashboard already knew that and the popover did not — it rendered a
+/// hard-coded zero behind an amber warning dot while the Dashboard reported
+/// 98% for the same day. Both surfaces now share one implementation so they
+/// cannot drift again.
+public struct CacheHitReadout: View {
+    private let rate: Double?
+    private var diameter: CGFloat
+
+    public init(rate: Double?, diameter: CGFloat = 104) {
+        self.rate = rate
+        self.diameter = diameter
+    }
+
+    public var body: some View {
+        if let rate {
+            CacheHitRing(rate: rate, diameter: diameter)
+        } else {
+            Text("—")
+                .font(.system(size: diameter * 0.26, weight: .semibold, design: .monospaced))
+                .foregroundColor(DesignTokens.Ink.muted)
+                .frame(width: diameter, height: diameter)
+                // Same stroke as the measured ring, so the slot keeps one shape
+                // and only the arc comes and goes.
+                .background(
+                    Circle().strokeBorder(
+                        DesignTokens.Ink.track,
+                        lineWidth: diameter * 0.085
+                    )
+                )
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(verbatim: LocalizationManager.shared.localized(.cacheHitRate)))
+                .accessibilityValue(Text(verbatim: LocalizationManager.shared.localized(.notMeasured)))
+        }
     }
 }
 
@@ -259,12 +299,14 @@ public struct ShareBar: View {
 
     private let segments: [Segment]
     private var height: CGFloat
+    private var label: String?
     private var spacing: CGFloat
 
-    public init(segments: [Segment], height: CGFloat = 8, spacing: CGFloat = 2) {
+    public init(segments: [Segment], height: CGFloat = 8, spacing: CGFloat = 2, label: String? = nil) {
         self.segments = segments
         self.height = height
         self.spacing = spacing
+        self.label = label
     }
 
     public var body: some View {
@@ -286,7 +328,24 @@ public struct ShareBar: View {
         .frame(height: height)
         .background(Capsule().fill(DesignTokens.Ink.track))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: segments.map(\.id).joined(separator: ", ")))
+        // The label is the caller's, in the caller's words: `segments.map(\.id)`
+        // read raw source ids ("claude, gemini") aloud before the localized
+        // value, and never said what the bar was.
+        .modifier(OptionalAccessibilityLabel(text: label))
+    }
+}
+
+/// Applies an accessibility label only when the caller supplied one, so a view
+/// without a label is not left announcing an empty string.
+struct OptionalAccessibilityLabel: ViewModifier {
+    let text: String?
+
+    func body(content: Content) -> some View {
+        if let text {
+            content.accessibilityLabel(Text(verbatim: text))
+        } else {
+            content
+        }
     }
 }
 

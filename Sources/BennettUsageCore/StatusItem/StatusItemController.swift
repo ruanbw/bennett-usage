@@ -305,9 +305,23 @@ public final class StatusItemController: NSObject {
                 return (summary, trend, yesterdayTotal)
             }.value
 
-            guard !Task.isCancelled, let (summary, trend, yesterdayTotal) = result else { return }
+            guard !Task.isCancelled, let (summary, trend, yesterdayTotal) = result else {
+                // A read that failed twice leaves the previous snapshot on
+                // screen. Saying so is the only honest option: the numbers may
+                // be minutes or days old, and the sync freshness above them
+                // describes a different thing (source parsing, not the local
+                // read that feeds this popover).
+                if !Task.isCancelled, !summaryModel.dataReadFailed {
+                    summaryModel.dataReadFailed = true
+                    applyStatusItemAppearance()
+                }
+                return
+            }
             // Published properties invalidate the observing SwiftUI view tree, so
             // only real changes are written.
+            if summaryModel.dataReadFailed {
+                summaryModel.dataReadFailed = false
+            }
             if summaryModel.summary != summary {
                 summaryModel.summary = summary
             }
@@ -338,8 +352,13 @@ public final class StatusItemController: NSObject {
         let tokenTitle = TokenFormatter.formatStatusTitle(tokens)
 
         var tooltip = tokens > 0
-            ? "\(TokenFormatter.formatFull(tokens)) tokens"
+            ? String(format: localization.localized(.tokenValue), TokenFormatter.formatFull(tokens))
             : accessibilityLabel
+        // A failed local read is worth stating in the tooltip: the number above
+        // it is the last one that could be read, not the current total.
+        if summaryModel.dataReadFailed {
+            tooltip += " · " + localization.localized(.staleData)
+        }
         if let syncText = lastSyncText() {
             tooltip += " · " + syncText
         }
