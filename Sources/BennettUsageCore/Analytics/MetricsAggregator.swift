@@ -219,6 +219,135 @@ public final class MetricsAggregator: Sendable {
         try database.fetchAllTimeTotals(sourceId: toolFilter)
     }
 
+    // MARK: - Period Comparison
+
+    /// The immediately-preceding window of the same length as `range`.
+    ///
+    /// This exists so the dashboard can state a period-over-period change
+    /// instead of a bare total. A single number answers "how much" but leaves
+    /// the reader guessing whether that is normal for them, and guessing is
+    /// what a usage tool exists to remove.
+    ///
+    /// The windows are the natural period boundaries rather than "N days ago":
+    /// `today` compares against yesterday, `last24Hours` against the previous
+    /// rolling 24 hours. Comparing "today so far" against a whole previous day
+    /// would report a drop every morning regardless of behavior.
+    public struct ComparisonPeriod: Sendable, Equatable {
+        /// Tokens over the preceding window, or nil when the window precedes
+        /// all recorded data and a percentage would be a division by zero
+        /// dressed up as a finding.
+        public let totalTokens: Int?
+        public let totalCostUSD: Double?
+        public let cacheHitRate: Double?
+        /// How many days the database actually covers inside the comparison
+        /// window. A 30-day comparison over a 3-day history is reported as
+        /// `partialCoverage`, never as a 97% drop.
+        public let coveredDays: Int
+        public let expectedDays: Int
+
+        /// True when the comparison window is only partly backed by records.
+        public var isPartialCoverage: Bool { coveredDays > 0 && coveredDays < expectedDays }
+        /// True when the window contains no recorded day at all.
+        public var hasNoData: Bool { coveredDays == 0 }
+    }
+
+    public func fetchComparisonPeriod(
+        range: TimeRangeOption,
+        toolFilter: String? = nil,
+        now: Date = Date()
+    ) async throws -> ComparisonPeriod {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
+
+        // A whole-year or a named-year view has no meaningful "previous
+        // period" that shares its own boundary semantics, so the UI states no
+        // comparison rather than comparing this year against a partial one.
+        guard let window = Self.comparisonWindow(for: range, now: now, calendar: calendar) else {
+            return ComparisonPeriod(
+                totalTokens: nil,
+                totalCostUSD: nil,
+                cacheHitRate: nil,
+                coveredDays: 0,
+                expectedDays: 0
+            )
+        }
+
+        let rollups = filteredByTool(
+            try database.fetchDailyRollups(startDate: window.startKey, endDate: window.endKey),
+            toolFilter: toolFilter
+        )
+        let coveredDays = Set(rollups.filter { $0.totalTokens > 0 }.map(\.dayKey)).count
+
+        // The rollups are the source of truth for coverage; the raw-row totals
+        // are used for the figures when they exist, and the rollup sum is the
+        // fallback so a window still reads correctly before raw retention
+        // prunes anything.
+        let totals = (try? database.fetchPeriodTotals(
+            startDate: window.startKey,
+            endDate: window.endKey,
+            sourceId: toolFilter
+        )) ?? DatabaseManager.PeriodTotals()
+
+        let totalTokens = totals.totalTokens > 0
+            ? totals.totalTokens
+            : rollups.reduce(0) { $0 + $1.totalTokens }
+        let totalCost = totals.totalTokens > 0
+            ? totals.totalCostUSD
+            : rollups.reduce(0.0) { $0 + $1.costUSD }
+
+        // A hit rate is only meaningful when something could have hit. A window
+        // with no cache reads at all has a 0% rate, which reads as "cache is
+        // failing" when the truth is "nothing was cacheable" — so it stays nil
+        // and the UI says the ratio was not measured.
+        let cacheReadTokens = totals.cacheReadTokens
+        let cacheable = totals.inputTokens + totals.cacheWriteTokens + cacheReadTokens
+        let cacheHitRate = cacheReadTokens > 0
+            ? Double(cacheReadTokens) / Double(cacheable)
+            : nil
+
+        return ComparisonPeriod(
+            totalTokens: coveredDays > 0 ? totalTokens : nil,
+            totalCostUSD: coveredDays > 0 ? totalCost : nil,
+            cacheHitRate: cacheHitRate,
+            coveredDays: coveredDays,
+            expectedDays: window.expectedDays
+        )
+    }
+
+    /// The day keys of the window immediately before `range`, or nil when the
+    /// range has no comparable predecessor.
+    private static func comparisonWindow(
+        for range: TimeRangeOption,
+        now: Date,
+        calendar: Calendar
+    ) -> (startKey: String, endKey: String, expectedDays: Int)? {
+        let startOfToday = calendar.startOfDay(for: now)
+
+        switch range {
+        case .last24Hours:
+            // The previous rolling 24 hours, expressed as calendar days for
+            // the rollup table. Two days back is the widest day-bounded window
+            // that still fully precedes the current one.
+            guard let start = calendar.date(byAdding: .day, value: -2, to: startOfToday),
+                  let end = calendar.date(byAdding: .day, value: -1, to: startOfToday) else { return nil }
+            return (UnifiedTokenRecord.dayKey(for: start), UnifiedTokenRecord.dayKey(for: end), 1)
+        case .today:
+            guard let yesterday = calendar.date(byAdding: .day, value: -1, to: startOfToday) else { return nil }
+            let key = UnifiedTokenRecord.dayKey(for: yesterday)
+            return (key, key, 1)
+        case .last7Days:
+            guard let start = calendar.date(byAdding: .day, value: -14, to: startOfToday),
+                  let end = calendar.date(byAdding: .day, value: -8, to: startOfToday) else { return nil }
+            return (UnifiedTokenRecord.dayKey(for: start), UnifiedTokenRecord.dayKey(for: end), 7)
+        case .last30Days:
+            guard let start = calendar.date(byAdding: .day, value: -60, to: startOfToday),
+                  let end = calendar.date(byAdding: .day, value: -31, to: startOfToday) else { return nil }
+            return (UnifiedTokenRecord.dayKey(for: start), UnifiedTokenRecord.dayKey(for: end), 30)
+        case .pastYear, .year:
+            return nil
+        }
+    }
+
     public func rebuildDailyRollups() async throws {
         try database.rebuildDailyRollups()
     }
