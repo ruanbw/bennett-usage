@@ -4,6 +4,20 @@ import SwiftUI
 
 @MainActor
 public final class StatusItemController: NSObject {
+    /// The last values pushed to the status item.
+    ///
+    /// `NSStatusItem` is rendered out of process by Control Center, so writing
+    /// identical values again still costs a scene update and a re-render. Every
+    /// write is diffed against this snapshot first.
+    struct StatusItemRender: Equatable {
+        var title: String
+        var symbolName: String
+        var imageDescription: String
+        var tooltip: String
+        var accessibilityLabel: String
+        var accessibilityHelp: String
+    }
+
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     // Only touched on the main actor (setup + deinit); `nonisolated(unsafe)`
@@ -25,13 +39,23 @@ public final class StatusItemController: NSObject {
     private var updateObservation: AnyCancellable?
     private var localizationObservation: AnyCancellable?
     private var syncStatusObservation: AnyCancellable?
+    /// Block-based observers. Selector-based observers delivered Foundation's
+    /// `.NSCalendarDayChanged` on a background queue, and invoking an `@MainActor`
+    /// `@objc` method from there tripped Swift's executor assertion and killed the
+    /// process at every midnight rollover.
+    nonisolated(unsafe) private var notificationObservers: [NSObjectProtocol] = []
+    private var tooltipRefreshTask: Task<Void, Never>?
+    private var lastRenderedStatusItem: StatusItemRender?
+    /// Actual status-item writes. Internal so tests can prove that repeated
+    /// refreshes with unchanged content do not touch the remote view.
+    private(set) var statusItemWriteCount = 0
 
     public init(
         aggregator: MetricsAggregator,
         syncCoordinator: SyncCoordinator,
         localization: LocalizationManager = .shared,
         updateChecker: UpdateChecker = .shared,
-        heartbeatInterval: TimeInterval? = 30.0,
+        heartbeatInterval: TimeInterval? = 60.0,
         openDashboardAction: @escaping () -> Void = {},
         openSettingsAction: @escaping () -> Void = {}
     ) {
@@ -44,23 +68,23 @@ public final class StatusItemController: NSObject {
         super.init()
         setupStatusItem()
         setupPopover()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleDataDidUpdate),
-            name: .bennettUsageDataDidUpdate,
-            object: nil
+        // Delivered on the main queue: `.NSCalendarDayChanged` and the workspace
+        // wake notification are posted from background queues.
+        let notificationCenter = NotificationCenter.default
+        notificationObservers.append(
+            notificationCenter.addObserver(forName: .bennettUsageDataDidUpdate, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.refreshData() }
+            }
         )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleDayChanged),
-            name: .NSCalendarDayChanged,
-            object: nil
+        notificationObservers.append(
+            notificationCenter.addObserver(forName: .NSCalendarDayChanged, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.refreshData() }
+            }
         )
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(handleSystemDidWake),
-            name: NSWorkspace.didWakeNotification,
-            object: nil
+        notificationObservers.append(
+            NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.handleSystemDidWake() }
+            }
         )
         // A background check can land long after launch; the menu bar icon is
         // the only surface a popover-shy user ever looks at.
@@ -94,33 +118,43 @@ public final class StatusItemController: NSObject {
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: UInt64(heartbeatInterval * 1_000_000_000))
                     guard !Task.isCancelled else { break }
-                    _ = try? await syncCoordinator.syncForUI(minInterval: 10)
+                    // Safety net only: FSEvents drives the steady state, so this
+                    // avoids re-enumerating every source tree on each tick.
+                    _ = try? await syncCoordinator.syncHeartbeat()
                     guard !Task.isCancelled, let self else { break }
                     self.recordSuccessfulSync()
                     self.refreshData()
                 }
             }
         }
+
+        // The tooltip embeds a relative "synced N minutes ago" time, the one piece
+        // of status-item content that changes while nothing else does. Refresh it
+        // on a slow tick instead of recomputing it per sync notification; the diff
+        // in `applyStatusItemAppearance` keeps each tick write-free until the
+        // rendered minute actually rolls over.
+        tooltipRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard !Task.isCancelled else { break }
+                self?.applyStatusItemAppearance()
+            }
+        }
     }
 
     deinit {
         heartbeatTask?.cancel()
-        NotificationCenter.default.removeObserver(self)
+        tooltipRefreshTask?.cancel()
+        for observer in notificationObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         if let outsideClickMonitor {
             NSEvent.removeMonitor(outsideClickMonitor)
         }
     }
 
-    @objc private func handleDataDidUpdate() {
-        refreshData()
-    }
-
-    @objc private func handleDayChanged() {
-        refreshData()
-    }
-
-    @objc private func handleSystemDidWake() {
+    private func handleSystemDidWake() {
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -234,8 +268,11 @@ public final class StatusItemController: NSObject {
         // in-flight read so only the newest request publishes.
         refreshTask?.cancel()
         let aggregator = self.aggregator
+        // The sparkline only exists inside the popover. Reading it while the
+        // popover is closed aggregated the whole day for a view nobody can see.
+        let needsTrend = popover.isShown
         refreshTask = Task {
-            let result = await Task.detached(priority: .userInitiated) { () -> (TodaySummary, [TrendPoint])? in
+            let result = await Task.detached(priority: .userInitiated) { () -> (TodaySummary, [TrendPoint]?)? in
                 let summary: TodaySummary?
                 if let res = try? await aggregator.fetchTodaySummary() {
                     summary = res
@@ -250,6 +287,7 @@ public final class StatusItemController: NSObject {
                 // The sparkline is optional presentation data. A failed trend
                 // read must not erase a valid Today summary or fabricate a
                 // flat line; the popover simply keeps its previous trend.
+                guard needsTrend else { return (summary, nil) }
                 let trend = (try? await aggregator.fetchPeriodMetrics(
                     range: .today,
                     toolFilter: nil
@@ -258,8 +296,14 @@ public final class StatusItemController: NSObject {
             }.value
 
             guard !Task.isCancelled, let (summary, trend) = result else { return }
-            summaryModel.summary = summary
-            summaryModel.trendPoints = trend.count >= 2 ? trend : nil
+            // Published properties invalidate the observing SwiftUI view tree, so
+            // only real changes are written.
+            if summaryModel.summary != summary {
+                summaryModel.summary = summary
+            }
+            if let trend {
+                summaryModel.trendPoints = trend.count >= 2 ? trend : nil
+            }
             // This timestamp describes a database read only. Source-sync
             // freshness is published separately from SyncCoordinator status.
             summaryModel.lastRefreshedAt = Date()
@@ -270,40 +314,59 @@ public final class StatusItemController: NSObject {
     /// Renders the status item from the current summary + update state. Called
     /// both when data lands and when the update checker changes, so the two
     /// sources never overwrite each other's contribution to the icon/tooltip.
-    private func applyStatusItemAppearance() {
+    ///
+    /// Every write is diffed against the previous render first: `NSStatusItem` is
+    /// drawn out of process by Control Center, so assigning an identical title
+    /// still costs a cross-process scene update plus a re-render.
+    func applyStatusItemAppearance() {
         guard let button = statusItem.button else { return }
         let accessibilityLabel = localization.localized(.statusItemAccessibility)
-        button.setAccessibilityLabel(accessibilityLabel)
-        button.setAccessibilityHelp(localization.localized(.openDashboardShortcut))
         let tokens = summaryModel.summary?.totalTokens ?? 0
         let tokenTitle = TokenFormatter.formatStatusTitle(tokens)
-        button.title = tokenTitle
 
-        let syncText = lastSyncText()
         var tooltip = tokens > 0
             ? "\(TokenFormatter.formatFull(tokens)) tokens"
-            : localization.localized(.statusItemAccessibility)
-        if let syncText {
+            : accessibilityLabel
+        if let syncText = lastSyncText() {
             tooltip += " · " + syncText
         }
 
-        let updateText = updateChecker.availableUpdate.map {
-            String(format: localization.localized(.updateAvailableTitle), $0.version.description)
-        }
-        if let updateText {
-            button.image = NSImage(
-                systemSymbolName: "arrow.down.circle",
-                accessibilityDescription: updateText
+        let symbolName: String
+        let imageDescription: String
+        if let update = updateChecker.availableUpdate {
+            let updateText = String(
+                format: localization.localized(.updateAvailableTitle),
+                update.version.description
             )
+            symbolName = "arrow.down.circle"
+            imageDescription = updateText
             tooltip += " · " + updateText
         } else {
-            button.image = NSImage(
-                systemSymbolName: "sparkles",
-                accessibilityDescription: accessibilityLabel
-            )
+            symbolName = "sparkles"
+            imageDescription = accessibilityLabel
         }
-        button.toolTip = tooltip
-        button.setAccessibilityValue(tooltip)
+
+        let render = StatusItemRender(
+            title: tokenTitle,
+            symbolName: symbolName,
+            imageDescription: imageDescription,
+            tooltip: tooltip,
+            accessibilityLabel: accessibilityLabel,
+            accessibilityHelp: localization.localized(.openDashboardShortcut)
+        )
+        guard render != lastRenderedStatusItem else { return }
+        lastRenderedStatusItem = render
+        statusItemWriteCount += 1
+
+        button.setAccessibilityLabel(render.accessibilityLabel)
+        button.setAccessibilityHelp(render.accessibilityHelp)
+        button.title = render.title
+        button.image = NSImage(
+            systemSymbolName: render.symbolName,
+            accessibilityDescription: render.imageDescription
+        )
+        button.toolTip = render.tooltip
+        button.setAccessibilityValue(render.tooltip)
     }
 
     private func lastSyncText() -> String? {
@@ -332,12 +395,17 @@ public final class StatusItemController: NSObject {
         }
         let partialFailure = status.failures.isEmpty ? nil : "source_sync_failed"
 
-        summaryModel.freshness = SyncFreshnessModel(
+        let freshness = SyncFreshnessModel(
             lastChecked: status.lastAttemptAt,
             lastSuccessful: lastSuccessful,
             isRefreshing: status.phase == .syncing,
             partialFailure: partialFailure
         )
+        // Only publish a real change: every assignment invalidates the SwiftUI
+        // view tree that observes this model.
+        if summaryModel.freshness != freshness {
+            summaryModel.freshness = freshness
+        }
 
         // Keep the status item timestamp tied to a real successful source sync.
         // A partial failure may retain the previous successful date in the model,

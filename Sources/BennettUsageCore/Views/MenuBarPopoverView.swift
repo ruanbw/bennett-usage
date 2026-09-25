@@ -9,8 +9,11 @@ public final class StatusSummaryModel: ObservableObject {
     @Published public var summary: TodaySummary?
     /// Database read timestamp retained for callers that need to distinguish a
     /// cached read from a source sync. It is deliberately not used as proof of
-    /// a successful source refresh.
-    @Published public var lastRefreshedAt: Date?
+    /// a successful source refresh, and deliberately not `@Published`: no view
+    /// reads it, so publishing it invalidated the popover's SwiftUI view graph —
+    /// and re-ran its layout — on every completed read, for a value nothing
+    /// displays.
+    public var lastRefreshedAt: Date?
     /// Source-sync facts published by StatusItemController. A database read can
     /// succeed while every source sync is stale or failed, so presentation code
     /// must use this model for success/failure messaging.

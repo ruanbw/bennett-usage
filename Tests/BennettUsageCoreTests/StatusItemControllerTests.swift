@@ -124,4 +124,77 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(mock.fetchCallCount, 1, "Heartbeat must trigger background sync")
         _ = controller
     }
+
+    /// The midnight crash, reproduced: Foundation posts `.NSCalendarDayChanged`
+    /// from a background queue. The previous selector-based observer invoked an
+    /// `@MainActor` `@objc` method on that queue, which trips Swift's executor
+    /// assertion (`dispatch_assert_queue` -> SIGILL) and kills the process. If
+    /// this regresses, the test binary dies instead of reporting a failure.
+    func testDayChangedFromABackgroundThreadDoesNotTrap() async throws {
+        let db = try DatabaseManager.inMemory()
+        let controller = StatusItemController(
+            aggregator: MetricsAggregator(database: db),
+            syncCoordinator: SyncCoordinator(database: db),
+            heartbeatInterval: nil
+        )
+
+        let posted = expectation(description: "background day-change post")
+        DispatchQueue.global().async {
+            NotificationCenter.default.post(name: .NSCalendarDayChanged, object: nil)
+            posted.fulfill()
+        }
+        await fulfillment(of: [posted], timeout: 2)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertNotNil(controller)
+    }
+
+    /// Same precondition for the workspace wake notification, which is also
+    /// delivered on whichever queue posted it.
+    func testSystemWakeFromABackgroundThreadDoesNotTrap() async throws {
+        let db = try DatabaseManager.inMemory()
+        let controller = StatusItemController(
+            aggregator: MetricsAggregator(database: db),
+            syncCoordinator: SyncCoordinator(database: db),
+            heartbeatInterval: nil
+        )
+
+        let posted = expectation(description: "background wake post")
+        DispatchQueue.global().async {
+            NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+            posted.fulfill()
+        }
+        await fulfillment(of: [posted], timeout: 2)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertNotNil(controller)
+    }
+
+    /// `NSStatusItem` is a remote view: Control Center re-renders it in its own
+    /// process, so writing identical values again costs a cross-process scene
+    /// update. Measured over 3 hours the app produced 6,144 scene updates versus
+    /// 3–9 for every other menu-bar app on the same machine.
+    func testRepeatedRendersDoNotRewriteTheRemoteStatusItem() async throws {
+        let db = try DatabaseManager.inMemory()
+        let controller = StatusItemController(
+            aggregator: MetricsAggregator(database: db),
+            syncCoordinator: SyncCoordinator(database: db),
+            heartbeatInterval: nil
+        )
+
+        controller.applyStatusItemAppearance()
+        XCTAssertGreaterThanOrEqual(
+            controller.statusItemWriteCount,
+            1,
+            "The first render must actually populate the status item"
+        )
+
+        // No `await` between these calls, so no queued task can interleave.
+        let afterFirstRender = controller.statusItemWriteCount
+        controller.applyStatusItemAppearance()
+        controller.applyStatusItemAppearance()
+        XCTAssertEqual(
+            controller.statusItemWriteCount,
+            afterFirstRender,
+            "Rendering unchanged content must not touch the status item again"
+        )
+    }
 }
