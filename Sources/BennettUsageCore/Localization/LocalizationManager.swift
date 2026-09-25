@@ -63,6 +63,23 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     case none
     case rangeTokens
 
+    // Conclusion Band
+    //
+    // The band answers "how am I doing?" before any chart, so its copy has to
+    // work as a sentence. Every string here is a complete claim about the
+    // numbers on screen, never a label for a widget.
+    case coverageDays
+    case vsPreviousPeriod
+    case noComparablePeriod
+    case partialComparisonCoverage
+    case conclusionEmpty
+    case conclusionStale
+    case conclusionSummary
+    case conclusionLeadingTool
+    case popoverSourceCount
+    case recordCountLabel
+    case notMeasured
+
     // Heatmap Section
     case annualPanorama
     case annualTotalTokens
@@ -450,6 +467,19 @@ private let englishDictionary: [LocalizedKey: String] = [
     .none: "None",
     .rangeTokens: "%@ Tokens",
 
+    // Conclusion Band
+    .coverageDays: "Days Covered",
+    .vsPreviousPeriod: "vs. previous period",
+    .noComparablePeriod: "No comparable period",
+    .partialComparisonCoverage: "Only %@ days of comparison history",
+    .conclusionEmpty: "No usage recorded in %@.",
+    .conclusionStale: "Data may be incomplete — this is the last successful sync.",
+    .conclusionSummary: "%@ tokens recorded in this period.",
+    .conclusionLeadingTool: "Most usage came from %@.",
+    .popoverSourceCount: "Sources",
+    .recordCountLabel: "%@ records stored locally",
+    .notMeasured: "not measured",
+
     // Heatmap Section
     .annualPanorama: "Annual Panorama",
     .annualTotalTokens: "Annual Tokens",
@@ -714,6 +744,19 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .leadingVolume: "消耗占比最高",
     .none: "无",
     .rangeTokens: "%@ Token",
+
+    // 结论带
+    .coverageDays: "覆盖天数",
+    .vsPreviousPeriod: "较上一周期",
+    .noComparablePeriod: "无可比周期",
+    .partialComparisonCoverage: "对比周期仅有 %@ 天记录",
+    .conclusionEmpty: "%@ 内没有使用记录。",
+    .conclusionStale: "数据可能不完整，以下为最近一次成功同步的结果。",
+    .conclusionSummary: "本周期共记录 %@ Token。",
+    .conclusionLeadingTool: "其中 %@ 占用最多。",
+    .popoverSourceCount: "来源数",
+    .recordCountLabel: "本地已存 %@ 条记录",
+    .notMeasured: "未测得",
 
     // Heatmap Section
     .annualPanorama: "年度全景与活跃度",

@@ -272,7 +272,7 @@ public final class StatusItemController: NSObject {
         // popover is closed aggregated the whole day for a view nobody can see.
         let needsTrend = popover.isShown
         refreshTask = Task {
-            let result = await Task.detached(priority: .userInitiated) { () -> (TodaySummary, [TrendPoint]?)? in
+            let result = await Task.detached(priority: .userInitiated) { () -> (TodaySummary, [TrendPoint]?, Int?)? in
                 let summary: TodaySummary?
                 if let res = try? await aggregator.fetchTodaySummary() {
                     summary = res
@@ -284,18 +284,28 @@ public final class StatusItemController: NSObject {
                 }
                 guard let summary else { return nil }
 
+                // Yesterday, for the popover's period-over-period line. It is
+                // read on the same pass as today so the two numbers cannot come
+                // from different snapshots, and a failure here degrades to "no
+                // comparison" rather than to a wrong delta.
+                let comparison = try? await aggregator.fetchComparisonPeriod(
+                    range: .today,
+                    toolFilter: nil
+                )
+                let yesterdayTotal = comparison?.totalTokens
+
                 // The sparkline is optional presentation data. A failed trend
                 // read must not erase a valid Today summary or fabricate a
                 // flat line; the popover simply keeps its previous trend.
-                guard needsTrend else { return (summary, nil) }
+                guard needsTrend else { return (summary, nil, yesterdayTotal) }
                 let trend = (try? await aggregator.fetchPeriodMetrics(
                     range: .today,
                     toolFilter: nil
                 ))?.trendPoints ?? []
-                return (summary, trend)
+                return (summary, trend, yesterdayTotal)
             }.value
 
-            guard !Task.isCancelled, let (summary, trend) = result else { return }
+            guard !Task.isCancelled, let (summary, trend, yesterdayTotal) = result else { return }
             // Published properties invalidate the observing SwiftUI view tree, so
             // only real changes are written.
             if summaryModel.summary != summary {
@@ -303,6 +313,9 @@ public final class StatusItemController: NSObject {
             }
             if let trend {
                 summaryModel.trendPoints = trend.count >= 2 ? trend : nil
+            }
+            if summaryModel.yesterdayTotal != yesterdayTotal {
+                summaryModel.yesterdayTotal = yesterdayTotal
             }
             // This timestamp describes a database read only. Source-sync
             // freshness is published separately from SyncCoordinator status.

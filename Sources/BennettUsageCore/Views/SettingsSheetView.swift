@@ -38,6 +38,6 @@ public struct SettingsSheetView: View {
             maxHeight: .infinity
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppTheme.Canvas.background)
+        .background(DesignTokens.Surfaces.canvas)
     }
 }

@@ -108,7 +108,7 @@ public struct AgentFilterBarView: View {
                     .frame(width: 7, height: 7)
                 Text(title)
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
+                    .foregroundColor(isSelected ? DesignTokens.Ink.strong : DesignTokens.Ink.muted)
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
             }
@@ -116,11 +116,11 @@ public struct AgentFilterBarView: View {
             .frame(height: 30)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(isSelected ? AppTheme.Surface.selected : AppTheme.Surface.subtle.opacity(0.72))
+                    .fill(isSelected ? DesignTokens.Surfaces.selected : DesignTokens.Surfaces.inset.opacity(0.72))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(isSelected ? color.opacity(0.42) : AppTheme.Border.subtle, lineWidth: AppTheme.Layout.hairline)
+                    .stroke(isSelected ? color.opacity(0.42) : DesignTokens.Lines.soft, lineWidth: DesignTokens.Metrics.hairline)
             )
             .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }

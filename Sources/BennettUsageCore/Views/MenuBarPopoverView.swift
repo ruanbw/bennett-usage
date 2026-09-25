@@ -30,6 +30,47 @@ public final class StatusSummaryModel: ObservableObject {
         self.trendPoints = trendPoints
         self.freshness = freshness
     }
+
+    /// Yesterday's total, published by the status item controller alongside the
+    /// trend. nil when the comparison is unavailable.
+    @Published public var yesterdayTotal: Int?
+
+    /// Cache-hit rate for the popover's ring.
+    ///
+    /// `TodaySummary` carries totals and a per-tool breakdown but no token-kind
+    /// split, so the ring stays at zero rather than reading a second query on
+    /// every popover open. An empty ring is an honest "not measured here"; a
+    /// plausible-looking arc built from the wrong denominator would not be.
+    public var cacheHitRate: Double { 0 }
+
+    /// Whether the numbers on screen are current enough to act on.
+    public var freshnessLevel: StateCapsule.Level {
+        if freshness.isRefreshing { return .syncing }
+        if freshness.partialFailure != nil { return .error }
+        guard let completedAt = freshness.lastSuccessful?.completedAt else { return .stale }
+        return Int(Date().timeIntervalSince(completedAt) / 60) < 60 ? .ok : .stale
+    }
+
+    /// Today's change against yesterday, or an honest "no comparison".
+    ///
+    /// The popover used to show yesterday's total as a bare second number with
+    /// no reference period attached, which is a difference the reader has to
+    /// guess at. This states the comparison instead of implying one.
+    public var freshnessDeltaText: String {
+        let localization = LocalizationManager.shared
+        guard let yesterday = yesterdayTotal, yesterday > 0,
+              let today = summary?.totalTokens, today > 0 else {
+            return localization.localized(.noComparablePeriod)
+        }
+        let change = (Double(today) - Double(yesterday)) / Double(yesterday)
+        let sign = change >= 0 ? "+" : ""
+        return String(
+            format: "%@%.0f%% %@",
+            sign,
+            change * 100,
+            localization.localized(.vsPreviousPeriod)
+        )
+    }
 }
 
 public struct MenuBarPopoverView: View {
@@ -69,40 +110,132 @@ public struct MenuBarPopoverView: View {
         let active = Self.activeTools(for: summary)
         let toolColors = ChartPalette.shared.colors(for: active.map(\.id))
 
+        // Three layers, and the count is the design. A popover that answers
+        // "how much today, what did it cost, who spent it, and now do I do
+        // anything" is really four surfaces competing inside 360pt, and the
+        // layer that loses is always the one the user came for.
         return VStack(alignment: .leading, spacing: 0) {
-            popoverHeader
-            Divider().overlay(AppTheme.Border.divider)
+            // ① Today's total, its change, and the cache ring.
+            todayConclusion(active: active)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    todayConclusion(active: active)
-                    AppTheme.Border.divider.frame(height: AppTheme.Layout.hairline)
+            InlineDivider()
 
-                    if let update = updateChecker.availableUpdate {
-                        updateBanner(update)
-                            .padding(.horizontal, 16)
-                            .padding(.top, 14)
-                    } else {
-                        updateStatusNotice
-                    }
+            // ② Cost, source count, and how fresh the data is.
+            glanceFacts(active: active)
 
-                    AppTheme.Border.divider.frame(height: AppTheme.Layout.hairline)
-                        .padding(.top, updateChecker.availableUpdate == nil ? 14 : 0)
-                    sourceBreakdown(active: active, toolColors: toolColors)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                }
+            if let update = updateChecker.availableUpdate {
+                InlineDivider()
+                updateBanner(update)
+                    .padding(.horizontal, DesignTokens.Metrics.windowPadding)
+                    .padding(.vertical, DesignTokens.Metrics.modulePaddingTight)
+            } else {
+                updateStatusNotice
             }
-            .scrollBounceBehavior(.basedOnSize)
 
-            Divider().overlay(AppTheme.Border.divider)
+            InlineDivider()
+
+            // ③ The two heaviest sources. A full ranking here would push the
+            // primary action below the fold on a menu bar panel.
+            topSources(active: active, toolColors: toolColors)
+                .padding(.horizontal, DesignTokens.Metrics.windowPadding)
+                .padding(.vertical, DesignTokens.Metrics.modulePaddingTight)
+
+            InlineDivider()
             actionBar
         }
-        .frame(width: 340)
-        .background(.regularMaterial)
+        .frame(width: 360)
+        .background(DesignTokens.Surfaces.elevated)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(localization.localized(.quickGlance))
         .preferredColorScheme(themeMode.colorScheme)
+    }
+
+    /// ① Today at a glance: the total, the cache ring, and the trend that
+    /// explains the total's shape.
+    ///
+    /// Spend is a value, not a health state. It used to render in the success
+    /// green, which made a routine $0.18 read as a status light and competed
+    /// with the freshness marker for the same hue.
+    private func todayConclusion(active: [ActiveTool]) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Metrics.modulePaddingTight) {
+            RegionLabel(localization.localized(.todaysTokens))
+
+            if let summary, summary.totalTokens > 0 {
+                HStack(alignment: .center, spacing: DesignTokens.Metrics.modulePadding) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(TokenFormatter.formatCompact(summary.totalTokens))
+                                .font(DesignTokens.TypeScale.popoverTotal)
+                                .foregroundColor(DesignTokens.Ink.strong)
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.55)
+                                .contentTransition(.numericText())
+                                .help(TokenFormatter.formatWithTooltip(summary.totalTokens).tooltip)
+                            Text(localization.localized(.tokenUnit))
+                                .font(DesignTokens.TypeScale.label)
+                                .foregroundColor(DesignTokens.Ink.muted)
+                        }
+                        Text(model.freshnessDeltaText)
+                            .font(DesignTokens.TypeScale.caption)
+                            .foregroundColor(DesignTokens.Ink.muted)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    // The one ratio that earns a shape. At 62pt it fits the
+                    // 360pt width beside the total without pushing either
+                    // reading into truncation.
+                    CacheHitRing(rate: model.cacheHitRate, diameter: 62)
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(localization.localized(.popoverAccessibilityDescription))
+
+                if let points = model.trendPoints,
+                   points.contains(where: { $0.tokens > 0 }),
+                   points.count > 1 {
+                    glanceTrend(points: points)
+                }
+            } else {
+                HStack(spacing: 9) {
+                    Image(systemName: summary == nil ? "questionmark.circle" : "chart.bar")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(DesignTokens.Ink.muted)
+                        .accessibilityHidden(true)
+                    Text(summary == nil ? localization.localized(.noDataToDisplay) : localization.localized(.emptyUsage))
+                        .font(DesignTokens.TypeScale.heading)
+                        .foregroundColor(DesignTokens.Ink.strong)
+                }
+                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(.horizontal, DesignTokens.Metrics.windowPadding)
+        .padding(.vertical, DesignTokens.Metrics.modulePadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// ② Two facts and one state. Each is a figure the reader would otherwise
+    /// have to open the Dashboard for, and each says what period it covers.
+    private func glanceFacts(active: [ActiveTool]) -> some View {
+        HStack(alignment: .center, spacing: DesignTokens.Metrics.modulePadding) {
+            Readout(
+                label: localization.localized(.estimatedCost),
+                value: pricingEngine.spendString(summary?.totalCostUSD ?? 0),
+                valueFont: DesignTokens.TypeScale.value
+            )
+            InlineDivider(axis: .vertical).frame(height: 30)
+            Readout(
+                label: localization.localized(.popoverSourceCount),
+                value: String(active.count),
+                valueFont: DesignTokens.TypeScale.value
+            )
+            Spacer(minLength: 8)
+            StateCapsule(model.freshnessLevel, text: dataFreshnessText)
+        }
+        .padding(.horizontal, DesignTokens.Metrics.windowPadding)
+        .padding(.vertical, DesignTokens.Metrics.modulePaddingTight)
     }
 
     /// The popover hangs off a menu bar item that already names the app, so the
@@ -110,149 +243,83 @@ public struct MenuBarPopoverView: View {
     /// repeating the product name, and carries the sync state inline. Freshness
     /// used to get its own tinted panel between the total and the breakdown,
     /// which cost a whole band to say one short thing.
+    /// The popover hangs off a menu bar item that already names the app, so the
+    /// header states the window's subject — today's usage — rather than
+    /// repeating the product name, and carries the sync state inline. Freshness
+    /// used to get its own tinted panel between the total and the breakdown,
+    /// which cost a whole band to say one short thing.
     private var popoverHeader: some View {
-        let isRefreshing = model.freshness.isRefreshing
-        let hasFailure = model.freshness.partialFailure != nil
-        let hasSuccessfulRefresh = model.freshness.hasSuccessfulRefresh
-        let systemImage: String
-        let color: Color
-        if isRefreshing {
-            systemImage = "arrow.triangle.2.circlepath"
-            color = AppTheme.Chrome.glyphActive
-        } else if hasFailure {
-            systemImage = "exclamationmark.triangle.fill"
-            color = AppTheme.Status.error
-        } else if hasSuccessfulRefresh {
-            systemImage = "checkmark.circle.fill"
-            color = AppTheme.Status.success
-        } else {
-            systemImage = "clock.badge.exclamationmark"
-            color = AppTheme.Text.tertiary
-        }
-
-        let detail = isRefreshing
-            ? localization.localized(.syncInProgress)
-            : hasFailure
-                ? localization.localized(.syncFailed)
-                : dataFreshnessText
-
+        let detail = dataFreshnessText
         return HStack(spacing: 8) {
-            SectionEyebrow(localization.localized(.todaysTokens))
-            StatusMarker(systemImage: systemImage, text: detail, color: color)
+            RegionLabel(localization.localized(.todaysTokens))
             Spacer(minLength: 6)
+            StateCapsule(model.freshnessLevel, text: detail)
             if let onOpenSettings = onOpenSettings {
-                QuietIconButton(
-                    systemName: "gearshape",
-                    tooltip: localization.localized(.openSettingsAction),
+                ToolbarIconButton(
+                    systemImage: "gearshape",
+                    help: localization.localized(.openSettingsAction),
                     action: onOpenSettings
                 )
-                .accessibilityLabel(localization.localized(.settings))
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, DesignTokens.Metrics.windowPadding)
         .padding(.top, 13)
         .padding(.bottom, 9)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(localization.localized(.popoverSyncStatus, arguments: detail))
         .help(detail)
     }
 
-    private func todayConclusion(active: [ActiveTool]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let summary, summary.totalTokens > 0 {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(TokenFormatter.formatCompact(summary.totalTokens))
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundColor(AppTheme.Text.primary)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.62)
-                        .help(TokenFormatter.formatWithTooltip(summary.totalTokens).tooltip)
-
-                    Spacer(minLength: 8)
-
-                    // Spend is a value, not a health state. Rendering it in the
-                    // success green made a routine cost read as a status light
-                    // and competed with the freshness marker for the same hue.
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text(localization.localized(.estimatedCost))
-                            .font(AppTheme.Typography.caption)
-                            .foregroundColor(AppTheme.Text.tertiary)
-                        Text(pricingEngine.spendString(summary.totalCostUSD))
-                            .font(.system(size: 17, weight: .semibold, design: .rounded))
-                            .foregroundColor(AppTheme.Text.primary)
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.68)
-                    }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(localization.localized(.popoverAccessibilityDescription))
-            } else {
-                HStack(spacing: 9) {
-                    Image(systemName: summary == nil ? "questionmark.circle" : "chart.bar")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(AppTheme.Text.secondary)
-                        .accessibilityHidden(true)
-                    Text(summary == nil ? localization.localized(.noDataToDisplay) : localization.localized(.emptyUsage))
-                        .font(.headline)
-                        .foregroundColor(AppTheme.Text.primary)
-                }
-                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-                .accessibilityElement(children: .combine)
-            }
-
-            if let points = model.trendPoints,
-               summary?.totalTokens ?? 0 > 0,
-               points.contains(where: { $0.tokens > 0 }),
-               points.count > 1 {
-                glanceTrend(points: points)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
+    /// One primary action, three secondary icon rows.
+    ///
+    /// The previous bar had a prominent button, two bordered buttons beside it
+    /// and a text button below — four controls, three of them for the same
+    /// "leave this panel" intent, which is how a menu bar popover ends up
+    /// looking like a toolbar. The icon row keeps all three actions reachable
+    /// at 44pt while making the hierarchy honest: one thing is primary.
     private var actionBar: some View {
-        VStack(spacing: 7) {
-            Button(action: onOpenDashboard) {
-                Label(localization.localized(.openDashboardAction), systemImage: "macwindow")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
+        VStack(spacing: DesignTokens.Metrics.moduleGap) {
+            PrimaryAction(
+                localization.localized(.openDashboardAction),
+                systemImage: "macwindow",
+                action: onOpenDashboard
+            )
             .keyboardShortcut(.defaultAction)
 
-            HStack(spacing: 7) {
-                Button(action: onSyncNow) {
-                    Label(localization.localized(.syncNow), systemImage: "arrow.triangle.2.circlepath")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .accessibilityLabel(localization.localized(.syncNow))
+            InlineDivider()
 
+            HStack(spacing: 0) {
+                secondaryAction(
+                    systemImage: "arrow.triangle.2.circlepath",
+                    label: localization.localized(.syncNow),
+                    action: onSyncNow
+                )
+                InlineDivider(axis: .vertical).frame(height: 20)
                 if let onOpenSettings = onOpenSettings {
-                    Button(action: onOpenSettings) {
-                        Label(localization.localized(.settings), systemImage: "gearshape")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .accessibilityLabel(localization.localized(.settings))
+                    secondaryAction(
+                        systemImage: "gearshape",
+                        label: localization.localized(.settings),
+                        action: onOpenSettings
+                    )
                 }
+                InlineDivider(axis: .vertical).frame(height: 20)
+                secondaryAction(
+                    systemImage: "power",
+                    label: localization.localized(.quit),
+                    action: onQuit
+                )
             }
-
-            QuietTextButton(
-                title: localization.localized(.quit),
-                action: onQuit
-            )
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel(localization.localized(.quit))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, DesignTokens.Metrics.windowPadding)
+        .padding(.vertical, DesignTokens.Metrics.modulePaddingTight)
+    }
+
+    /// A secondary action: an icon over a word, at the full 44pt row height so
+    /// it clears the target floor without looking heavy.
+    private func secondaryAction(
+        systemImage: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        SecondaryIconAction(systemImage: systemImage, label: label, action: action)
     }
 
     private var dataFreshnessText: String {
@@ -275,58 +342,65 @@ public struct MenuBarPopoverView: View {
         return VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(localization.localized(.hourlyTrendToday))
-                    .font(AppTheme.Typography.label)
-                    .foregroundColor(AppTheme.Text.tertiary)
+                    .font(DesignTokens.TypeScale.caption)
+                    .foregroundColor(DesignTokens.Ink.muted)
                 Spacer(minLength: 6)
                 if let peak, peak.tokens > 0 {
                     Text(localization.localized(.popoverPeakAt, arguments: peak.label))
-                        .font(AppTheme.Typography.caption)
-                        .foregroundColor(AppTheme.Text.quaternary)
+                        .font(DesignTokens.TypeScale.caption)
+                        .foregroundColor(DesignTokens.Ink.muted)
                         .lineLimit(1)
                 }
                 Text(TokenFormatter.formatCompact(peak?.tokens ?? 0))
-                    .font(AppTheme.Typography.tabular)
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .font(DesignTokens.TypeScale.numeric)
+                    .foregroundColor(DesignTokens.Ink.muted)
             }
 
             SparkLine(points: points)
-                .fill(AppTheme.Data.series.opacity(0.28))
+                .fill(DesignTokens.Ink.faint)
                 .frame(height: 26)
                 .overlay(alignment: .bottom) {
                     Rectangle()
-                        .fill(AppTheme.Data.track)
-                        .frame(height: AppTheme.Layout.hairline)
+                        .fill(DesignTokens.Ink.track)
+                        .frame(height: DesignTokens.Metrics.hairline)
                 }
                 .accessibilityLabel(localization.localized(.hourlyTrendToday))
                 .accessibilityValue(TokenFormatter.formatFull(total))
         }
     }
 
-    private func sourceBreakdown(active: [ActiveTool], toolColors: [String: Color]) -> some View {
-        let visibleTools = Array(active.prefix(3))
+    /// ③ The two heaviest sources, as a definition list.
+    ///
+    /// A full ranking does not fit a glance without pushing the primary action
+    /// down, and the third source is not what anyone opened a menu bar popover
+    /// to find. The remaining sources are still counted in layer ②, so the
+    /// reader knows the two rows are a top-two and not the whole picture.
+    private func topSources(active: [ActiveTool], toolColors: [String: Color]) -> some View {
+        let visibleTools = Array(active.prefix(2))
         let totalActive = active.reduce(0) { $0 + $1.tokens }
 
         return VStack(alignment: .leading, spacing: 8) {
-            SectionEyebrow(localization.localized(.toolBreakdownToday))
+            RegionLabel(localization.localized(.toolBreakdownToday))
 
             if visibleTools.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "chart.bar")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(AppTheme.Text.tertiary)
+                        .foregroundColor(DesignTokens.Ink.muted)
                         .accessibilityHidden(true)
                     Text(localization.localized(.popoverNoUsage))
-                        .font(.subheadline)
-                        .foregroundColor(AppTheme.Text.tertiary)
+                        .font(DesignTokens.TypeScale.body)
+                        .foregroundColor(DesignTokens.Ink.muted)
                 }
                 .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                 .accessibilityElement(children: .combine)
             } else {
-                // Same neutral-track treatment as the Dashboard, so the two
-                // surfaces read as one product rather than two bar styles.
-                ProportionBar(
+                // The same mark and the same neutral track as the Dashboard, so
+                // the two surfaces read as one product rather than two bar
+                // styles.
+                ShareBar(
                     segments: active.map { tool in
-                        ProportionBar.Segment(
+                        ShareBar.Segment(
                             id: tool.id,
                             share: totalActive > 0 ? Double(tool.tokens) / Double(totalActive) : 0,
                             color: toolColors[tool.id]
@@ -343,7 +417,7 @@ public struct MenuBarPopoverView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(visibleTools.enumerated()), id: \.element.id) { index, tool in
                         if index > 0 {
-                            PanelDivider(inset: 15)
+                            InlineDivider(inset: 15)
                         }
                         HStack(spacing: 8) {
                             Circle()
@@ -356,23 +430,23 @@ public struct MenuBarPopoverView: View {
                                 .accessibilityHidden(true)
 
                             Text(AgentFilterBarView.displayName(for: tool.id))
-                                .font(AppTheme.Typography.rowTitle)
-                                .foregroundColor(AppTheme.Text.primary)
+                                .font(DesignTokens.TypeScale.label)
+                                .foregroundColor(DesignTokens.Ink.strong)
                                 .lineLimit(1)
 
                             Spacer(minLength: 8)
 
                             Text(TokenFormatter.formatCompact(tool.tokens))
-                                .font(AppTheme.Typography.tabular)
-                                .foregroundColor(AppTheme.Text.secondary)
+                                .font(DesignTokens.TypeScale.numeric)
+                                .foregroundColor(DesignTokens.Ink.muted)
                                 .lineLimit(1)
 
                             Text(String(format: "%.1f%%", topShare(for: tool, in: active)))
-                                .font(AppTheme.Typography.tabular)
-                                .foregroundColor(AppTheme.Text.quaternary)
+                                .font(DesignTokens.TypeScale.numeric)
+                                .foregroundColor(DesignTokens.Ink.muted)
                                 .frame(width: 40, alignment: .trailing)
                         }
-                        .frame(height: 28)
+                        .frame(height: 24)
                         .accessibilityElement(children: .combine)
                         .help(TokenFormatter.formatFull(tool.tokens))
                     }
@@ -383,8 +457,8 @@ public struct MenuBarPopoverView: View {
                         format: localization.localized(.moreToolsCount),
                         active.count - visibleTools.count
                     ))
-                    .font(AppTheme.Typography.caption)
-                    .foregroundColor(AppTheme.Text.quaternary)
+                    .font(DesignTokens.TypeScale.caption)
+                    .foregroundColor(DesignTokens.Ink.ghost)
                     .padding(.top, 2)
                     .accessibilityLabel(
                         String(
@@ -416,7 +490,7 @@ public struct MenuBarPopoverView: View {
             let totalWidth = proxy.size.width
             if active.isEmpty || totalActive <= 0 {
                 Capsule()
-                    .fill(AppTheme.Surface.subtle)
+                    .fill(DesignTokens.Surfaces.inset)
                     .frame(height: 4)
             } else {
                 let spacing: CGFloat = 1.5
@@ -465,13 +539,13 @@ public struct MenuBarPopoverView: View {
             compactUpdateNotice(
                 systemName: "arrow.triangle.2.circlepath",
                 title: localization.localized(.checkingForUpdates),
-                color: AppTheme.Status.accent
+                color: DesignTokens.Accent.base
             )
         case .failed:
             compactUpdateNotice(
                 systemName: "exclamationmark.triangle.fill",
                 title: localization.localized(.updateCheckFailed),
-                color: AppTheme.Status.error
+                color: DesignTokens.State.danger
             )
         default:
             EmptyView()
@@ -486,7 +560,7 @@ public struct MenuBarPopoverView: View {
                 .accessibilityHidden(true)
             Text(title)
                 .font(.caption.weight(.medium))
-                .foregroundColor(AppTheme.Text.primary)
+                .foregroundColor(DesignTokens.Ink.strong)
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
@@ -502,14 +576,14 @@ public struct MenuBarPopoverView: View {
     private func updateBanner(_ release: UpdateRelease) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.down.circle.fill")
-                .foregroundColor(AppTheme.Status.accent)
+                .foregroundColor(DesignTokens.Accent.base)
             VStack(alignment: .leading, spacing: 1) {
                 Text(String(format: localization.localized(.updateAvailableTitle), release.version.description))
                     .font(.caption.weight(.semibold))
-                    .foregroundColor(AppTheme.Text.primary)
+                    .foregroundColor(DesignTokens.Ink.strong)
                 Text(release.title)
                     .font(.caption2)
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .foregroundColor(DesignTokens.Ink.muted)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .help(release.title)
@@ -525,11 +599,11 @@ public struct MenuBarPopoverView: View {
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(AppTheme.Status.accent.opacity(0.10))
+                .fill(DesignTokens.Accent.base.opacity(0.10))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(AppTheme.Status.accent.opacity(0.22), lineWidth: 0.5)
+                .stroke(DesignTokens.Accent.base.opacity(0.22), lineWidth: 0.5)
         )
         .accessibilityElement(children: .contain)
     }
@@ -587,11 +661,11 @@ private struct QuietIconButton: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(isHovered ? AppTheme.Text.primary : AppTheme.Text.secondary)
+                .foregroundColor(isHovered ? DesignTokens.Ink.strong : DesignTokens.Ink.muted)
                 .frame(width: 24, height: 24)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isHovered ? AppTheme.Surface.hover : Color.clear)
+                        .fill(isHovered ? DesignTokens.Surfaces.hover : Color.clear)
                 )
         }
         .buttonStyle(.plain)
@@ -609,12 +683,12 @@ private struct QuietTextButton: View {
         Button(action: action) {
             Text(title)
                 .font(.subheadline)
-                .foregroundColor(isHovered ? AppTheme.Text.primary : AppTheme.Text.secondary)
+                .foregroundColor(isHovered ? DesignTokens.Ink.strong : DesignTokens.Ink.muted)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(isHovered ? AppTheme.Surface.hover : Color.clear)
+                        .fill(isHovered ? DesignTokens.Surfaces.hover : Color.clear)
                 )
         }
         .buttonStyle(.plain)

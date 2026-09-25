@@ -132,53 +132,61 @@ public enum AppTheme {
     /// roles semantic makes it possible to tune density without changing the
     /// information hierarchy of an individual screen.
     public enum Typography {
-        /// Dashboard hierarchy: the compact total is deliberately dominant and
-        /// exact values remain tabular, secondary metadata.
-        public static let heroMetric = Font.system(size: 48, weight: .bold, design: .rounded)
-        public static let heroSpend = Font.system(size: 28, weight: .semibold, design: .rounded)
-        public static let contextTitle = Font.system(size: 24, weight: .bold, design: .rounded)
-        public static let sectionTitle = Font.system(size: 16, weight: .semibold)
-        public static let metricValue = Font.system(size: 15, weight: .semibold, design: .rounded)
-        public static let supportingValue = Font.system(size: 17, weight: .semibold, design: .rounded)
-        public static let exactValue = Font.system(size: 12, weight: .medium, design: .monospaced)
-        public static let label = Font.system(size: 11, weight: .medium)
-        public static let caption = Font.system(size: 11)
+        /// The period total. 50pt display, per the type ramp in §3.
+        public static let heroMetric = DesignTokens.TypeScale.display
+        /// A module's leading figure. 34pt.
+        public static let heroSpend = DesignTokens.TypeScale.title
+        public static let contextTitle = DesignTokens.TypeScale.title
+        /// A module heading. 17pt.
+        public static let sectionTitle = DesignTokens.TypeScale.heading
+        /// A value inside a metric cell. 15pt.
+        public static let metricValue = DesignTokens.TypeScale.value
+        /// A secondary reading. 17pt.
+        public static let supportingValue = DesignTokens.TypeScale.numericLarge
+        public static let exactValue = DesignTokens.TypeScale.numeric
+        public static let label = DesignTokens.TypeScale.label
+        public static let caption = DesignTokens.TypeScale.caption
 
         /// Section eyebrows replace the old "icon + title" pattern. A tracked,
         /// uppercase micro-label carries the grouping without decorating every
         /// heading with a pictogram.
-        public static let eyebrow = Font.system(size: 10, weight: .semibold)
-        public static let pageTitle = Font.system(size: 19, weight: .bold)
-        public static let rowTitle = Font.system(size: 13, weight: .medium)
-        public static let rowDetail = Font.system(size: 11)
+        public static let eyebrow = DesignTokens.TypeScale.eyebrow
+        public static let pageTitle = DesignTokens.TypeScale.heading
+        public static let rowTitle = DesignTokens.TypeScale.label
+        public static let rowDetail = DesignTokens.TypeScale.caption
         /// Dense numeric readouts inside tables and lists.
-        public static let tabular = Font.system(size: 12, weight: .medium, design: .monospaced)
+        public static let tabular = DesignTokens.TypeScale.numeric
     }
 
     // MARK: - Layout & Controls
 
     /// Density tokens shared by all three native surfaces.
     public enum Layout {
-        public static let canvasPadding: CGFloat = 24
-        public static let sectionSpacing: CGFloat = 20
-        public static let cardPadding: CGFloat = 18
+        /// Window inset. 20, per §3.
+        public static let canvasPadding: CGFloat = DesignTokens.Metrics.windowPadding
+        /// Gap between two modules. 14.
+        public static let sectionSpacing: CGFloat = DesignTokens.Metrics.moduleGap
+        /// Module inner padding. 16.
+        public static let cardPadding: CGFloat = DesignTokens.Metrics.modulePadding
         public static let compactSpacing: CGFloat = 10
-        public static let hairline: CGFloat = 0.5
+        public static let hairline: CGFloat = DesignTokens.Metrics.hairline
 
         /// Gaps inside a continuous container (the Dashboard conclusion panel,
         /// Settings groups). Continuous containers separate their children with
         /// hairlines rather than by repeating a card border.
         public static let groupGap: CGFloat = 14
-        public static let cellPadding: CGFloat = 16
-        public static let rowHeight: CGFloat = 44
+        public static let cellPadding: CGFloat = DesignTokens.Metrics.modulePadding
+        /// Minimum tappable height. 44, so every control clears the touch and
+        /// click target floor.
+        public static let rowHeight: CGFloat = DesignTokens.Metrics.rowHeight
     }
 
     public enum Radius {
-        public static let card: CGFloat = 12
+        public static let card: CGFloat = DesignTokens.Metrics.Radius.band
         /// The single enclosing container for a screen region. Slightly tighter
         /// than `card` so grouped panels read as one object.
-        public static let panel: CGFloat = 10
-        public static let control: CGFloat = 8
+        public static let panel: CGFloat = DesignTokens.Metrics.Radius.module
+        public static let control: CGFloat = DesignTokens.Metrics.Radius.control
         public static let pill: CGFloat = 999
 
         public enum Settings {
@@ -191,49 +199,43 @@ public enum AppTheme {
 
     public enum Control {
         public static let compactHeight: CGFloat = 28
-        public static let regularHeight: CGFloat = 32
+        public static let regularHeight: CGFloat = 30
         public static let icon: CGFloat = 13
     }
 
     // MARK: - Canvas & Surfaces
 
     public enum Canvas {
-        /// Base window / background canvas.
-        /// Light: Warm off-white (#F5F5F7), Dark: Velvety graphite (#1C1C1E).
-        public static let background = Color.dynamic(lightHex: "#F5F5F7", darkHex: "#1C1C1E")
+        /// Base window / background canvas. Bound to `--bg` from the design
+        /// system rather than kept as an independent value, so the canvas can
+        /// never drift away from the tokens the modules are drawn against.
+        public static let background = DesignTokens.Surfaces.canvas
     }
 
     public enum Surface {
-        /// Primary card / container surface.
-        /// Light: Pure white (#FFFFFF), Dark: Elevated warm graphite (#262629).
-        public static let primary = Color.dynamic(lightHex: "#FFFFFF", darkHex: "#262629")
+        /// Primary card / container surface. `--surface`.
+        public static let primary = DesignTokens.Surfaces.module
 
         /// One continuous container that groups a whole screen region. Regions
         /// separated by this surface are separated by whitespace and hairlines
         /// instead of by repeating a bordered card, which is what previously
         /// made every surface read as an identical tile in a card wall.
-        public static let panel = Color.dynamic(lightHex: "#FFFFFF", darkHex: "#252528")
+        public static let panel = DesignTokens.Surfaces.module
 
         /// Subtle container / inset well for grouped rows or stat pods.
-        /// Light: Delicate warm gray (#EFEFF1), Dark: Subtle well (#2F2F34).
-        public static let subtle = Color.dynamic(lightHex: "#EFEFF1", darkHex: "#2F2F34")
+        /// `--surface-2`.
+        public static let subtle = DesignTokens.Surfaces.inset
 
         /// Interactive row / pill hover overlay.
-        public static let hover = Color.dynamic(
-            lightHex: "#000000", darkHex: "#FFFFFF",
-            lightAlpha: 0.04, darkAlpha: 0.06
-        )
+        public static let hover = DesignTokens.Surfaces.hover
 
         /// Interactive selected item background.
-        public static let selected = Color.dynamic(
-            lightHex: "#0066CC", darkHex: "#2997FF",
-            lightAlpha: 0.10, darkAlpha: 0.16
-        )
+        public static let selected = DesignTokens.Surfaces.selected
 
         /// Floating popovers, tooltips, controls, and elevated modal panels.
         /// Kept dynamic because the Penpot popover and settings chrome follow
         /// the system appearance independently of the dashboard canvas.
-        public static let elevated = Color.dynamic(lightHex: "#FFFFFF", darkHex: "#2C2C30")
+        public static let elevated = DesignTokens.Surfaces.elevated
     }
 
     // MARK: - Data Marks
@@ -244,50 +246,45 @@ public enum AppTheme {
         /// The empty portion of a proportional bar. Categorical hues are drawn
         /// on top of this neutral track rather than as a full-bleed fill, so one
         /// dominant agent color no longer owns the whole screen.
-        public static let track = Color.dynamic(lightHex: "#000000", darkHex: "#FFFFFF", lightAlpha: 0.07, darkAlpha: 0.10)
+        public static let track = DesignTokens.Ink.track
 
-        /// A single-series mark (one total, no category split). Neutral by
-        /// default so the eye reads shape and position, not hue.
-        public static let series = Color.dynamic(lightHex: "#0066CC", darkHex: "#2997FF")
-        public static let seriesMuted = Color.dynamic(lightHex: "#0066CC", darkHex: "#2997FF", lightAlpha: 0.28, darkAlpha: 0.42)
+        /// A single-series mark (one total, no category split). The trend line
+        /// is ink, not the accent: the accent is reserved for things the user
+        /// operates, and a blue line across a chart reads as a selection.
+        public static let series = DesignTokens.Ink.strong
+        public static let seriesMuted = DesignTokens.Ink.faint
     }
 
     // MARK: - Typography
 
     public enum Text {
-        /// High-contrast primary reading text.
-        /// Light: Deep charcoal (#1D1D1F), Dark: Crisp off-white (#F5F5F7).
-        public static let primary = Color.dynamic(lightHex: "#1D1D1F", darkHex: "#F5F5F7")
+        /// High-contrast primary reading text. `--fg`.
+        public static let primary = DesignTokens.Ink.strong
 
-        /// Calm secondary text for subtitles, units, and timestamps.
-        /// Light: Muted graphite (#6E6E73), Dark: Silver gray (#98989D).
-        public static let secondary = Color.dynamic(lightHex: "#6E6E73", darkHex: "#98989D")
+        /// Calm secondary text for subtitles, units, and timestamps. `--muted`,
+        /// verified at 7.06:1 in both appearances.
+        public static let secondary = DesignTokens.Ink.muted
 
         /// Tertiary text for captions, table headers, and axis markers.
-        /// Light: Warm graphite (#76767B), Dark: Light slate (#8C8C8F).
-        public static let tertiary = Color.dynamic(lightHex: "#76767B", darkHex: "#8C8C8F")
+        public static let tertiary = DesignTokens.Ink.muted
 
         /// Quaternary text for inactive placeholders and disabled labels.
-        public static let quaternary = Color.dynamic(lightHex: "#AEAEC2", darkHex: "#48484A")
+        /// Disabled is the only state permitted to lose contrast, so this is
+        /// the faintest ramp step and is never used for live data.
+        public static let quaternary = DesignTokens.Ink.ghost
     }
 
     // MARK: - Hairlines & Borders
 
     public enum Border {
-        /// Crisp 0.5pt divider between list items and header sections.
-        public static let divider = Color.dynamic(
-            lightHex: "#000000", darkHex: "#FFFFFF",
-            lightAlpha: 0.08, darkAlpha: 0.09
-        )
+        /// A module boundary. `--line`.
+        public static let divider = DesignTokens.Lines.module
 
-        /// Subtle card boundary stroke.
-        public static let subtle = Color.dynamic(
-            lightHex: "#000000", darkHex: "#FFFFFF",
-            lightAlpha: 0.06, darkAlpha: 0.08
-        )
+        /// A divider between two things inside one module. `--line-soft`.
+        public static let subtle = DesignTokens.Lines.soft
 
         /// Focused / active element border.
-        public static let focus = Color.dynamic(lightHex: "#0066CC", darkHex: "#2997FF")
+        public static let focus = DesignTokens.Accent.ring
     }
 
     // MARK: - Status & Accent
@@ -306,20 +303,26 @@ public enum AppTheme {
     /// write" in the composition bar, "caution" in Settings, and "project" in a
     /// heading icon, so no hue on screen carried a readable meaning.
     public enum Status {
-        /// macOS refined primary interactive blue.
-        public static let accent = Color.dynamic(lightHex: "#0066CC", darkHex: "#2997FF")
+        /// The single interaction accent. 5.06:1 on a light module, 6.15:1 on
+        /// a dark one — it is a UI color and never marks a data series.
+        public static let accent = DesignTokens.Accent.base
 
-        /// Token spend / health OK / success state:
-        /// Light: Botanical forest emerald (#15803D), Dark: Luminous mint emerald (#34D399).
-        public static let success = Color.dynamic(lightHex: "#15803D", darkHex: "#34D399")
+        /// Token spend / health OK / success state. The *mark* hue; use
+        /// `successText` whenever the state is read as words.
+        public static let success = DesignTokens.State.ok
+        /// Text-legible success. The base green is 4.11:1 on a light module, so
+        /// as body text it converges 8% toward `--fg` (4.56:1).
+        public static let successText = DesignTokens.State.okText
 
-        /// Warning / caution state:
-        /// Light: Warm amber (#D97706), Dark: Luminous amber (#FBBF24).
-        public static let warning = Color.dynamic(lightHex: "#D97706", darkHex: "#FBBF24")
+        /// Warning / caution state. The *mark* hue; `warningText` for words.
+        public static let warning = DesignTokens.State.warn
+        /// Text-legible warning. Amber needs a 22% convergence to clear 4.5:1.
+        public static let warningText = DesignTokens.State.warnText
 
-        /// Error / destructive state:
-        /// Light: Crimson coral (#DC2626), Dark: Soft coral red (#F87171).
-        public static let error = Color.dynamic(lightHex: "#DC2626", darkHex: "#F87171")
+        /// Error / destructive state. Already 5.00:1 light and 5.75:1 dark, so
+        /// the text variant is the same value under a name that documents why.
+        public static let error = DesignTokens.State.danger
+        public static let errorText = DesignTokens.State.dangerText
     }
 
     /// Interface furniture. One accent, used for anything the user can act on
@@ -360,21 +363,29 @@ public enum AppTheme {
     // MARK: - Heatmap 5-Level Intensity Scale
 
     public enum Heatmap {
-        /// Level 0: Zero token usage (empty day recess).
-        /// Light: Warm soft recess (#E8E9ED), Dark: Velvety graphite recess (#2C2C31).
-        public static let level0 = Color.dynamic(lightHex: "#E8E9ED", darkHex: "#2C2C31")
+        /// The heatmap encodes magnitude, so it uses the ink ramp and not a
+        /// hue. The five steps below are opacity steps of one ink, which is why
+        /// level 4 and level 1 are the same color family: more usage reads as
+        /// more ink, exactly as a bar chart reads taller.
+        public enum Step {
+            public static let level0 = DesignTokens.Ink.ghost
+            public static let level1 = DesignTokens.Ink.track
+            public static let level2 = DesignTokens.Ink.faint
+            public static let level3 = DesignTokens.Ink.strong.opacity(0.62)
+            public static let level4 = DesignTokens.Ink.strong
+        }
 
-        /// Level 1: Low activity (delicate sea-mint wash).
-        public static let level1 = Color.dynamic(lightHex: "#A7F3D0", darkHex: "#114732")
-
-        /// Level 2: Moderate activity (calm leaf green).
-        public static let level2 = Color.dynamic(lightHex: "#4ADE80", darkHex: "#157F54")
-
-        /// Level 3: High activity (rich vibrant emerald).
-        public static let level3 = Color.dynamic(lightHex: "#16A34A", darkHex: "#1EB878")
-
-        /// Level 4: Peak activity (deep forest jewel in light mode, radiant mint jewel in dark mode).
-        public static let level4 = Color.dynamic(lightHex: "#15803D", darkHex: "#34D399")
+        /// Level 0: zero usage. The faintest ink, so an empty day is a recess
+        /// and not a colored cell.
+        public static let level0 = Step.level0
+        /// Level 1: low activity.
+        public static let level1 = Step.level1
+        /// Level 2: moderate activity.
+        public static let level2 = Step.level2
+        /// Level 3: high activity.
+        public static let level3 = Step.level3
+        /// Level 4: peak activity.
+        public static let level4 = Step.level4
 
         public static func color(for intensity: Int) -> Color {
             switch intensity {
@@ -393,26 +404,22 @@ public enum AppTheme {
         /// Semantic series colors used when category identity is not the data
         /// subject. Agent-facing charts continue to use `Agent` below.
         public enum Series {
-            public static let input = Status.accent
+            public static let input = DesignTokens.Ink.strong
             public static let output = Agent.claude
-            public static let cacheRead = Status.success
-            public static let cacheWrite = Status.warning
+            public static let cacheRead = DesignTokens.State.ok
+            public static let cacheWrite = DesignTokens.State.warn
         }
 
-        /// Primary trend line.
-        public static let primaryLine = Color.dynamic(lightHex: "#2563EB", darkHex: "#3B82F6")
+        /// Primary trend line. Ink, not the accent: a chart is a measurement,
+        /// and coloring it with the interaction hue makes a measurement look
+        /// like something the user has selected.
+        public static let primaryLine = DesignTokens.Ink.strong
 
         /// Area gradient start (top).
-        public static let primaryAreaStart = Color.dynamic(
-            lightHex: "#2563EB", darkHex: "#3B82F6",
-            lightAlpha: 0.22, darkAlpha: 0.32
-        )
+        public static let primaryAreaStart = DesignTokens.Ink.faint
 
         /// Area gradient end (bottom).
-        public static let primaryAreaEnd = Color.dynamic(
-            lightHex: "#2563EB", darkHex: "#3B82F6",
-            lightAlpha: 0.01, darkAlpha: 0.02
-        )
+        public static let primaryAreaEnd = DesignTokens.Ink.ghost
 
         public static var primaryAreaGradient: LinearGradient {
             LinearGradient(
@@ -423,10 +430,7 @@ public enum AppTheme {
         }
 
         /// Subtle chart gridline.
-        public static let gridline = Color.dynamic(
-            lightHex: "#000000", darkHex: "#FFFFFF",
-            lightAlpha: 0.05, darkAlpha: 0.06
-        )
+        public static let gridline = DesignTokens.Ink.ghost
     }
 
     // MARK: - Agent Brand Palette (All 18 Agents)

@@ -168,7 +168,7 @@ public struct HeatmapGridView: View {
                 Spacer()
                 Text(localization.localized(.less))
                     .font(.caption2)
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .foregroundColor(DesignTokens.Ink.muted)
                 ForEach(0..<5) { level in
                     RoundedRectangle(cornerRadius: 2.5)
                         .fill(AppTheme.Heatmap.color(for: level))
@@ -176,17 +176,17 @@ public struct HeatmapGridView: View {
                 }
                 Text(localization.localized(.more))
                     .font(.caption2)
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .foregroundColor(DesignTokens.Ink.muted)
             }
         }
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(AppTheme.Surface.primary)
+                .fill(DesignTokens.Surfaces.module)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+                .stroke(DesignTokens.Lines.soft, lineWidth: 0.5)
         )
     }
 
@@ -265,7 +265,7 @@ private struct HeatmapDayCellView: View {
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 6, weight: .bold))
-                        .foregroundColor(AppTheme.Text.primary)
+                        .foregroundColor(DesignTokens.Ink.strong)
                         .accessibilityHidden(true)
                 }
             }
@@ -274,7 +274,7 @@ private struct HeatmapDayCellView: View {
                 if isSelected || isHovered {
                     RoundedRectangle(cornerRadius: 2.5)
                         .stroke(
-                            isSelected ? AppTheme.Status.accent : AppTheme.Text.primary,
+                            isSelected ? DesignTokens.Accent.base : DesignTokens.Ink.strong,
                             lineWidth: isSelected ? 1.5 : 1
                         )
                 }
@@ -285,7 +285,7 @@ private struct HeatmapDayCellView: View {
                     // focus from selection, which uses a solid ring + check.
                     RoundedRectangle(cornerRadius: 3)
                         .stroke(
-                            AppTheme.Border.focus,
+                            DesignTokens.Accent.ring,
                             style: StrokeStyle(lineWidth: 2, dash: [2, 1])
                         )
                 }

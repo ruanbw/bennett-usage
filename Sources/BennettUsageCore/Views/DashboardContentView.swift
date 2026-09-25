@@ -66,6 +66,9 @@ public struct DashboardContentView: View {
     @State private var isSettingsHovered: Bool = false
     @State private var todaySummary: TodaySummary?
     @State private var lastDataRefreshAt: Date?
+    /// The preceding window of equal length, for the period-over-period delta
+    /// in the conclusion band. nil until the first comparison query resolves.
+    @State private var comparisonPeriod: MetricsAggregator.ComparisonPeriod?
 
     public init(
         aggregator: MetricsAggregator,
@@ -114,11 +117,48 @@ public struct DashboardContentView: View {
         Array((periodMetrics?.projectRankings ?? []).prefix(MetricsAggregator.projectRankingLimit))
     }
 
+    /// How much to trust what is on screen right now.
+    ///
+    /// This is a state, so it is the one thing in the interface allowed to
+    /// color the canvas. A stale band gets an amber ground and a sentence that
+    /// says the data may be incomplete, while every figure stays visible — an
+    /// error that hides the numbers is worse than an error that admits it.
+    private var freshnessLevel: StateCapsule.Level {
+        guard let lastDataRefreshAt else { return .stale }
+        let minutes = Int(Date().timeIntervalSince(lastDataRefreshAt) / 60)
+        return minutes < Self.staleThresholdMinutes ? .ok : .stale
+    }
+
+    /// Minutes after which the band stops claiming the data is current.
+    static let staleThresholdMinutes: Int = 60
+
+    /// How many days of history the current range actually rests on.
+    ///
+    /// A reader who sees "3.28B tokens, last 30 days" is entitled to know when
+    /// the tool has only been running for three of them, because those are very
+    /// different claims.
+    private var coverageDaysText: String {
+        let recorded = heatmapCells.filter { $0.totalTokens > 0 }.count
+        let spanDays = Self.expectedDayCount(for: selectedRange)
+        guard spanDays > 0 else { return "—" }
+        return "\(recorded) / \(spanDays)"
+    }
+
+    private static func expectedDayCount(for range: TimeRangeOption) -> Int {
+        switch range {
+        case .last24Hours, .today: return 1
+        case .last7Days: return 7
+        case .last30Days: return 30
+        case .pastYear: return 365
+        case .year: return 365
+        }
+    }
+
     // MARK: - Body
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.Layout.sectionSpacing) {
+            VStack(alignment: .leading, spacing: DesignTokens.Metrics.moduleGap) {
                 // The header and the global controls form one band separated by a
                 // hairline, not two independently bordered cards. The time range
                 // and agent filter therefore stay in a fixed, predictable place
@@ -132,11 +172,11 @@ public struct DashboardContentView: View {
                 heatmapSection
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, AppTheme.Layout.canvasPadding)
+            .padding(.horizontal, DesignTokens.Metrics.windowPadding)
             .padding(.top, AppTheme.Layout.compactSpacing)
-            .padding(.bottom, AppTheme.Layout.canvasPadding)
+            .padding(.bottom, DesignTokens.Metrics.windowPadding)
         }
-        .background(AppTheme.Canvas.background)
+        .background(DesignTokens.Surfaces.canvas)
         .task(id: RefreshKey(scope: .period, range: selectedRange, year: nil, toolFilter: selectedToolFilter, tick: refreshTick)) {
             await loadPeriodMetrics()
         }
@@ -154,6 +194,20 @@ public struct DashboardContentView: View {
         }
         .task {
             await autoRefreshLoop()
+        }
+        // ⌘1–⌘5 select the time range. A range picker is a mode switch, and
+        // every other native macOS mode switch has a keyboard equivalent, so
+        // leaving it mouse-only made the fastest way to change it the slowest.
+        //
+        // The menu item is the source of truth for the shortcut: a
+        // notification round-trip would be a second, weaker implementation of
+        // something AppKit already does correctly, and it would break the
+        // moment the dashboard is not the key window.
+        .onReceive(NotificationCenter.default.publisher(for: .bennettUsageRangeShortcut)) { notification in
+            guard let index = notification.userInfo?["index"] as? Int,
+                  index >= 0,
+                  index < Self.dashboardTimeRanges.count else { return }
+            selectedRange = Self.dashboardTimeRanges[index]
         }
         .onReceive(NotificationCenter.default.publisher(for: .bennettUsageDataDidUpdate)) { _ in
             lastDataRefreshAt = Date()
@@ -206,20 +260,27 @@ public struct DashboardContentView: View {
     /// A segmented control with a single accent. The selected segment is the
     /// one filled element in the strip, so "which range am I looking at" is
     /// answered by fill rather than by a shadow and a weight change.
+    ///
+    /// The selected label uses `Accent.onFill` rather than `Color.white`. The
+    /// light accent is dark enough for white text, but the dark accent is a
+    /// light blue, and white on it measures 2.69:1 — the single most common way
+    /// a macOS app becomes unreadable in dark mode.
     private func rangePill(_ option: TimeRangeOption, title: String) -> some View {
         let isSelected = selectedRange == option
         return Button {
             selectedRange = option
         } label: {
             Text(title)
-                .font(.caption)
+                .font(DesignTokens.TypeScale.label)
                 .fontWeight(isSelected ? .semibold : .regular)
-                .foregroundColor(isSelected ? Color.white : AppTheme.Text.secondary)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 5)
+                .foregroundColor(
+                    isSelected ? DesignTokens.Accent.onFill : DesignTokens.Ink.muted
+                )
+                .padding(.horizontal, 12)
+                .frame(height: 30)
                 .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isSelected ? AppTheme.Chrome.accentFill : Color.clear)
+                    RoundedRectangle(cornerRadius: DesignTokens.Metrics.Radius.control, style: .continuous)
+                        .fill(isSelected ? DesignTokens.Accent.fill : Color.clear)
                 )
                 .contentShape(Rectangle())
         }
@@ -239,7 +300,7 @@ public struct DashboardContentView: View {
         .padding(2)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(AppTheme.Surface.subtle)
+                .fill(DesignTokens.Surfaces.inset)
         )
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -259,12 +320,12 @@ public struct DashboardContentView: View {
                 Image(systemName: "chevron.down")
                     .font(.caption2)
             }
-            .foregroundColor(AppTheme.Text.primary)
+            .foregroundColor(DesignTokens.Ink.strong)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(AppTheme.Surface.subtle)
+                    .fill(DesignTokens.Surfaces.inset)
             )
         }
         .menuStyle(.borderlessButton)
@@ -282,13 +343,13 @@ public struct DashboardContentView: View {
         HStack(alignment: .firstTextBaseline, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.dashboardContext))
-                    .font(AppTheme.Typography.pageTitle)
-                    .foregroundColor(AppTheme.Text.primary)
+                    .font(DesignTokens.TypeScale.heading)
+                    .foregroundColor(DesignTokens.Ink.strong)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
                 Text(localization.localized(.dashboardContextDescription))
-                    .font(.caption)
-                    .foregroundColor(AppTheme.Text.tertiary)
+                    .font(DesignTokens.TypeScale.caption)
+                    .foregroundColor(DesignTokens.Ink.muted)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
@@ -298,20 +359,11 @@ public struct DashboardContentView: View {
             freshnessBadge
 
             if let onOpenSettings = onOpenSettings {
-                Button(action: onOpenSettings) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(isSettingsHovered ? AppTheme.Text.primary : AppTheme.Text.secondary)
-                        .frame(width: 26, height: 26)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(isSettingsHovered ? AppTheme.Surface.hover : Color.clear)
-                        )
-                }
-                .buttonStyle(.plain)
-                .onHover { isSettingsHovered = $0 }
-                .help(localization.localized(.settings))
-                .accessibilityLabel(localization.localized(.settings))
+                ToolbarIconButton(
+                    systemImage: "gearshape",
+                    help: localization.localized(.settings),
+                    action: onOpenSettings
+                )
             }
         }
         .accessibilityElement(children: .contain)
@@ -320,25 +372,17 @@ public struct DashboardContentView: View {
     /// Freshness is a state, so it is the one place in the header allowed to
     /// use a status color — and it only turns green when the data really is
     /// fresh. A stale or failed sync is a different hue, not a gray pill.
+    ///
+    /// The wording is part of the state: a capsule that only changed color
+    /// would be unreadable to anyone who cannot separate the hues, so the text
+    /// always says what the dot means.
     private var freshnessBadge: some View {
-        HStack(spacing: 6) {
-            Image(systemName: freshnessIcon)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(freshnessColor)
-            Text(dataFreshnessText)
-                .font(AppTheme.Typography.caption)
-                .foregroundColor(AppTheme.Text.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-        }
-        .help(localization.localized(.syncFreshness) + " · " + dataFreshnessText)
-        .accessibilityElement(children: .combine)
+        StateCapsule(freshnessLevel, text: dataFreshnessText)
+            .help(localization.localized(.syncFreshness) + " · " + dataFreshnessText)
     }
 
     private var freshnessColor: Color {
-        guard let lastDataRefreshAt else { return AppTheme.Text.tertiary }
-        let minutes = Int(Date().timeIntervalSince(lastDataRefreshAt) / 60)
-        return minutes < 60 ? AppTheme.Status.success : AppTheme.Status.warning
+        freshnessLevel == .ok ? DesignTokens.State.ok : DesignTokens.State.warn
     }
 
     private var freshnessIcon: String {
@@ -386,14 +430,14 @@ public struct DashboardContentView: View {
         }
         .padding(.bottom, 12)
         .overlay(alignment: .bottom) {
-            AppTheme.Border.divider.frame(height: AppTheme.Layout.hairline)
+            DesignTokens.Lines.module.frame(height: DesignTokens.Metrics.hairline)
         }
     }
 
     private var rangeControlLabel: some View {
         Text(localization.localized(.range))
             .font(.caption.weight(.semibold))
-            .foregroundColor(AppTheme.Text.secondary)
+            .foregroundColor(DesignTokens.Ink.muted)
             .fixedSize()
     }
 
@@ -414,12 +458,12 @@ public struct DashboardContentView: View {
                 .buttonStyle(.plain)
                 .help(localization.localized(.exitAnnualDashboard))
             }
-            .foregroundColor(AppTheme.Status.accent)
+            .foregroundColor(DesignTokens.Accent.base)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(AppTheme.Surface.selected)
+                    .fill(DesignTokens.Surfaces.selected)
             )
         }
     }
@@ -429,11 +473,11 @@ public struct DashboardContentView: View {
         if let selectedToolFilter {
             HStack(spacing: 5) {
                 Circle()
-                    .fill(AgentFilterBarView.colorMap[selectedToolFilter] ?? AppTheme.Status.accent)
+                    .fill(AgentFilterBarView.colorMap[selectedToolFilter] ?? DesignTokens.Accent.base)
                     .frame(width: 6, height: 6)
                 Text(AgentFilterBarView.displayName(for: selectedToolFilter))
                     .font(.caption.weight(.medium))
-                    .foregroundColor(AppTheme.Text.primary)
+                    .foregroundColor(DesignTokens.Ink.strong)
                     .lineLimit(1)
             }
             .help(localization.localized(.selectedRange, arguments: AgentFilterBarView.displayName(for: selectedToolFilter)))
@@ -445,11 +489,13 @@ public struct DashboardContentView: View {
     /// One continuous panel that answers "how much, at what cost, and from
     /// where" before any chart is drawn.
     ///
-    /// The previous layout split this across two identically styled cards and
-    /// repeated the active range inside each one, so the first screen showed
-    /// "24 hours" four times and no clear primary reading. Here the total owns
-    /// the left third, the cost and cache figures sit beside it, and the three
-    /// top contributors share one row underneath, all inside a single surface.
+    /// The order is fixed by the spec and is the whole point of the band: a
+    /// verdict line, then the number that verdict is about, then how that
+    /// number moved, then the three figures that explain it, then the one
+    /// ratio that needs a shape. Everything a reader needs to answer "am I
+    /// fine?" is above the fold, and everything that answers "why?" is below
+    /// it — so the first screen is not a summary of the charts, it is the
+    /// conclusion and the charts are the evidence.
     private var conclusionPanel: some View {
         let topAgent = toolDistribution
             .filter { $0.tokens > 0 }
@@ -459,11 +505,13 @@ public struct DashboardContentView: View {
             .max { $0.tokens < $1.tokens }
         let topProject = projectRankings.first
         let hasHighlights = topAgent != nil || topModel != nil || topProject != nil
+        let metrics = periodMetrics
+        let isStale = freshnessLevel == .stale
 
-        return ContinuousPanel(padding: 0) {
+        return Module(padding: 0, background: isStale ? DesignTokens.State.warnSurface : DesignTokens.Surfaces.module) {
             VStack(alignment: .leading, spacing: 0) {
-                conclusionHeadline
-                PanelDivider(inset: 0)
+                conclusionVerdictRow(isStale: isStale, metrics: metrics)
+                InlineDivider()
                 if hasHighlights {
                     conclusionContributors(
                         topAgent: topAgent,
@@ -476,100 +524,224 @@ public struct DashboardContentView: View {
             }
         }
         .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(verbatim: conclusionVerdictSentence(metrics: metrics)))
     }
 
-    /// The headline row: total tokens, then the two derived figures. Spend is
-    /// deliberately *not* green — money is a value, not a health state, and
-    /// coloring it as success made a $0.18 reading look like a status light.
-    private var conclusionHeadline: some View {
-        let totalTokens = periodMetrics?.totalTokens ?? 0
+    /// The top of the band: a one-sentence verdict, the total it is about, the
+    /// period-over-period delta, then the three derived figures and the cache
+    /// ring.
+    private func conclusionVerdictRow(isStale: Bool, metrics: PeriodMetrics?) -> some View {
+        let totalTokens = metrics?.totalTokens ?? 0
+
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: DesignTokens.Metrics.moduleGap * 2) {
+                conclusionTotal(metrics: metrics)
+                InlineDivider(axis: .vertical).frame(height: 76)
+                conclusionSecondaryMetrics(metrics: metrics)
+                conclusionCacheRing(metrics: metrics)
+            }
+            VStack(alignment: .leading, spacing: DesignTokens.Metrics.modulePadding) {
+                conclusionTotal(metrics: metrics)
+                InlineDivider()
+                HStack(alignment: .center, spacing: DesignTokens.Metrics.moduleGap) {
+                    conclusionSecondaryMetrics(metrics: metrics)
+                    conclusionCacheRing(metrics: metrics)
+                }
+            }
+        }
+        .padding(.horizontal, DesignTokens.Metrics.modulePadding + 2)
+        .padding(.vertical, DesignTokens.Metrics.modulePadding)
+    }
+
+    /// The verdict and the number.
+    ///
+    /// The verdict is generated from the data rather than written by hand, and
+    /// it is stated in words next to the figure it describes — a bare `3.28B`
+    /// tells the reader nothing about whether that is good, and a green number
+    /// would only tell them something about the author's mood.
+    private func conclusionTotal(metrics: PeriodMetrics?) -> some View {
+        let totalTokens = metrics?.totalTokens ?? 0
         let scopeTitle = selectedToolFilter.map { AgentFilterBarView.displayName(for: $0) }
             ?? localization.localized(.allAgentsUsage)
 
-        return ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 24) {
-                conclusionTotal(scopeTitle: scopeTitle, totalTokens: totalTokens)
-                Rectangle()
-                    .fill(AppTheme.Border.divider)
-                    .frame(width: AppTheme.Layout.hairline, height: 54)
-                conclusionSecondaryMetrics
-            }
-            VStack(alignment: .leading, spacing: 18) {
-                conclusionTotal(scopeTitle: scopeTitle, totalTokens: totalTokens)
-                conclusionSecondaryMetrics
-            }
-        }
-        .padding(.horizontal, AppTheme.Layout.cellPadding + 2)
-        .padding(.vertical, 18)
-    }
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(conclusionVerdictSentence(metrics: metrics))
+                .font(DesignTokens.TypeScale.body)
+                .foregroundColor(DesignTokens.Ink.strong)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
 
-    private func conclusionTotal(scopeTitle: String, totalTokens: Int) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            SectionEyebrow(localization.localized(.periodTokens))
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(TokenFormatter.formatCompact(totalTokens))
-                    .font(.system(size: 44, weight: .bold, design: .rounded))
-                    .foregroundColor(AppTheme.Text.primary)
+                    .font(DesignTokens.TypeScale.numericDisplay)
+                    .foregroundColor(DesignTokens.Ink.strong)
                     .monospacedDigit()
                     .lineLimit(1)
-                    .minimumScaleFactor(0.55)
+                    .minimumScaleFactor(0.5)
                     .contentTransition(.numericText())
                 Text(localization.localized(.tokenUnit))
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(AppTheme.Text.tertiary)
+                    .font(DesignTokens.TypeScale.label)
+                    .foregroundColor(DesignTokens.Ink.muted)
+
+                conclusionDelta(metrics: metrics)
             }
-            Text(scopeTitle)
-                .font(AppTheme.Typography.caption)
-                .foregroundColor(AppTheme.Text.tertiary)
-                .lineLimit(1)
-            Text("\(localization.localized(.exactValue)) \(TokenFormatter.formatFull(totalTokens))")
-                .font(.caption2.monospacedDigit())
-                .foregroundColor(AppTheme.Text.quaternary)
+
+            Text("\(scopeTitle) · \(rangeSubtitle)")
+                .font(DesignTokens.TypeScale.caption)
+                .foregroundColor(DesignTokens.Ink.muted)
                 .lineLimit(1)
         }
-        .fixedSize(horizontal: true, vertical: false)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .help("\(TokenFormatter.formatFull(totalTokens)) \(localization.localized(.tokenUnit))")
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(localization.localized(.periodTokens)), \(scopeTitle), \(TokenFormatter.formatFull(totalTokens)) \(localization.localized(.tokenUnit))")
     }
 
-    private var conclusionSecondaryMetrics: some View {
-        // Fixed widths rather than `maxWidth: .infinity`: an infinitely
-        // flexible pair of metrics drifts to opposite ends of the remaining
-        // row and opens a gap in the middle of the headline.
+    /// The period-over-period delta, or an honest reason there isn't one.
+    ///
+    /// Three cases, and none of them may be rendered as a number: a 24-hour
+    /// window measured against the previous 24 hours is a real comparison; a
+    /// year view has no equal predecessor; and a window whose predecessor is
+    /// only partly covered by records would otherwise report a dramatic drop
+    /// that is really just missing history.
+    @ViewBuilder
+    private func conclusionDelta(metrics: PeriodMetrics?) -> some View {
+        let totalTokens = metrics?.totalTokens ?? 0
+
+        if let previous = comparisonPeriod?.totalTokens, previous > 0 {
+            let change = (Double(totalTokens) - Double(previous)) / Double(previous)
+            DeltaLabel(
+                DeltaBadge(
+                    direction: change > 0.005 ? .up : (change < -0.005 ? .down : .flat),
+                    text: String(format: "%+.0f%%", change * 100),
+                    // More tokens is not automatically bad or good: it depends
+                    // on intent. The neutral ink ramp is the honest default,
+                    // and only a spend increase — which is unambiguously
+                    // costly — gets the danger state.
+                    increaseIsBad: false
+                )
+            )
+            .accessibilityLabel(
+                Text(verbatim: "\(localization.localized(.vsPreviousPeriod)) \(String(format: "%+.0f%%", change * 100))")
+            )
+        } else if comparisonPeriod?.isPartialCoverage == true {
+            ScopeTag(localization.localized(.partialComparisonCoverage, arguments: comparisonPeriod?.coveredDays ?? 0))
+        } else {
+            ScopeTag(localization.localized(.noComparablePeriod))
+        }
+    }
+
+    /// The three derived figures: what it cost, what share of requests hit
+    /// cache, and how many days of history the answer is based on.
+    private func conclusionSecondaryMetrics(metrics: PeriodMetrics?) -> some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 40) {
-                conclusionSpendMetric.frame(width: 132, alignment: .leading)
-                conclusionCacheMetric.frame(width: 208, alignment: .leading)
-                Spacer(minLength: 0)
+            HStack(alignment: .center, spacing: 32) {
+                spendReadout(metrics: metrics).frame(width: 130, alignment: .leading)
+                cacheReadout(metrics: metrics).frame(width: 130, alignment: .leading)
+                coverageReadout().frame(width: 130, alignment: .leading)
             }
-            VStack(alignment: .leading, spacing: 14) {
-                conclusionSpendMetric
-                conclusionCacheMetric
+            VStack(alignment: .leading, spacing: DesignTokens.Metrics.modulePaddingTight) {
+                spendReadout(metrics: metrics)
+                cacheReadout(metrics: metrics)
+                coverageReadout()
             }
         }
     }
 
-    private var conclusionSpendMetric: some View {
-        MetricCell(
+    private func spendReadout(metrics: PeriodMetrics?) -> some View {
+        Readout(
             label: localization.localized(.periodSpend),
-            value: pricingEngine.spendString(periodMetrics?.totalCostUSD ?? 0)
+            value: pricingEngine.spendString(metrics?.totalCostUSD ?? 0),
+            detail: nil
         )
     }
 
-    private var conclusionCacheMetric: some View {
-        let rate = periodMetrics?.cacheHitRate ?? 0
-        return MetricCell(
+    private func cacheReadout(metrics: PeriodMetrics?) -> some View {
+        let hasMeasurement = (metrics?.cacheReadTokens ?? 0) > 0
+        let rate = metrics?.cacheHitRate ?? 0
+        return Readout(
             label: localization.localized(.cacheHitRate),
-            value: String(format: "%.1f%%", rate * 100)
-        ) {
-            PercentageMeter(value: rate, color: AppTheme.Data.series)
-        }
+            // Unmeasured is not 0%. A figure that claims "0%" tells the reader
+            // the cache is failing when the real answer is that nothing in this
+            // period was cacheable at all.
+            value: hasMeasurement ? String(format: "%.1f%%", rate * 100) : "—",
+            valueColor: hasMeasurement
+                ? (rate >= 0.95 ? DesignTokens.State.okText : DesignTokens.State.warnText)
+                : DesignTokens.Ink.muted
+        )
     }
 
-    /// The three "why" answers on one row. Each is a plain metric cell: the
-    /// agent's categorical hue appears only as a 6pt identity dot, never as a
-    /// heading icon, so the colors on this row keep their meaning elsewhere.
+    private func coverageReadout() -> some View {
+        Readout(
+            label: localization.localized(.coverageDays),
+            value: coverageDaysText
+        )
+    }
+
+    /// The one ratio that needs a shape, because a percentage beside two other
+    /// percentages is not a comparison — it is three numbers.
+    private func conclusionCacheRing(metrics: PeriodMetrics?) -> some View {
+        let rate = metrics?.cacheHitRate ?? 0
+        // A period with no cache reads has no hit rate. The ring says "not
+        // measured" in words instead of drawing a confident empty arc, which
+        // would read as "cache is broken" — a diagnosis the data cannot make.
+        let hasMeasurement = (metrics?.cacheReadTokens ?? 0) > 0
+
+        return VStack(spacing: 6) {
+            if hasMeasurement {
+                CacheHitRing(rate: rate, diameter: 104)
+            } else {
+                Text("—")
+                    .font(DesignTokens.TypeScale.numericLarge)
+                    .foregroundColor(DesignTokens.Ink.muted)
+                    .frame(width: 104, height: 104)
+                    .background(Circle().strokeBorder(DesignTokens.Ink.track, lineWidth: 4))
+                    .accessibilityLabel(Text(verbatim: localization.localized(.cacheHitRate)))
+                    .accessibilityValue(Text(verbatim: localization.localized(.notMeasured)))
+            }
+            Text(localization.localized(.cacheHitRate))
+                .font(DesignTokens.TypeScale.caption)
+                .foregroundColor(DesignTokens.Ink.muted)
+                .lineLimit(1)
+        }
+        .frame(width: 104)
+    }
+
+    /// A one-sentence verdict derived from the numbers on screen.
+    ///
+    /// It states the dominant fact and stops. The alternative — a mood adjective
+    /// like "healthy" or "high" — would be an opinion the data does not
+    /// support, and it would be wrong the moment a user's own day looked
+    /// different from the tool's idea of a normal one.
+    private func conclusionVerdictSentence(metrics: PeriodMetrics?) -> String {
+        guard let metrics, metrics.totalTokens > 0 else {
+            return localization.localized(.conclusionEmpty, arguments: rangeSubtitle)
+        }
+        if freshnessLevel == .stale {
+            return localization.localized(.conclusionStale, arguments: rangeSubtitle)
+        }
+
+        let topTool = toolDistribution
+            .filter { $0.tokens > 0 }
+            .max { $0.tokens < $1.tokens }
+
+        var sentence = localization.localized(
+            .conclusionSummary,
+            arguments: TokenFormatter.formatCompact(metrics.totalTokens)
+        )
+        if let topTool {
+            sentence += " " + localization.localized(
+                .conclusionLeadingTool,
+                arguments: AgentFilterBarView.displayName(for: topTool.tool)
+            )
+        }
+        return sentence
+    }
+
+    /// The headline row's three contributors.
+    ///
+    /// Each is a plain metric cell: the agent's categorical hue appears only as
+    /// a 6pt identity dot, never as a heading icon, so the colors on this row
+    /// keep their meaning elsewhere.
     private func conclusionContributors(
         topAgent: (tool: String, tokens: Int, costUSD: Double)?,
         topModel: (model: String, tokens: Int, costUSD: Double)?,
@@ -629,7 +801,7 @@ public struct DashboardContentView: View {
                 }
             }
         }
-        .padding(.horizontal, AppTheme.Layout.cellPadding + 2)
+        .padding(.horizontal, DesignTokens.Metrics.modulePadding + 2)
         .padding(.vertical, 14)
     }
 
@@ -654,18 +826,18 @@ public struct DashboardContentView: View {
                     }
                 }
                 Text(label)
-                    .font(AppTheme.Typography.label)
-                    .foregroundColor(AppTheme.Text.tertiary)
+                    .font(DesignTokens.TypeScale.label)
+                    .foregroundColor(DesignTokens.Ink.muted)
                     .lineLimit(1)
             }
             Text(value)
-                .font(AppTheme.Typography.rowTitle)
-                .foregroundColor(AppTheme.Text.primary)
+                .font(DesignTokens.TypeScale.label)
+                .foregroundColor(DesignTokens.Ink.strong)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Text(detail)
-                .font(AppTheme.Typography.caption.monospacedDigit())
-                .foregroundColor(AppTheme.Text.tertiary)
+                .font(DesignTokens.TypeScale.caption.monospacedDigit())
+                .foregroundColor(DesignTokens.Ink.muted)
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -677,15 +849,15 @@ public struct DashboardContentView: View {
         HStack(spacing: 8) {
             Image(systemName: "tray")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(AppTheme.Text.quaternary)
+                .foregroundColor(DesignTokens.Ink.ghost)
             Text(localization.localized(.noActivityRecorded, arguments: rangeSubtitle))
                 .font(.subheadline)
-                .foregroundColor(AppTheme.Text.secondary)
+                .foregroundColor(DesignTokens.Ink.muted)
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, AppTheme.Layout.cellPadding + 2)
+        .padding(.horizontal, DesignTokens.Metrics.modulePadding + 2)
         .padding(.vertical, 16)
     }
 
@@ -699,15 +871,15 @@ public struct DashboardContentView: View {
     /// comes first, who spent it comes second — not side by side at equal
     /// weight.
     private var trendAndSourceSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Layout.sectionSpacing) {
+        VStack(alignment: .leading, spacing: DesignTokens.Metrics.moduleGap) {
             trendChartCard
 
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: AppTheme.Layout.sectionSpacing) {
+                HStack(alignment: .top, spacing: DesignTokens.Metrics.moduleGap) {
                     tokenCompositionSection.frame(maxWidth: .infinity)
                     agentUsageSection.frame(maxWidth: .infinity)
                 }
-                VStack(alignment: .leading, spacing: AppTheme.Layout.sectionSpacing) {
+                VStack(alignment: .leading, spacing: DesignTokens.Metrics.moduleGap) {
                     tokenCompositionSection
                     agentUsageSection
                 }
@@ -742,15 +914,15 @@ public struct DashboardContentView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Image(systemName: "calendar")
-                            .foregroundColor(AppTheme.Status.accent)
+                            .foregroundColor(DesignTokens.Accent.base)
                             .font(.headline)
                         Text(localization.localized(.annualPanorama))
                             .font(.headline)
-                            .foregroundColor(AppTheme.Text.primary)
+                            .foregroundColor(DesignTokens.Ink.strong)
                     }
                     Text("\(String(selectedHeatmapYear))-01-01 ~ \(String(selectedHeatmapYear))-12-31")
                         .font(.caption2)
-                        .foregroundColor(AppTheme.Text.secondary)
+                        .foregroundColor(DesignTokens.Ink.muted)
                 }
 
                 Spacer()
@@ -768,12 +940,12 @@ public struct DashboardContentView: View {
                                     Text(String(year))
                                         .font(.caption)
                                         .fontWeight(isSelected ? .semibold : .regular)
-                                        .foregroundColor(isSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
+                                        .foregroundColor(isSelected ? DesignTokens.Ink.strong : DesignTokens.Ink.muted)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
                                         .background(
                                             RoundedRectangle(cornerRadius: 6)
-                                                .fill(isSelected ? AppTheme.Surface.primary : Color.clear)
+                                                .fill(isSelected ? DesignTokens.Surfaces.module : Color.clear)
                                                 .shadow(color: Color.black.opacity(isSelected ? 0.04 : 0), radius: 1.5, x: 0, y: 1)
                                         )
                                 }
@@ -783,7 +955,7 @@ public struct DashboardContentView: View {
                         .padding(2)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(AppTheme.Surface.subtle)
+                                .fill(DesignTokens.Surfaces.inset)
                         )
                     } else {
                         Menu {
@@ -796,16 +968,16 @@ public struct DashboardContentView: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Text(String(selectedHeatmapYear)).bold()
-                                    .foregroundColor(AppTheme.Text.primary)
+                                    .foregroundColor(DesignTokens.Ink.strong)
                                 Image(systemName: "chevron.down").font(.caption2)
-                                    .foregroundColor(AppTheme.Text.secondary)
+                                    .foregroundColor(DesignTokens.Ink.muted)
                             }
                             .font(.caption)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(
                                 RoundedRectangle(cornerRadius: 6)
-                                    .fill(AppTheme.Surface.subtle)
+                                    .fill(DesignTokens.Surfaces.inset)
                             )
                         }
                         .menuStyle(.borderlessButton)
@@ -853,12 +1025,12 @@ public struct DashboardContentView: View {
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(isFullDashboardYear ? AppTheme.Surface.selected : AppTheme.Surface.subtle)
-                        .foregroundColor(isFullDashboardYear ? AppTheme.Status.accent : AppTheme.Text.secondary)
+                        .background(isFullDashboardYear ? DesignTokens.Surfaces.selected : DesignTokens.Surfaces.inset)
+                        .foregroundColor(isFullDashboardYear ? DesignTokens.Accent.base : DesignTokens.Ink.muted)
                         .cornerRadius(6)
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(isFullDashboardYear ? AppTheme.Status.accent.opacity(0.3) : AppTheme.Border.subtle, lineWidth: 0.5)
+                                .stroke(isFullDashboardYear ? DesignTokens.Accent.base.opacity(0.3) : DesignTokens.Lines.soft, lineWidth: 0.5)
                         )
                     }
                     .buttonStyle(.plain)
@@ -897,11 +1069,11 @@ public struct DashboardContentView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(AppTheme.Surface.primary)
+                .fill(DesignTokens.Surfaces.module)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+                .stroke(DesignTokens.Lines.soft, lineWidth: 0.5)
         )
     }
 
@@ -913,7 +1085,7 @@ public struct DashboardContentView: View {
                 value: TokenFormatter.formatCompact(summary.annualTokens),
                 subvalue: "\(TokenFormatter.formatFull(summary.annualTokens)) tokens",
                 icon: "flame.fill",
-                color: AppTheme.Chrome.glyph
+                color: DesignTokens.Ink.muted
             )
             Divider().frame(height: 24).opacity(0.3).padding(.horizontal, 8)
 
@@ -923,7 +1095,7 @@ public struct DashboardContentView: View {
                 value: pricingEngine.spendString(summary.annualCostUSD),
                 subvalue: summary.annualCostUSD > 0 ? (pricingEngine.preferredCurrency == .cny ? "CNY" : "USD") : "-",
                 icon: "dollarsign.circle.fill",
-                color: AppTheme.Chrome.glyph
+                color: DesignTokens.Ink.muted
             )
             Divider().frame(height: 24).opacity(0.3).padding(.horizontal, 8)
 
@@ -934,19 +1106,19 @@ public struct DashboardContentView: View {
                 value: "\(summary.activeDays) / \(summary.totalDays)",
                 subvalue: String(format: "%.1f%%", pct),
                 icon: "calendar.badge.checkmark",
-                color: AppTheme.Chrome.glyph
+                color: DesignTokens.Ink.muted
             )
             Divider().frame(height: 24).opacity(0.3).padding(.horizontal, 8)
 
             // 4. Primary Agent
             let agentName = summary.mostActiveTool != "None" ? AgentFilterBarView.displayName(for: summary.mostActiveTool) : localization.localized(.none)
-            let agentColor = summary.mostActiveTool != "None" ? (cachedAgentColors[summary.mostActiveTool] ?? AppTheme.Status.accent) : AppTheme.Text.secondary
+            let agentColor = summary.mostActiveTool != "None" ? (cachedAgentColors[summary.mostActiveTool] ?? DesignTokens.Accent.base) : DesignTokens.Ink.muted
             annualStatItem(
                 title: localization.localized(.annualPrimaryAgent),
                 value: agentName,
                 subvalue: summary.annualTokens > 0 ? localization.localized(.leadingVolume) : "-",
                 icon: "sparkles",
-                color: AppTheme.Chrome.glyph,
+                color: DesignTokens.Ink.muted,
                 dotColor: summary.mostActiveTool != "None" ? agentColor : nil
             )
         }
@@ -954,7 +1126,7 @@ public struct DashboardContentView: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(AppTheme.Surface.subtle)
+                .fill(DesignTokens.Surfaces.inset)
         )
     }
 
@@ -980,15 +1152,15 @@ public struct DashboardContentView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .font(.caption2)
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .foregroundColor(DesignTokens.Ink.muted)
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(value)
                         .font(.subheadline)
                         .bold()
-                        .foregroundColor(AppTheme.Text.primary)
+                        .foregroundColor(DesignTokens.Ink.strong)
                     Text(subvalue)
                         .font(.caption2)
-                        .foregroundColor(AppTheme.Text.tertiary)
+                        .foregroundColor(DesignTokens.Ink.muted)
                         .lineLimit(1)
                 }
             }
@@ -1003,7 +1175,7 @@ public struct DashboardContentView: View {
                 Text(localization.localized(.activityOnDay, arguments: cell.dayKey))
                     .font(.subheadline)
                     .bold()
-                    .foregroundColor(AppTheme.Text.primary)
+                    .foregroundColor(DesignTokens.Ink.strong)
                 Spacer()
                 Button {
                     selectedCell = nil
@@ -1014,7 +1186,7 @@ public struct DashboardContentView: View {
                         Image(systemName: "xmark.circle.fill")
                             .font(.caption)
                     }
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .foregroundColor(DesignTokens.Ink.muted)
                 }
                 .buttonStyle(.plain)
             }
@@ -1025,27 +1197,27 @@ public struct DashboardContentView: View {
                 pricingEngine.spendString(cell.costUSD)
             ))
                 .font(.caption)
-                .foregroundColor(AppTheme.Text.secondary)
+                .foregroundColor(DesignTokens.Ink.muted)
             if !cell.toolBreakdown.isEmpty {
                 HStack(spacing: 8) {
                     ForEach(cell.toolBreakdown.sorted(by: { $0.value > $1.value }), id: \.key) { tool, count in
-                        let color = cachedAgentColors[tool] ?? AppTheme.Text.tertiary
+                        let color = cachedAgentColors[tool] ?? DesignTokens.Ink.muted
                         HStack(spacing: 4) {
                             Circle().fill(color).frame(width: 6, height: 6)
                             Text("\(AgentFilterBarView.displayName(for: tool)): \(TokenFormatter.formatCompact(count))")
                                 .font(.caption)
-                                .foregroundColor(AppTheme.Text.primary)
+                                .foregroundColor(DesignTokens.Ink.strong)
                                 .help("\(AgentFilterBarView.displayName(for: tool)): \(TokenFormatter.formatFull(count)) tokens")
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(
                             RoundedRectangle(cornerRadius: 4)
-                                .fill(AppTheme.Surface.primary)
+                                .fill(DesignTokens.Surfaces.module)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 4)
-                                .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+                                .stroke(DesignTokens.Lines.soft, lineWidth: 0.5)
                         )
                     }
                 }
@@ -1055,7 +1227,7 @@ public struct DashboardContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(AppTheme.Surface.subtle)
+                .fill(DesignTokens.Surfaces.inset)
         )
     }
 
@@ -1087,17 +1259,17 @@ public struct DashboardContentView: View {
         // panel this band rhymed with it — three large figures in a row, the
         // same three subjects, a card apart — and the reader could not tell
         // which one was the answer to "how much".
-        return ContinuousPanel(background: AppTheme.Surface.subtle.opacity(0.55)) {
+        return Module(background: DesignTokens.Surfaces.inset.opacity(0.55)) {
             VStack(alignment: .leading, spacing: 14) {
-                SectionEyebrow(localization.localized(.todayFocus)) {
+                RegionLabel(localization.localized(.todayFocus)) {
                     if let topAgent {
                         HStack(spacing: 5) {
                             Circle()
-                                .fill(cachedAgentColors[topAgent.id] ?? AppTheme.Text.tertiary)
+                                .fill(cachedAgentColors[topAgent.id] ?? DesignTokens.Ink.muted)
                                 .frame(width: 6, height: 6)
                             Text(localization.localized(.popoverTopAgent, arguments: AgentFilterBarView.displayName(for: topAgent.id)))
-                                .font(AppTheme.Typography.caption)
-                                .foregroundColor(AppTheme.Text.secondary)
+                                .font(DesignTokens.TypeScale.caption)
+                                .foregroundColor(DesignTokens.Ink.muted)
                                 .lineLimit(1)
                         }
                     }
@@ -1105,37 +1277,37 @@ public struct DashboardContentView: View {
 
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .center, spacing: 0) {
-                        MetricCell(
+                        Readout(
                             label: localization.localized(.periodTokens),
                             value: TokenFormatter.formatCompact(totalTokens),
                             detail: TokenFormatter.formatFull(totalTokens),
-                            valueFont: AppTheme.Typography.contextTitle
+                            valueFont: DesignTokens.TypeScale.title
                         )
                         focusDivider
-                        MetricCell(
+                        Readout(
                             label: localization.localized(.estimatedCost),
                             value: pricingEngine.spendString(totalCost),
-                            valueFont: AppTheme.Typography.contextTitle
+                            valueFont: DesignTokens.TypeScale.title
                         )
                         focusDivider
-                        MetricCell(
+                        Readout(
                             label: localization.localized(.mostActiveAgent),
                             value: topAgent.map { AgentFilterBarView.displayName(for: $0.id) } ?? localization.localized(.none),
                             detail: topAgent.map { TokenFormatter.formatCompact($0.tokens) },
-                            valueFont: AppTheme.Typography.contextTitle
+                            valueFont: DesignTokens.TypeScale.title
                         )
                     }
                     VStack(alignment: .leading, spacing: 12) {
-                        MetricCell(
+                        Readout(
                             label: localization.localized(.periodTokens),
                             value: TokenFormatter.formatCompact(totalTokens),
                             detail: TokenFormatter.formatFull(totalTokens)
                         )
-                        MetricCell(
+                        Readout(
                             label: localization.localized(.estimatedCost),
                             value: pricingEngine.spendString(totalCost)
                         )
-                        MetricCell(
+                        Readout(
                             label: localization.localized(.mostActiveAgent),
                             value: topAgent.map { AgentFilterBarView.displayName(for: $0.id) } ?? localization.localized(.none),
                             detail: topAgent.map { TokenFormatter.formatCompact($0.tokens) }
@@ -1149,8 +1321,8 @@ public struct DashboardContentView: View {
     }
 
     private var focusDivider: some View {
-        AppTheme.Border.divider
-            .frame(width: AppTheme.Layout.hairline, height: 40)
+        DesignTokens.Lines.module
+            .frame(width: DesignTokens.Metrics.hairline, height: 40)
             .padding(.horizontal, 16)
     }
 
@@ -1169,22 +1341,29 @@ public struct DashboardContentView: View {
         let output = periodMetrics?.outputTokens ?? 0
         let cacheRead = periodMetrics?.cacheReadTokens ?? 0
         let cacheWrite = periodMetrics?.cacheWriteTokens ?? 0
+        // Token kinds are categories, not states — but neither are they
+        // identities, so they take the ink ramp. The one exception is cache
+        // read, which is simultaneously a category and a quality signal (it is
+        // the numerator of the hit rate on the conclusion band), so it keeps a
+        // single state hue consistently across both places it appears. Four
+        // arbitrary harmonic hues here would have read as four different
+        // agents.
         let metrics: [(id: String, label: String, tokens: Int, color: Color)] = [
-            ("input", localization.localized(.inputLabel), input, AppTheme.Data.series),
-            ("output", localization.localized(.outputLabel), output, AppTheme.Harmonic.palette[10]),
-            ("cacheRead", localization.localized(.cacheRead), cacheRead, AppTheme.Harmonic.palette[5]),
-            ("cacheWrite", localization.localized(.cacheWrite), cacheWrite, AppTheme.Harmonic.palette[2])
+            ("input", localization.localized(.inputLabel), input, DesignTokens.Ink.strong),
+            ("output", localization.localized(.outputLabel), output, DesignTokens.Ink.faint),
+            ("cacheRead", localization.localized(.cacheRead), cacheRead, DesignTokens.State.ok),
+            ("cacheWrite", localization.localized(.cacheWrite), cacheWrite, DesignTokens.State.warn)
         ]
         let total = max(0, input + output + cacheRead + cacheWrite)
 
-        return ContinuousPanel {
+        return Module {
             VStack(alignment: .leading, spacing: 14) {
-                SectionEyebrow(localization.localized(.tokenComposition))
+                RegionLabel(localization.localized(.tokenComposition))
 
                 if total > 0 {
-                    ProportionBar(
+                    ShareBar(
                         segments: metrics.filter { $0.tokens > 0 }.map {
-                            ProportionBar.Segment(
+                            ShareBar.Segment(
                                 id: $0.id,
                                 share: Double($0.tokens),
                                 color: $0.color
@@ -1230,16 +1409,16 @@ public struct DashboardContentView: View {
                 .fill(metric.color)
                 .frame(width: 7, height: 7)
             Text(metric.label)
-                .font(AppTheme.Typography.rowDetail)
-                .foregroundColor(AppTheme.Text.secondary)
+                .font(DesignTokens.TypeScale.caption)
+                .foregroundColor(DesignTokens.Ink.muted)
                 .lineLimit(1)
             Spacer(minLength: 6)
             Text(String(format: "%.1f%%", share))
-                .font(AppTheme.Typography.tabular)
-                .foregroundColor(AppTheme.Text.quaternary)
+                .font(DesignTokens.TypeScale.numeric)
+                .foregroundColor(DesignTokens.Ink.ghost)
             Text(TokenFormatter.formatCompact(metric.tokens))
-                .font(AppTheme.Typography.rowTitle.monospacedDigit())
-                .foregroundColor(AppTheme.Text.primary)
+                .font(DesignTokens.TypeScale.label.monospacedDigit())
+                .foregroundColor(DesignTokens.Ink.strong)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
@@ -1249,8 +1428,8 @@ public struct DashboardContentView: View {
     }
 
     private var compositionDivider: some View {
-        AppTheme.Border.divider
-            .frame(width: AppTheme.Layout.hairline, height: 42)
+        DesignTokens.Lines.module
+            .frame(width: DesignTokens.Metrics.hairline, height: 42)
             .padding(.horizontal, 16)
     }
 
@@ -1292,11 +1471,11 @@ public struct DashboardContentView: View {
     /// subtitle: it is already stated in the control strip directly above and
     /// restating it on every card is what made the old layout feel repetitive.
     private func sectionHeader(title: String, subtitle: String? = nil, symbol: String) -> some View {
-        SectionEyebrow(title) {
+        RegionLabel(title) {
             if let subtitle {
                 Text(subtitle)
-                    .font(AppTheme.Typography.caption)
-                    .foregroundColor(AppTheme.Text.quaternary)
+                    .font(DesignTokens.TypeScale.caption)
+                    .foregroundColor(DesignTokens.Ink.ghost)
                     .lineLimit(1)
             }
         }
@@ -1306,10 +1485,10 @@ public struct DashboardContentView: View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
                 .font(.system(size: 18))
-                .foregroundColor(AppTheme.Text.quaternary)
+                .foregroundColor(DesignTokens.Ink.ghost)
             Text(title)
-                .font(AppTheme.Typography.caption)
-                .foregroundColor(AppTheme.Text.secondary)
+                .font(DesignTokens.TypeScale.caption)
+                .foregroundColor(DesignTokens.Ink.muted)
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity)
@@ -1319,21 +1498,21 @@ public struct DashboardContentView: View {
     // MARK: - Top Projects
 
     private var projectsSection: some View {
-        ContinuousPanel {
+        Module {
             VStack(alignment: .leading, spacing: 10) {
-            SectionEyebrow(localization.localized(.topProjectsDrillDown)) {
+            RegionLabel(localization.localized(.topProjectsDrillDown)) {
                 Text(localization.localized(.trackedProjectsCount, arguments: projectRankings.count))
-                    .font(AppTheme.Typography.caption)
-                    .foregroundColor(AppTheme.Text.quaternary)
+                    .font(DesignTokens.TypeScale.caption)
+                    .foregroundColor(DesignTokens.Ink.ghost)
             }
 
             if projectRankings.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "folder.badge.questionmark")
                         .font(.system(size: 28))
-                        .foregroundColor(AppTheme.Text.tertiary.opacity(0.5))
+                        .foregroundColor(DesignTokens.Ink.muted.opacity(0.5))
                     Text(localization.localized(.noProjectFoldersRecorded))
-                        .foregroundColor(AppTheme.Text.secondary)
+                        .foregroundColor(DesignTokens.Ink.muted)
                         .font(.caption)
                 }
                 .frame(maxWidth: .infinity)
@@ -1353,13 +1532,13 @@ public struct DashboardContentView: View {
                                 Text(folderName)
                                     .font(.subheadline)
                                     .fontWeight(.medium)
-                                    .foregroundColor(AppTheme.Text.primary)
+                                    .foregroundColor(DesignTokens.Ink.strong)
                                     .lineLimit(1)
                                     .help(item.project)
                                 GeometryReader { geo in
                                     let ratio = CGFloat(item.totalTokens) / CGFloat(maxTokens)
                                     ZStack(alignment: .leading) {
-                                        Capsule().fill(AppTheme.Data.track)
+                                        Capsule().fill(DesignTokens.Ink.track)
                                         Capsule().fill(AppTheme.Data.series)
                                             .frame(width: max(4, geo.size.width * ratio))
                                     }
@@ -1374,12 +1553,12 @@ public struct DashboardContentView: View {
                                     .font(.subheadline)
                                     .bold()
                                     .monospacedDigit()
-                                    .foregroundColor(AppTheme.Text.primary)
+                                    .foregroundColor(DesignTokens.Ink.strong)
                                     .help("\(TokenFormatter.formatFull(item.totalTokens)) tokens")
                                 Text(pricingEngine.spendString(item.costUSD))
                                     .font(.caption)
                                     .monospacedDigit()
-                                    .foregroundColor(AppTheme.Text.secondary)
+                                    .foregroundColor(DesignTokens.Ink.muted)
                             }
                         }
                         .padding(.vertical, 5)
@@ -1401,7 +1580,7 @@ public struct DashboardContentView: View {
                                 Image(systemName: isProjectsExpanded ? "chevron.up" : "chevron.down")
                                     .font(.caption2)
                             }
-                            .foregroundColor(AppTheme.Status.accent)
+                            .foregroundColor(DesignTokens.Accent.base)
                             .padding(.vertical, 4)
                             .padding(.horizontal, 6)
                             .contentShape(Rectangle())
@@ -1426,8 +1605,8 @@ public struct DashboardContentView: View {
     /// carried by row order; the numeral only has to be legible.
     private func medalBadge(rank: Int) -> some View {
         Text(String(format: "%02d", rank))
-            .font(AppTheme.Typography.tabular)
-            .foregroundColor(AppTheme.Text.quaternary)
+            .font(DesignTokens.TypeScale.numeric)
+            .foregroundColor(DesignTokens.Ink.ghost)
     }
 
     /// Data-update notifications can arrive in bursts while agents are active;
@@ -1535,14 +1714,27 @@ public struct DashboardContentView: View {
     private func loadPeriodMetrics() async {
         let range = selectedRange
         let toolFilter = selectedToolFilter
-        let metrics = try? await aggregator.fetchPeriodMetrics(
+        async let metricsRequest = aggregator.fetchPeriodMetrics(
             range: range,
             toolFilter: toolFilter,
             localization: localization
         )
+        // The comparison window shares the range and filter, so it rides the
+        // same refresh pipeline. A failure here must not blank the band: the
+        // metrics still load and the delta simply reads "no comparison".
+        async let comparisonRequest = try? await aggregator.fetchComparisonPeriod(
+            range: range,
+            toolFilter: toolFilter
+        )
+
+        let metrics = try? await metricsRequest
+        let comparison = await comparisonRequest
         if Task.isCancelled { return }
         if metrics != periodMetrics {
             periodMetrics = metrics
+        }
+        if comparison != comparisonPeriod {
+            comparisonPeriod = comparison
         }
         refreshDerivedToolState()
     }
@@ -1710,9 +1902,9 @@ private struct TrendChartCard: View {
     @State private var lastTrendHoverLocation: CGPoint? = nil
 
     var body: some View {
-        ContinuousPanel {
+        Module {
             VStack(alignment: .leading, spacing: 12) {
-            SectionEyebrow(trendTitle) {
+            RegionLabel(trendTitle) {
                 Picker(
                     TrendChartType.accessibilityTitle(localization: localization),
                     selection: $trendChartType
@@ -1831,7 +2023,7 @@ private struct TrendChartCard: View {
 
                     if let hovered = hoveredTrendPeriod, trendPoints.contains(where: { $0.label == hovered }) {
                         RuleMark(x: .value("Period", hovered))
-                            .foregroundStyle(AppTheme.Text.secondary.opacity(0.6))
+                            .foregroundStyle(DesignTokens.Ink.muted.opacity(0.6))
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     }
                 }
@@ -1890,25 +2082,25 @@ private struct TrendChartCard: View {
                                     HStack {
                                         Text(point.label)
                                             .font(.caption2.weight(.medium))
-                                            .foregroundColor(AppTheme.Text.secondary)
+                                            .foregroundColor(DesignTokens.Ink.muted)
                                         Spacer()
                                         Text(pricingEngine.spendString(point.costUSD))
                                             .font(.caption2.monospacedDigit().weight(.medium))
-                                            .foregroundColor(AppTheme.Status.success)
+                                            .foregroundColor(DesignTokens.State.ok)
                                     }
 
                                     HStack(alignment: .firstTextBaseline, spacing: 4) {
                                         Text(TokenFormatter.formatFull(point.tokens))
                                             .font(.caption.monospacedDigit().weight(.semibold))
-                                            .foregroundColor(AppTheme.Text.primary)
+                                            .foregroundColor(DesignTokens.Ink.strong)
                                         Text(localization.localized(.tokenUnit))
                                             .font(.caption2)
-                                            .foregroundColor(AppTheme.Text.tertiary)
+                                            .foregroundColor(DesignTokens.Ink.muted)
                                     }
 
                                     if !rows.isEmpty {
                                         Divider()
-                                            .overlay(AppTheme.Border.divider)
+                                            .overlay(DesignTokens.Lines.module)
 
                                         VStack(spacing: 3) {
                                             ForEach(rows, id: \.model) { row in
@@ -1918,13 +2110,13 @@ private struct TrendChartCard: View {
                                                         .frame(width: 5, height: 5)
                                                     Text(row.model)
                                                         .font(.caption2)
-                                                        .foregroundColor(AppTheme.Text.primary)
+                                                        .foregroundColor(DesignTokens.Ink.strong)
                                                         .lineLimit(1)
                                                         .truncationMode(.middle)
                                                     Spacer(minLength: 8)
                                                     Text(TokenFormatter.formatCompact(row.tokens))
                                                         .font(.caption2.monospacedDigit())
-                                                        .foregroundColor(AppTheme.Text.secondary)
+                                                        .foregroundColor(DesignTokens.Ink.muted)
                                                 }
                                             }
                                         }
@@ -1939,7 +2131,7 @@ private struct TrendChartCard: View {
                                 )
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 8)
-                                        .stroke(AppTheme.Border.subtle, lineWidth: 0.5)
+                                        .stroke(DesignTokens.Lines.soft, lineWidth: 0.5)
                                 )
                                 .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
                                 .position(tooltipPosition(for: loc, in: geo.size, tooltipSize: tooltipSize))
@@ -1958,12 +2150,12 @@ private struct TrendChartCard: View {
                         AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                             .foregroundStyle(AppTheme.Chart.gridline)
                         AxisTick(stroke: StrokeStyle(lineWidth: 0.5))
-                            .foregroundStyle(AppTheme.Border.subtle)
+                            .foregroundStyle(DesignTokens.Lines.soft)
                         AxisValueLabel {
                             if let str = value.as(String.self) {
                                 Text(str)
                                     .font(.caption2)
-                                    .foregroundColor(AppTheme.Text.tertiary)
+                                    .foregroundColor(DesignTokens.Ink.muted)
                             }
                         }
                     }
@@ -1973,16 +2165,16 @@ private struct TrendChartCard: View {
                         AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                             .foregroundStyle(AppTheme.Chart.gridline)
                         AxisTick(stroke: StrokeStyle(lineWidth: 0.5))
-                            .foregroundStyle(AppTheme.Border.subtle)
+                            .foregroundStyle(DesignTokens.Lines.soft)
                         AxisValueLabel {
                             if let tokens = value.as(Int.self) {
                                 Text(TokenFormatter.formatCompact(tokens))
                                     .font(.caption2)
-                                    .foregroundColor(AppTheme.Text.tertiary)
+                                    .foregroundColor(DesignTokens.Ink.muted)
                             } else if let tokens = value.as(Double.self) {
                                 Text(TokenFormatter.formatCompact(Int(tokens)))
                                     .font(.caption2)
-                                    .foregroundColor(AppTheme.Text.tertiary)
+                                    .foregroundColor(DesignTokens.Ink.muted)
                             }
                         }
                     }
@@ -1995,7 +2187,7 @@ private struct TrendChartCard: View {
                                     Circle().fill(modelColors[model] ?? .gray).frame(width: 8, height: 8)
                                     Text(model)
                                         .font(.caption2)
-                                        .foregroundColor(AppTheme.Text.secondary)
+                                        .foregroundColor(DesignTokens.Ink.muted)
                                         .lineLimit(1)
                                         .truncationMode(.middle)
                                 }
@@ -2009,9 +2201,9 @@ private struct TrendChartCard: View {
                     Spacer()
                     Image(systemName: "chart.bar")
                         .font(.system(size: 32))
-                        .foregroundColor(AppTheme.Text.tertiary)
+                        .foregroundColor(DesignTokens.Ink.muted)
                     Text(localization.localized(.noActivityRecorded, arguments: rangeSubtitle))
-                        .foregroundColor(AppTheme.Text.secondary)
+                        .foregroundColor(DesignTokens.Ink.muted)
                         .font(.caption)
                     Spacer()
                 }
@@ -2055,18 +2247,18 @@ private struct TrendChartCard: View {
     private func trendSummaryItem(title: String, value: String, detail: String?) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title)
-                .font(AppTheme.Typography.label)
-                .foregroundColor(AppTheme.Text.tertiary)
+                .font(DesignTokens.TypeScale.label)
+                .foregroundColor(DesignTokens.Ink.muted)
                 .lineLimit(1)
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(value)
-                    .font(AppTheme.Typography.rowTitle.monospacedDigit())
-                    .foregroundColor(AppTheme.Text.primary)
+                    .font(DesignTokens.TypeScale.label.monospacedDigit())
+                    .foregroundColor(DesignTokens.Ink.strong)
                     .lineLimit(1)
                 if let detail {
                     Text(detail)
-                        .font(AppTheme.Typography.caption)
-                        .foregroundColor(AppTheme.Text.quaternary)
+                        .font(DesignTokens.TypeScale.caption)
+                        .foregroundColor(DesignTokens.Ink.ghost)
                         .lineLimit(1)
                 }
             }
@@ -2174,9 +2366,9 @@ struct ProportionalDistributionCard: View {
     }
 
     var body: some View {
-        ContinuousPanel {
+        Module {
             VStack(alignment: .leading, spacing: 12) {
-                SectionEyebrow(title)
+                RegionLabel(title)
 
                 if totalTokens > 0 && !activeItems.isEmpty {
                     let effectiveTotal = max(totalTokens, activeItems.reduce(0) { $0 + $1.tokens })
@@ -2186,9 +2378,9 @@ struct ProportionalDistributionCard: View {
                     // carries the actual readings. A full-bleed saturated bar
                     // made whichever agent happened to be largest the loudest
                     // object on the entire screen.
-                    ProportionBar(
+                    ShareBar(
                         segments: activeItems.map {
-                            ProportionBar.Segment(
+                            ShareBar.Segment(
                                 id: $0.id,
                                 share: effectiveTotal > 0 ? Double($0.tokens) / Double(effectiveTotal) : 0,
                                 color: $0.color
@@ -2200,7 +2392,7 @@ struct ProportionalDistributionCard: View {
                     VStack(spacing: 0) {
                         ForEach(Array(topContributors.enumerated()), id: \.element.id) { index, item in
                             if index > 0 {
-                                PanelDivider(inset: 18)
+                                InlineDivider(inset: 18)
                             }
                             contributorRow(item, effectiveTotal: effectiveTotal)
                         }
@@ -2209,10 +2401,10 @@ struct ProportionalDistributionCard: View {
                     HStack(spacing: 10) {
                         Image(systemName: emptyIcon)
                             .font(.system(size: 20))
-                            .foregroundColor(AppTheme.Text.quaternary)
+                            .foregroundColor(DesignTokens.Ink.ghost)
                         Text(resolvedEmptyMessage)
-                            .font(AppTheme.Typography.caption)
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .font(DesignTokens.TypeScale.caption)
+                            .foregroundColor(DesignTokens.Ink.muted)
                         Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity)
@@ -2233,27 +2425,27 @@ struct ProportionalDistributionCard: View {
                 .frame(width: 7, height: 7)
 
             Text(item.name)
-                .font(AppTheme.Typography.rowTitle)
-                .foregroundColor(AppTheme.Text.primary)
+                .font(DesignTokens.TypeScale.label)
+                .foregroundColor(DesignTokens.Ink.strong)
                 .lineLimit(1)
                 .truncationMode(.middle)
 
             Spacer(minLength: 6)
 
             Text(TokenFormatter.formatCompact(item.tokens))
-                .font(AppTheme.Typography.tabular)
-                .foregroundColor(AppTheme.Text.secondary)
+                .font(DesignTokens.TypeScale.numeric)
+                .foregroundColor(DesignTokens.Ink.muted)
                 .lineLimit(1)
 
             Text(pricingEngine.spendString(item.costUSD))
-                .font(AppTheme.Typography.tabular)
-                .foregroundColor(AppTheme.Text.tertiary)
+                .font(DesignTokens.TypeScale.numeric)
+                .foregroundColor(DesignTokens.Ink.muted)
                 .lineLimit(1)
                 .frame(minWidth: 48, alignment: .trailing)
 
             Text(String(format: "%.1f%%", pct))
-                .font(AppTheme.Typography.tabular)
-                .foregroundColor(AppTheme.Text.quaternary)
+                .font(DesignTokens.TypeScale.numeric)
+                .foregroundColor(DesignTokens.Ink.ghost)
                 .lineLimit(1)
                 .frame(minWidth: 42, alignment: .trailing)
         }
@@ -2343,7 +2535,7 @@ private struct AnnualMonthlyTrendCard: View {
                                         .font(.caption).bold()
                                     Text(pricingEngine.spendString(point.costUSD))
                                         .font(.caption2)
-                                        .foregroundColor(AppTheme.Status.success)
+                                        .foregroundColor(DesignTokens.State.ok)
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 5)

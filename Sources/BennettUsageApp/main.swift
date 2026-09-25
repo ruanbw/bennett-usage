@@ -40,6 +40,19 @@ final class AppCommandController: NSObject {
         syncNowAction()
     }
 
+    /// ⌘1–⌘5. Each item carries its own zero-based index, so adding or
+    /// reordering a range is a menu edit rather than a change to the keyboard
+    /// handling.
+    @objc func selectRange(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let index = item.tag as? Int else { return }
+        NotificationCenter.default.post(
+            name: .bennettUsageRangeShortcut,
+            object: nil,
+            userInfo: ["index": index]
+        )
+    }
+
     @objc func quit(_ sender: Any?) {
         quitAction()
     }
@@ -137,6 +150,35 @@ syncMenuItem.keyEquivalentModifierMask = [.command]
 syncMenuItem.target = commandTarget
 applicationMenu.addItem(syncMenuItem)
 
+// ⌘1–⌘5 select the dashboard's time range. Registered as ordinary menu key
+// equivalents rather than as an event tap: the app stays an accessory, cannot
+// intercept another application, and gets the system's own menu priority for
+// free.
+let rangeMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+let rangeSubmenu = NSMenu(title: "Range")
+let rangeTitles: [(Int, String, String)] = [
+    (1, "24h", "range24h"),
+    (2, "Today", "rangeToday"),
+    (3, "7 Days", "range7Days"),
+    (4, "30 Days", "range30Days"),
+    (5, "1 Year", "range1Year")
+]
+var rangeMenuItems: [NSMenuItem] = []
+for (index, fallbackTitle, keyName) in rangeTitles {
+    let item = NSMenuItem(
+        title: fallbackTitle,
+        action: #selector(AppCommandController.selectRange(_:)),
+        keyEquivalent: String(index)
+    )
+    item.keyEquivalentModifierMask = [.command]
+    item.target = commandTarget
+    item.tag = index - 1
+    rangeSubmenu.addItem(item)
+    rangeMenuItems.append(item)
+}
+rangeMenuItem.submenu = rangeSubmenu
+applicationMenu.addItem(rangeMenuItem)
+
 applicationMenu.addItem(.separator())
 let quitMenuItem = NSMenuItem(
     title: LocalizationManager.shared.localized(.quit),
@@ -156,6 +198,15 @@ let localizationObservation = LocalizationManager.shared.objectWillChange
             settingsMenuItem.title = localization.localized(.navSettings)
             syncMenuItem.title = localization.localized(.syncNow)
             quitMenuItem.title = localization.localized(.quit)
+            for (item, entry) in zip(rangeMenuItems, rangeTitles) {
+                switch entry.2 {
+                case "range24h": item.title = localization.localized(.range24h)
+                case "rangeToday": item.title = localization.localized(.rangeToday)
+                case "range7Days": item.title = localization.localized(.range7Days)
+                case "range30Days": item.title = localization.localized(.range30Days)
+                default: item.title = localization.localized(.range1Year)
+                }
+            }
             DashboardWindowManager.shared.updateLocalizedTitle(localization: localization)
             SettingsWindowManager.shared.updateLocalizedTitle(localization: localization)
         }

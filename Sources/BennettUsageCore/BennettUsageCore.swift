@@ -5,7 +5,7 @@ public struct BennettUsageCore {
     /// bundle (tests, `swift run`). A packaged build reports the version the
     /// packaging script stamped into `CFBundleShortVersionString` instead —
     /// see `UpdateChecker.bundledVersion(bundle:)`.
-    public static let version = "1.5.1"
+    public static let version = "1.6.0"
 }
 
 /// A privacy-safe description of an adapter failure. Error details remain in
@@ -55,4 +55,6 @@ public struct SyncStatus: Equatable, Sendable {
 extension Notification.Name {
     public static let bennettUsageDataDidUpdate = Notification.Name("bennettUsageDataDidUpdate")
     public static let bennettUsageSyncStatusDidChange = Notification.Name("bennettUsageSyncStatusDidChange")
+    /// Posted by the ⌘1–⌘5 menu items with the zero-based range index.
+    public static let bennettUsageRangeShortcut = Notification.Name("bennettUsageRangeShortcut")
 }

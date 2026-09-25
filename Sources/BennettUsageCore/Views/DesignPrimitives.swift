@@ -1,26 +1,23 @@
 import SwiftUI
 
-// Shared structural vocabulary for the dashboard, the menu-bar popover and
-// Settings. These exist so the three surfaces express the same hierarchy with
-// the same parts instead of each screen inventing its own card and header
-// treatment.
+// Compatibility shims.
 //
-// Two rules the primitives enforce:
+// The design system now lives in `DesignTokens.swift` (the values) and
+// `DesignComponents.swift` (the parts). These types are the names the dashboard
+// and Settings were already written against, so they are kept as thin
+// forwarders rather than a second implementation: two definitions of "a
+// module" is how a codebase ends up with two module treatments that differ by
+// a few points of radius and nobody can say which is canonical.
 //
-// 1. Grouping is done by one continuous container plus hairlines, never by
-//    repeating a bordered card. A screen made of identical tiles has no
-//    focal point, which is what made the previous layout read as flat.
-// 2. Section titles are set as a tracked micro-label, not as an icon plus a
-//    heading. A pictogram next to every heading is decoration, not wayfinding.
+// Each one documents the mapping it now performs. New code should use the
+// `DesignComponents` name directly.
 
-/// A tracked, uppercased micro-label that introduces a region of a screen.
-///
-/// CJK text has no uppercase form, so the label is uppercased only when it
-/// actually contains cased Latin characters; the tracking still applies and
-/// keeps the CJK line visually consistent with its Latin siblings.
+// MARK: - Section label
+
+/// Deprecated spelling of `RegionLabel`.
 public struct SectionEyebrow: View {
     private let title: String
-    private var trailing: AnyView?
+    private let trailing: AnyView?
 
     public init(_ title: String) {
         self.title = title
@@ -32,36 +29,27 @@ public struct SectionEyebrow: View {
         self.trailing = AnyView(trailing())
     }
 
-    private var displayTitle: String {
-        title.contains(where: { $0.isUppercase }) ? title : title.uppercased()
-    }
-
     public var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(displayTitle)
-                .font(AppTheme.Typography.eyebrow)
-                .tracking(0.8)
-                .foregroundColor(AppTheme.Text.tertiary)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            if let trailing {
-                trailing
-            }
+        if let trailing {
+            RegionLabel(title) { trailing }
+        } else {
+            RegionLabel(title)
         }
-        .accessibilityAddTraits(.isHeader)
     }
 }
 
-/// One continuous container. Children are expected to separate themselves with
-/// `PanelDivider` so the group reads as a single object.
+// MARK: - Module
+
+/// Deprecated spelling of `Module`, with the old default insets preserved so
+/// existing call sites keep their current density.
 public struct ContinuousPanel<Content: View>: View {
-    private var padding: CGFloat
-    private var background: Color
-    private var content: Content
+    private let padding: CGFloat
+    private let background: Color
+    private let content: Content
 
     public init(
-        padding: CGFloat = AppTheme.Layout.cellPadding,
-        background: Color = AppTheme.Surface.panel,
+        padding: CGFloat = DesignTokens.Metrics.modulePadding,
+        background: Color = DesignTokens.Surfaces.module,
         @ViewBuilder content: () -> Content
     ) {
         self.padding = padding
@@ -70,66 +58,57 @@ public struct ContinuousPanel<Content: View>: View {
     }
 
     public var body: some View {
-        content
-            .padding(padding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.panel, style: .continuous)
-                    .fill(background)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.panel, style: .continuous)
-                    .stroke(AppTheme.Border.subtle, lineWidth: AppTheme.Layout.hairline)
-            )
+        Module(padding: padding, background: background, content: { content })
     }
 }
 
-/// A hairline that separates two regions inside a `ContinuousPanel`.
+// MARK: - Divider
+
+/// Deprecated spelling of `InlineDivider`.
 public struct PanelDivider: View {
-    private var inset: CGFloat
+    private let inset: CGFloat
 
     public init(inset: CGFloat = 0) {
         self.inset = inset
     }
 
     public var body: some View {
-        AppTheme.Border.divider
-            .frame(height: AppTheme.Layout.hairline)
-            .padding(.leading, inset)
+        InlineDivider(inset: inset)
     }
 }
 
-/// A label-above-value readout. The label is deliberately quiet so the number
-/// carries the reading, and the value is tabular so columns of metrics align.
+// MARK: - Readout
+
+/// Deprecated spelling of `Readout`.
 public struct MetricCell: View {
     private let label: String
     private let value: String
-    private var detail: String?
-    private var valueColor: Color
-    private var valueFont: Font
-    private var trailingAccessory: AnyView?
+    private let detail: String?
+    private let valueColor: Color
+    private let valueFont: Font
+    private let accessory: AnyView?
 
     public init(
         label: String,
         value: String,
         detail: String? = nil,
-        valueColor: Color = AppTheme.Text.primary,
-        valueFont: Font = AppTheme.Typography.supportingValue
+        valueColor: Color = DesignTokens.Ink.strong,
+        valueFont: Font = DesignTokens.TypeScale.numericLarge
     ) {
         self.label = label
         self.value = value
         self.detail = detail
         self.valueColor = valueColor
         self.valueFont = valueFont
-        self.trailingAccessory = nil
+        self.accessory = nil
     }
 
     public init<T: View>(
         label: String,
         value: String,
         detail: String? = nil,
-        valueColor: Color = AppTheme.Text.primary,
-        valueFont: Font = AppTheme.Typography.supportingValue,
+        valueColor: Color = DesignTokens.Ink.strong,
+        valueFont: Font = DesignTokens.TypeScale.numericLarge,
         @ViewBuilder accessory: () -> T
     ) {
         self.label = label
@@ -137,47 +116,35 @@ public struct MetricCell: View {
         self.detail = detail
         self.valueColor = valueColor
         self.valueFont = valueFont
-        self.trailingAccessory = AnyView(accessory())
+        self.accessory = AnyView(accessory())
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label)
-                .font(AppTheme.Typography.label)
-                .foregroundColor(AppTheme.Text.secondary)
-                .lineLimit(1)
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(value)
-                    .font(valueFont)
-                    .foregroundColor(valueColor)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .contentTransition(.numericText())
-                if let trailingAccessory {
-                    trailingAccessory
-                }
-            }
-            if let detail {
-                Text(detail)
-                    .font(AppTheme.Typography.caption)
-                    .foregroundColor(AppTheme.Text.tertiary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
+        if let accessory {
+            Readout(
+                label: label,
+                value: value,
+                detail: detail,
+                valueColor: valueColor,
+                valueFont: valueFont
+            ) { accessory }
+        } else {
+            Readout(
+                label: label,
+                value: value,
+                detail: detail,
+                valueColor: valueColor,
+                valueFont: valueFont
+            )
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
     }
 }
 
-/// A proportional bar drawn on a neutral track.
-///
-/// Segments keep their categorical color for identity, but the unfilled
-/// remainder is an explicit track rather than more saturated fill, and the
-/// whole mark is short. A single dominant category therefore reads as "almost
-/// all of it" instead of flooding the surface with one hue.
+// MARK: - Proportional mark
+
+/// Deprecated spelling of `ShareBar`.
 public struct ProportionBar: View {
+    /// Deprecated spelling of `ShareBar.Segment`.
     public struct Segment: Identifiable {
         public let id: String
         public let share: Double
@@ -191,8 +158,8 @@ public struct ProportionBar: View {
     }
 
     private let segments: [Segment]
-    private var height: CGFloat
-    private var spacing: CGFloat
+    private let height: CGFloat
+    private let spacing: CGFloat
 
     public init(segments: [Segment], height: CGFloat = 8, spacing: CGFloat = 2) {
         self.segments = segments
@@ -201,39 +168,22 @@ public struct ProportionBar: View {
     }
 
     public var body: some View {
-        GeometryReader { geometry in
-            let total = segments.reduce(0) { $0 + $1.share }
-            let gaps = CGFloat(max(0, segments.count - 1)) * spacing
-            let usable = max(0, geometry.size.width - gaps)
-
-            HStack(spacing: spacing) {
-                ForEach(segments) { segment in
-                    let width = total > 0 ? usable * CGFloat(segment.share / total) : 0
-                    Capsule()
-                        .fill(segment.color)
-                        // A hairline floor keeps sub-1% categories visible
-                        // without letting them distort the proportions.
-                        .frame(width: max(segment.share > 0 ? 2 : 0, width))
-                }
-            }
-            .frame(height: height, alignment: .center)
-        }
-        .frame(height: height)
-        .background(
-            Capsule().fill(AppTheme.Data.track)
+        ShareBar(
+            segments: segments.map { ShareBar.Segment(id: $0.id, share: $0.share, color: $0.color) },
+            height: height,
+            spacing: spacing
         )
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: segments.map { $0.id }.joined(separator: ", ")))
     }
 }
 
-/// A compact state marker: a colored dot plus its text. Used instead of a
-/// tinted, bordered container so a one-line status does not need a box.
+// MARK: - State marker
+
+/// Deprecated spelling of `StateCapsule`, minus the pill background.
 public struct StatusMarker: View {
     private let systemImage: String
     private let text: String
     private let color: Color
-    private var showsText: Bool
+    private let showsText: Bool
 
     public init(systemImage: String, text: String, color: Color, showsText: Bool = true) {
         self.systemImage = systemImage
@@ -249,8 +199,8 @@ public struct StatusMarker: View {
                 .foregroundColor(color)
             if showsText {
                 Text(text)
-                    .font(AppTheme.Typography.caption)
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .font(DesignTokens.TypeScale.caption)
+                    .foregroundColor(DesignTokens.Ink.muted)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
@@ -259,12 +209,14 @@ public struct StatusMarker: View {
     }
 }
 
-/// A horizontal meter for a bounded percentage. Constrained to a readable
-/// width so a single ratio does not stretch across the whole window.
+// MARK: - Bounded meter
+
+/// Deprecated spelling of a plain bounded meter. Magnitude only, so it takes
+/// ink rather than a caller-supplied hue.
 public struct PercentageMeter: View {
     private let value: Double
     private let color: Color
-    private var width: CGFloat
+    private let width: CGFloat
 
     public init(value: Double, color: Color, width: CGFloat = 132) {
         self.value = min(max(value, 0), 1)
@@ -275,7 +227,7 @@ public struct PercentageMeter: View {
     public var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
-                Capsule().fill(AppTheme.Data.track)
+                Capsule().fill(DesignTokens.Ink.track)
                 Capsule()
                     .fill(color)
                     .frame(width: max(2, geometry.size.width * CGFloat(value)), height: 4)

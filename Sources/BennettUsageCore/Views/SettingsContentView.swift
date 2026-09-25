@@ -79,7 +79,7 @@ public enum SettingsCategory: String, CaseIterable, Identifiable, Sendable {
     /// (a state, or an agent's identity in a chart), and a sidebar is not a
     /// place to spend them. Selection is now expressed by the row's fill and
     /// the accent, and nothing else.
-    public var iconColor: Color { AppTheme.Chrome.glyph }
+    public var iconColor: Color { DesignTokens.Ink.muted }
 }
 
 public struct SettingsContentView: View {
@@ -119,6 +119,10 @@ public struct SettingsContentView: View {
     @State private var storageStatusText: String = ""
     @State private var storageIsLoading = true
     @State private var storageIsUnavailable = false
+    /// The local record count, held separately from the formatted status
+    /// string so the sidebar can state a real figure instead of re-parsing
+    /// display text.
+    @State private var storageRecordCount: Int?
     @State private var preferenceFeedbackVisible = false
     @State private var agentHealthLoadFailed = false
 
@@ -180,14 +184,14 @@ public struct SettingsContentView: View {
             sidebarView
                 .frame(width: 176)
 
-            AppTheme.Border.divider
-                .frame(width: AppTheme.Layout.hairline)
+            DesignTokens.Lines.module
+                .frame(width: DesignTokens.Metrics.hairline)
 
             detailColumn
         }
         .frame(minWidth: 750, idealWidth: 750, minHeight: 510, idealHeight: 510)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppTheme.Canvas.background)
+        .background(DesignTokens.Surfaces.canvas)
         .alert(localization.localized(.clearRecordsConfirmTitle), isPresented: $isShowingClearAlert) {
             Button(localization.localized(.clearAllRecords), role: .destructive) {
                 clearLocalUsageCache()
@@ -236,9 +240,9 @@ public struct SettingsContentView: View {
             // filled accent tile that made it look like a sixth destination
             // next to the five real categories.
             Text(localization.localized(.settings).uppercased())
-                .font(AppTheme.Typography.eyebrow)
+                .font(DesignTokens.TypeScale.eyebrow)
                 .tracking(0.8)
-                .foregroundColor(AppTheme.Text.quaternary)
+                .foregroundColor(DesignTokens.Ink.ghost)
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
                 .padding(.bottom, 10)
@@ -252,33 +256,103 @@ public struct SettingsContentView: View {
 
             Spacer(minLength: 12)
 
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(isAnyAgentConnected ? AppTheme.Status.success : AppTheme.Text.quaternary)
-                    .frame(width: 7, height: 7)
-                Text(String(format: localization.localized(.agentsConnected), connectedAgentCount))
-                    .font(AppTheme.Typography.caption)
-                    .foregroundColor(AppTheme.Text.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(AppTheme.Surface.subtle.opacity(0.5))
-            .overlay(alignment: .top) {
-                AppTheme.Border.divider.frame(height: AppTheme.Layout.hairline)
-            }
+            sidebarStatusFooter
         }
-        .background(AppTheme.Surface.subtle.opacity(0.56))
+        .background(DesignTokens.Surfaces.inset.opacity(0.6))
+    }
+
+    /// Four permanent facts about this install, in the one place a user looks
+    /// before changing anything.
+    ///
+    /// They used to be spread across four panes: how many agents are connected
+    /// lived in the sidebar, record count in Storage, update state in General,
+    /// privacy in a footer. Each was correct and none of them was available
+    /// when you were on a different page, so "is this thing working" was four
+    /// navigations. Stating all four permanently means the answer is always on
+    /// screen and the panes are for changing things, not for reporting status.
+    private var sidebarStatusFooter: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            InlineDivider()
+                .padding(.horizontal, 16)
+
+            sidebarStatusRow(
+                systemImage: "bolt.shield.fill",
+                text: String(
+                    format: localization.localized(.agentsConnected),
+                    connectedAgentCount
+                ),
+                tint: isAnyAgentConnected ? DesignTokens.State.ok : DesignTokens.Ink.muted
+            )
+
+            if let recordDaysText {
+                sidebarStatusRow(
+                    systemImage: "tray.full",
+                    text: recordDaysText,
+                    tint: DesignTokens.Ink.muted
+                )
+            }
+
+            sidebarStatusRow(
+                systemImage: updateStatusIcon,
+                text: updateStatusDetail,
+                tint: updateStatusColor
+            )
+
+            sidebarStatusRow(
+                systemImage: "lock.shield.fill",
+                text: localization.localized(.privacyFooter),
+                tint: DesignTokens.State.ok
+            )
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+    }
+
+    /// A single status line: a glyph, a statement, and a color that means
+    /// something. The wording carries the state, so the color is never the only
+    /// signal.
+    private func sidebarStatusRow(
+        systemImage: String,
+        text: String,
+        tint: Color
+    ) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: 12)
+                .accessibilityHidden(true)
+            Text(text)
+                .font(DesignTokens.TypeScale.caption)
+                .foregroundColor(DesignTokens.Ink.muted)
+                .lineLimit(2)
+                .minimumScaleFactor(0.72)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// How many days of usage the local database actually holds.
+    ///
+    /// A usage tool that has only run for two days should say so: presenting a
+    /// thirty-day average over a two-day history is the kind of number that
+    /// makes a product look broken in a way the user cannot diagnose. nil when
+    /// the count is not known yet, which is a different statement from zero.
+    private var recordDaysText: String? {
+        guard !storageIsLoading, !storageIsUnavailable, let count = storageRecordCount else {
+            return nil
+        }
+        return String(format: localization.localized(.recordCountLabel), count)
     }
 
     private var detailColumn: some View {
         VStack(spacing: 0) {
             detailHeaderView
 
-            AppTheme.Border.divider
-                .frame(height: AppTheme.Layout.hairline)
+            DesignTokens.Lines.module
+                .frame(height: DesignTokens.Metrics.hairline)
 
             ScrollView(.vertical, showsIndicators: true) {
                 detailContentView
@@ -287,13 +361,13 @@ public struct SettingsContentView: View {
                     .padding(.vertical, 18)
             }
 
-            AppTheme.Border.divider
-                .frame(height: AppTheme.Layout.hairline)
+            DesignTokens.Lines.module
+                .frame(height: DesignTokens.Metrics.hairline)
 
             privacyFooter
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppTheme.Canvas.background)
+        .background(DesignTokens.Surfaces.canvas)
     }
 
     /// One privacy statement, not two. The sidebar footer and this bar used to
@@ -303,17 +377,17 @@ public struct SettingsContentView: View {
         HStack(spacing: 6) {
             Image(systemName: "lock.shield.fill")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(AppTheme.Status.success)
+                .foregroundColor(DesignTokens.State.ok)
             Text(localization.localized(.privacyFooter))
-                .font(AppTheme.Typography.caption)
-                .foregroundColor(AppTheme.Text.tertiary)
+                .font(DesignTokens.TypeScale.caption)
+                .foregroundColor(DesignTokens.Ink.muted)
                 .lineLimit(1)
                 .minimumScaleFactor(0.76)
             Spacer(minLength: 8)
         }
         .padding(.horizontal, AppTheme.Radius.Settings.contentPadding)
         .frame(height: 28)
-        .background(AppTheme.Surface.subtle.opacity(0.5))
+        .background(DesignTokens.Surfaces.inset.opacity(0.5))
         .accessibilityElement(children: .combine)
     }
 
@@ -336,17 +410,17 @@ public struct SettingsContentView: View {
             // window, and it was the largest one.
             Image(systemName: selectedCategory.systemImage)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(AppTheme.Chrome.glyphActive)
+                .foregroundColor(DesignTokens.Accent.base)
                 .frame(width: 20)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(selectedCategory.fullTitle(localization: localization))
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(AppTheme.Text.primary)
+                    .foregroundColor(DesignTokens.Ink.strong)
                     .lineLimit(1)
                 Text(selectedCategory.subtitle(localization: localization))
-                    .font(AppTheme.Typography.caption)
-                    .foregroundColor(AppTheme.Text.tertiary)
+                    .font(DesignTokens.TypeScale.caption)
+                    .foregroundColor(DesignTokens.Ink.muted)
                     .lineLimit(1)
             }
             Spacer(minLength: 12)
@@ -354,7 +428,7 @@ public struct SettingsContentView: View {
         }
         .padding(.horizontal, AppTheme.Radius.Settings.contentPadding)
         .frame(height: AppTheme.Radius.Settings.headerHeight)
-        .background(AppTheme.Canvas.background)
+        .background(DesignTokens.Surfaces.canvas)
     }
 
     private var detailStatusView: some View {
@@ -380,18 +454,18 @@ public struct SettingsContentView: View {
     private var detailStatus: (text: String, systemImage: String, color: Color) {
         switch selectedCategory {
         case .general:
-            return (autoRefreshSubtitle, "arrow.clockwise", AppTheme.Chrome.glyphActive)
+            return (autoRefreshSubtitle, "arrow.clockwise", DesignTokens.Accent.base)
         case .agents:
             return (
                 String(format: localization.localized(.agentsConnected), connectedAgentCount),
                 isAnyAgentConnected ? "checkmark.circle.fill" : "circle.dashed",
-                isAnyAgentConnected ? AppTheme.Status.success : AppTheme.Text.secondary
+                isAnyAgentConnected ? DesignTokens.State.ok : DesignTokens.Ink.muted
             )
         case .pricing:
             return (
                 selectedCurrency == .usd ? localization.localized(.usdOption) : localization.localized(.cnyOption),
                 "coloncurrencysign",
-                AppTheme.Chrome.glyphActive
+                DesignTokens.Accent.base
             )
         case .storage:
             return (storageStatusDisplayText, storageStatusIcon, storageStatusColor)
@@ -399,7 +473,7 @@ public struct SettingsContentView: View {
             return (
                 String(format: localization.localized(.versionLabel), updateChecker.currentVersion.description),
                 "checkmark.seal.fill",
-                AppTheme.Chrome.glyphActive
+                DesignTokens.Accent.base
             )
         }
     }
@@ -464,14 +538,14 @@ public struct SettingsContentView: View {
 
     private var generalLanguageRow: some View {
         HStack(spacing: 12) {
-            cardRowIcon("globe", color: AppTheme.Chrome.glyph)
+            cardRowIcon("globe", color: DesignTokens.Ink.muted)
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.language))
                     .font(.body.weight(.medium))
-                    .foregroundColor(AppTheme.Text.primary)
+                    .foregroundColor(DesignTokens.Ink.strong)
                 Text(displayName(for: localization.selectedLanguage))
                     .font(.caption)
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .foregroundColor(DesignTokens.Ink.muted)
                     .lineLimit(1)
             }
             Spacer(minLength: 12)
@@ -491,14 +565,14 @@ public struct SettingsContentView: View {
 
     private var generalAppearanceRow: some View {
         HStack(spacing: 12) {
-            cardRowIcon("circle.lefthalf.filled", color: AppTheme.Chrome.glyph)
+            cardRowIcon("circle.lefthalf.filled", color: DesignTokens.Ink.muted)
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.appearance))
                     .font(.body.weight(.medium))
-                    .foregroundColor(AppTheme.Text.primary)
+                    .foregroundColor(DesignTokens.Ink.strong)
                 Text(Self.resolvedThemeMode(rawValue: themeModeRaw).localizedTitle(localization: localization))
                     .font(.caption)
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .foregroundColor(DesignTokens.Ink.muted)
             }
             Spacer(minLength: 12)
             Picker(localization.localized(.appearance), selection: themeModeBinding) {
@@ -517,14 +591,14 @@ public struct SettingsContentView: View {
 
     private var generalAutoRefreshRow: some View {
         HStack(spacing: 12) {
-            cardRowIcon("arrow.clockwise", color: AppTheme.Chrome.glyph)
+            cardRowIcon("arrow.clockwise", color: DesignTokens.Ink.muted)
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.autoRefreshLabel))
                     .font(.body.weight(.medium))
-                    .foregroundColor(AppTheme.Text.primary)
+                    .foregroundColor(DesignTokens.Ink.strong)
                 Text(autoRefreshSubtitle)
                     .font(.caption)
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .foregroundColor(DesignTokens.Ink.muted)
             }
             Spacer(minLength: 12)
             trailingMenuPicker(
@@ -546,14 +620,14 @@ public struct SettingsContentView: View {
 
     private var generalUpdateRow: some View {
         HStack(spacing: 12) {
-            cardRowIcon("arrow.down.circle", color: AppTheme.Chrome.glyph)
+            cardRowIcon("arrow.down.circle", color: DesignTokens.Ink.muted)
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.autoCheckUpdatesLabel))
                     .font(.body.weight(.medium))
-                    .foregroundColor(AppTheme.Text.primary)
+                    .foregroundColor(DesignTokens.Ink.strong)
                 Text(localization.localized(.autoCheckUpdatesSubtitle))
                     .font(.caption)
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .foregroundColor(DesignTokens.Ink.muted)
                     .lineLimit(2)
             }
             Spacer(minLength: 12)
@@ -576,7 +650,7 @@ public struct SettingsContentView: View {
                 .foregroundColor(updateStatusColor)
             Text(updateStatusDetail)
                 .font(.caption)
-                .foregroundColor(AppTheme.Text.secondary)
+                .foregroundColor(DesignTokens.Ink.muted)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
             Spacer(minLength: 8)
@@ -597,18 +671,18 @@ public struct SettingsContentView: View {
 
     private var generalDatabaseRow: some View {
         HStack(spacing: 12) {
-            cardRowIcon("cylinder.split.1x2", color: AppTheme.Chrome.glyph)
+            cardRowIcon("cylinder.split.1x2", color: DesignTokens.Ink.muted)
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.sqliteDatabase))
                     .font(.body.weight(.medium))
-                    .foregroundColor(AppTheme.Text.primary)
+                    .foregroundColor(DesignTokens.Ink.strong)
                 Text(storageStatusDisplayText)
                     .font(.caption)
                     .foregroundColor(storageStatusColor)
                     .lineLimit(1)
                 Text(resolvedDbPath)
                     .font(.caption2.monospaced())
-                    .foregroundColor(AppTheme.Text.tertiary)
+                    .foregroundColor(DesignTokens.Ink.muted)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -626,14 +700,14 @@ public struct SettingsContentView: View {
 
     private var generalPrivacyRow: some View {
         HStack(alignment: .top, spacing: 12) {
-            cardRowIcon("lock.shield.fill", color: AppTheme.Chrome.glyph)
+            cardRowIcon("lock.shield.fill", color: DesignTokens.Ink.muted)
             VStack(alignment: .leading, spacing: 2) {
                 Text(localization.localized(.localFirstPrivate))
                     .font(.body.weight(.medium))
-                    .foregroundColor(AppTheme.Text.primary)
+                    .foregroundColor(DesignTokens.Ink.strong)
                 Text(localization.localized(.privacyDescription))
                     .font(.caption)
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .foregroundColor(DesignTokens.Ink.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
@@ -651,7 +725,7 @@ public struct SettingsContentView: View {
                         systemImage: isAnyAgentConnected ? "checkmark.circle.fill" : "circle.dashed"
                     )
                     .font(.subheadline.weight(.medium))
-                    .foregroundColor(isAnyAgentConnected ? AppTheme.Status.success : AppTheme.Text.secondary)
+                    .foregroundColor(isAnyAgentConnected ? DesignTokens.State.ok : DesignTokens.Ink.muted)
                     Spacer()
                     Button(action: {
                         Task { await rescanAgents() }
@@ -673,7 +747,7 @@ public struct SettingsContentView: View {
                 if agentHealthLoadFailed {
                     Label(localization.localized(.dataUnavailable), systemImage: "exclamationmark.triangle.fill")
                         .font(.caption.weight(.medium))
-                        .foregroundColor(AppTheme.Status.warning)
+                        .foregroundColor(DesignTokens.State.warn)
                 }
 
                 settingsCard {
@@ -685,7 +759,7 @@ public struct SettingsContentView: View {
                                 Text(localization.localized(.loadingUsage))
                             } else {
                                 Image(systemName: agentHealthLoadFailed ? "exclamationmark.triangle.fill" : "circle.dashed")
-                                    .foregroundColor(agentHealthLoadFailed ? AppTheme.Status.warning : AppTheme.Text.secondary)
+                                    .foregroundColor(agentHealthLoadFailed ? DesignTokens.State.warn : DesignTokens.Ink.muted)
                                 if agentHealthLoadFailed {
                                     Text(localization.localized(.dataUnavailable))
                                 } else {
@@ -695,7 +769,7 @@ public struct SettingsContentView: View {
                             Spacer()
                         }
                         .font(.subheadline)
-                        .foregroundColor(AppTheme.Text.secondary)
+                        .foregroundColor(DesignTokens.Ink.muted)
                         .padding(.vertical, 18)
                     } else {
                         ForEach(agentHealthInfos) { info in
@@ -718,40 +792,40 @@ public struct SettingsContentView: View {
         HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(info.isInstalled ? AppTheme.Status.success.opacity(0.14) : AppTheme.Text.secondary.opacity(0.12))
+                    .fill(info.isInstalled ? DesignTokens.State.ok.opacity(0.14) : DesignTokens.Ink.muted.opacity(0.12))
                     .frame(width: 32, height: 32)
                 Image(systemName: info.isInstalled ? "checkmark.circle.fill" : "circle.dashed")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(info.isInstalled ? AppTheme.Status.success : AppTheme.Text.secondary)
+                    .foregroundColor(info.isInstalled ? DesignTokens.State.ok : DesignTokens.Ink.muted)
             }
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(info.displayName)
                         .font(.body.weight(.semibold))
-                        .foregroundColor(AppTheme.Text.primary)
+                        .foregroundColor(DesignTokens.Ink.strong)
                     if info.isInstalled {
                         Text(localization.localized(.agentActive))
                             .font(.system(size: 10, weight: .bold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
-                            .background(AppTheme.Status.success.opacity(0.15))
-                            .foregroundColor(AppTheme.Status.success)
+                            .background(DesignTokens.State.ok.opacity(0.15))
+                            .foregroundColor(DesignTokens.State.ok)
                             .cornerRadius(4)
                     } else {
                         Text(localization.localized(.agentNotFound))
                             .font(.system(size: 10, weight: .medium))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
-                            .background(AppTheme.Surface.subtle)
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .background(DesignTokens.Surfaces.inset)
+                            .foregroundColor(DesignTokens.Ink.muted)
                             .cornerRadius(4)
                     }
                 }
 
                 Text(info.defaultPath)
                     .font(.caption.monospaced())
-                    .foregroundColor(AppTheme.Text.secondary)
+                    .foregroundColor(DesignTokens.Ink.muted)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(info.defaultPath)
@@ -762,16 +836,16 @@ public struct SettingsContentView: View {
             VStack(alignment: .trailing, spacing: 3) {
                 Text(Self.agentRecordsText(for: info, localization: localization))
                     .font(.caption.weight(.medium).monospacedDigit())
-                    .foregroundColor(AppTheme.Text.primary)
+                    .foregroundColor(DesignTokens.Ink.strong)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(AppTheme.Surface.subtle)
+                    .background(DesignTokens.Surfaces.inset)
                     .cornerRadius(6)
 
                 if let lastTimestamp = info.lastRecordTimestamp {
                     Text(relativeTimestamp(lastTimestamp))
                         .font(.caption2)
-                        .foregroundColor(AppTheme.Text.secondary)
+                        .foregroundColor(DesignTokens.Ink.muted)
                 }
             }
         }
@@ -784,14 +858,14 @@ public struct SettingsContentView: View {
             // Preferred Currency Card
             settingsCard {
                 HStack(spacing: 12) {
-                    cardRowIcon("coloncurrencysign.circle.fill", color: AppTheme.Chrome.glyph)
+                    cardRowIcon("coloncurrencysign.circle.fill", color: DesignTokens.Ink.muted)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.preferredCurrencyLabel))
                             .font(.body.weight(.medium))
-                            .foregroundColor(AppTheme.Text.primary)
+                            .foregroundColor(DesignTokens.Ink.strong)
                         Text(localization.localized(.currencySummary))
                             .font(.caption)
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .foregroundColor(DesignTokens.Ink.muted)
                     }
                     Spacer()
                     Picker("", selection: $selectedCurrency) {
@@ -812,20 +886,20 @@ public struct SettingsContentView: View {
             // Exchange Rate Card
             settingsCard {
                 HStack(spacing: 12) {
-                    cardRowIcon("chart.line.uptrend.xyaxis", color: AppTheme.Chrome.glyph)
+                    cardRowIcon("chart.line.uptrend.xyaxis", color: DesignTokens.Ink.muted)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.exchangeRateLabel))
                             .font(.body.weight(.medium))
-                            .foregroundColor(AppTheme.Text.primary)
+                            .foregroundColor(DesignTokens.Ink.strong)
                         Text(String(format: localization.localized(.exchangeRateSummary), exchangeRateText))
                             .font(.caption)
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .foregroundColor(DesignTokens.Ink.muted)
                     }
                     Spacer()
                     HStack(spacing: 6) {
                         Text(localization.localized(.exchangeRatePrefix))
                             .font(.callout)
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .foregroundColor(DesignTokens.Ink.muted)
                         TextField(localization.localized(.exchangeRatePlaceholder), text: $exchangeRateText)
                             .textFieldStyle(.roundedBorder)
                             .controlSize(.small)
@@ -839,7 +913,7 @@ public struct SettingsContentView: View {
                             }
                         Text(localization.localized(.currencyCNY))
                             .font(.callout)
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .foregroundColor(DesignTokens.Ink.muted)
                         Button(localization.localized(.done)) {
                             saveExchangeRate()
                         }
@@ -853,7 +927,7 @@ public struct SettingsContentView: View {
             if exchangeRateError {
                 Label(localization.localized(.invalidExchangeRate), systemImage: "exclamationmark.triangle.fill")
                     .font(.caption.weight(.medium))
-                    .foregroundColor(AppTheme.Status.warning)
+                    .foregroundColor(DesignTokens.State.warn)
             }
 
             if preferenceFeedbackVisible {
@@ -868,14 +942,14 @@ public struct SettingsContentView: View {
             // Database Info Card
             settingsCard {
                 HStack(alignment: .top, spacing: 12) {
-                    cardRowIcon("cylinder.split.1x2", color: AppTheme.Chrome.glyph)
+                    cardRowIcon("cylinder.split.1x2", color: DesignTokens.Ink.muted)
                     VStack(alignment: .leading, spacing: 6) {
                         Text(localization.localized(.sqliteDatabase))
                             .font(.body.weight(.semibold))
-                            .foregroundColor(AppTheme.Text.primary)
+                            .foregroundColor(DesignTokens.Ink.strong)
                         Text(resolvedDbPath)
                             .font(.caption.monospaced())
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .foregroundColor(DesignTokens.Ink.muted)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .help(resolvedDbPath)
@@ -903,10 +977,10 @@ public struct SettingsContentView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(localization.localized(.rebuildRollups))
                                 .font(.body.weight(.medium))
-                                .foregroundColor(AppTheme.Text.primary)
+                                .foregroundColor(DesignTokens.Ink.strong)
                             Text(localization.localized(.rebuildRollupsDescription))
                                 .font(.caption)
-                                .foregroundColor(AppTheme.Text.secondary)
+                                .foregroundColor(DesignTokens.Ink.muted)
                         }
                         Spacer()
                         Button(action: rebuildAggregates) {
@@ -927,10 +1001,10 @@ public struct SettingsContentView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(localization.localized(.clearAllRecords))
                                 .font(.body.weight(.medium))
-                                .foregroundColor(AppTheme.Status.error)
+                                .foregroundColor(DesignTokens.State.danger)
                             Text(localization.localized(.clearRecordsDescription))
                                 .font(.caption)
-                                .foregroundColor(AppTheme.Text.secondary)
+                                .foregroundColor(DesignTokens.Ink.muted)
                         }
                         Spacer()
                         Button(role: .destructive, action: {
@@ -943,7 +1017,7 @@ public struct SettingsContentView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .foregroundColor(AppTheme.Status.error)
+                        .foregroundColor(DesignTokens.State.danger)
                         .disabled(isPerformingMaintenance)
                         .accessibilityIdentifier(Self.clearCacheButtonID)
                     }
@@ -974,7 +1048,7 @@ public struct SettingsContentView: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(
                         LinearGradient(
-                            colors: [AppTheme.Status.accent, AppTheme.Status.accent.opacity(0.68)],
+                            colors: [DesignTokens.Accent.base, DesignTokens.Accent.base.opacity(0.68)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -1000,14 +1074,14 @@ public struct SettingsContentView: View {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(localization.localized(.appName))
                                 .font(.title3.bold())
-                                .foregroundColor(AppTheme.Text.primary)
+                                .foregroundColor(DesignTokens.Ink.strong)
                             Text(String(format: localization.localized(.versionLabel), updateChecker.currentVersion.description))
                                 .font(.subheadline)
-                                .foregroundColor(AppTheme.Text.secondary)
+                                .foregroundColor(DesignTokens.Ink.muted)
                         }
                         Text(localization.localized(.aboutDescription))
                             .font(.caption)
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .foregroundColor(DesignTokens.Ink.muted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
@@ -1018,14 +1092,14 @@ public struct SettingsContentView: View {
             // Privacy Card
             settingsCard {
                 HStack(alignment: .top, spacing: 14) {
-                    cardRowIcon("lock.shield.fill", color: AppTheme.Chrome.glyph)
+                    cardRowIcon("lock.shield.fill", color: DesignTokens.Ink.muted)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(localization.localized(.localFirstPrivate))
                             .font(.body.weight(.semibold))
-                            .foregroundColor(AppTheme.Text.primary)
+                            .foregroundColor(DesignTokens.Ink.strong)
                         Text(localization.localized(.privacyDescription))
                             .font(.caption)
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .foregroundColor(DesignTokens.Ink.muted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1035,14 +1109,14 @@ public struct SettingsContentView: View {
             // Repository Link Card
             settingsCard {
                 HStack {
-                    cardRowIcon("chevron.left.forwardslash.chevron.right", color: AppTheme.Chrome.glyph)
+                    cardRowIcon("chevron.left.forwardslash.chevron.right", color: DesignTokens.Ink.muted)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.openSource))
                             .font(.body.weight(.medium))
-                            .foregroundColor(AppTheme.Text.primary)
+                            .foregroundColor(DesignTokens.Ink.strong)
                         Text("github.com/ruanbw/bennett-usage")
                             .font(.caption)
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .foregroundColor(DesignTokens.Ink.muted)
                     }
                     Spacer()
                     if let githubURL = URL(string: "https://github.com/ruanbw/bennett-usage") {
@@ -1075,14 +1149,14 @@ public struct SettingsContentView: View {
         settingsCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
-                    cardRowIcon("arrow.down.circle", color: AppTheme.Chrome.glyph)
+                    cardRowIcon("arrow.down.circle", color: DesignTokens.Ink.muted)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(localization.localized(.checkForUpdates))
                             .font(.body.weight(.medium))
-                            .foregroundColor(AppTheme.Text.primary)
+                            .foregroundColor(DesignTokens.Ink.strong)
                         Text(updateStatusDetail)
                             .font(.caption)
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .foregroundColor(DesignTokens.Ink.muted)
                     }
                     Spacer()
                     Button(action: checkForUpdatesNow) {
@@ -1114,10 +1188,10 @@ public struct SettingsContentView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 11))
-                            .foregroundColor(AppTheme.Status.success)
+                            .foregroundColor(DesignTokens.State.ok)
                         Text(localization.localized(.updateUpToDate))
                             .font(.caption)
-                            .foregroundColor(AppTheme.Text.secondary)
+                            .foregroundColor(DesignTokens.Ink.muted)
                         Spacer()
                     }
                 }
@@ -1127,14 +1201,14 @@ public struct SettingsContentView: View {
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 11))
-                            .foregroundColor(AppTheme.Status.warning)
+                            .foregroundColor(DesignTokens.State.warn)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(localization.localized(.updateCheckFailed))
                                 .font(.caption.weight(.medium))
-                                .foregroundColor(AppTheme.Text.primary)
+                                .foregroundColor(DesignTokens.Ink.strong)
                             Text(failureDescription(failure))
                                 .font(.caption)
-                                .foregroundColor(AppTheme.Text.secondary)
+                                .foregroundColor(DesignTokens.Ink.muted)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer()
@@ -1251,14 +1325,14 @@ public struct SettingsContentView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if let subtitle {
-                SectionEyebrow(title) {
+                RegionLabel(title) {
                     Text(subtitle)
-                        .font(AppTheme.Typography.caption)
-                        .foregroundColor(AppTheme.Text.quaternary)
+                        .font(DesignTokens.TypeScale.caption)
+                        .foregroundColor(DesignTokens.Ink.ghost)
                         .lineLimit(1)
                 }
             } else {
-                SectionEyebrow(title)
+                RegionLabel(title)
             }
             content()
         }
@@ -1286,9 +1360,9 @@ public struct SettingsContentView: View {
     }
 
     private var storageStatusColor: Color {
-        if storageIsLoading { return AppTheme.Status.accent }
-        if storageIsUnavailable { return AppTheme.Status.warning }
-        return AppTheme.Status.success
+        if storageIsLoading { return DesignTokens.Accent.base }
+        if storageIsUnavailable { return DesignTokens.State.warn }
+        return DesignTokens.State.ok
     }
 
     private func showPreferenceFeedback() {
@@ -1298,7 +1372,7 @@ public struct SettingsContentView: View {
     private var preferenceFeedbackView: some View {
         Label(localization.localized(.done), systemImage: "checkmark.circle.fill")
             .font(.caption.weight(.medium))
-            .foregroundColor(AppTheme.Status.success)
+            .foregroundColor(DesignTokens.State.ok)
             .accessibilityIdentifier("settings.preferences.feedback")
     }
 
@@ -1311,11 +1385,11 @@ public struct SettingsContentView: View {
     }
 
     private var updateStatusColor: Color {
-        if updateChecker.isChecking { return AppTheme.Status.accent }
-        if case .failed = updateChecker.status { return AppTheme.Status.warning }
-        if updateChecker.availableUpdate != nil { return AppTheme.Status.accent }
-        if case .upToDate = updateChecker.status { return AppTheme.Status.success }
-        return AppTheme.Text.secondary
+        if updateChecker.isChecking { return DesignTokens.Accent.base }
+        if case .failed = updateChecker.status { return DesignTokens.State.warn }
+        if updateChecker.availableUpdate != nil { return DesignTokens.Accent.base }
+        if case .upToDate = updateChecker.status { return DesignTokens.State.ok }
+        return DesignTokens.Ink.muted
     }
 
     private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -1330,18 +1404,18 @@ public struct SettingsContentView: View {
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.panel, style: .continuous)
-                .fill(AppTheme.Surface.panel)
+            RoundedRectangle(cornerRadius: DesignTokens.Metrics.Radius.module, style: .continuous)
+                .fill(DesignTokens.Surfaces.module)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.panel, style: .continuous)
-                .stroke(AppTheme.Border.subtle, lineWidth: AppTheme.Layout.hairline)
+            RoundedRectangle(cornerRadius: DesignTokens.Metrics.Radius.module, style: .continuous)
+                .stroke(DesignTokens.Lines.soft, lineWidth: DesignTokens.Metrics.hairline)
         )
     }
 
     private var rowDivider: some View {
-        AppTheme.Border.divider
-            .frame(height: AppTheme.Layout.hairline)
+        DesignTokens.Lines.module
+            .frame(height: DesignTokens.Metrics.hairline)
     }
 
     /// A plain glyph, not a colored tile.
@@ -1389,7 +1463,7 @@ public struct SettingsContentView: View {
             systemImage: isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
         )
         .font(.caption.weight(.medium))
-        .foregroundColor(isSuccess ? AppTheme.Status.success : AppTheme.Status.error)
+        .foregroundColor(isSuccess ? DesignTokens.State.ok : DesignTokens.State.danger)
         .accessibilityIdentifier("settings.maintenance.feedback")
     }
 
@@ -1471,6 +1545,7 @@ public struct SettingsContentView: View {
               FileManager.default.fileExists(atPath: path),
               let count = try? await aggregator.fetchTotalRecordCount() else {
             storageStatusText = localization.localized(.dataUnavailable)
+            storageRecordCount = nil
             storageIsUnavailable = true
             storageIsLoading = false
             return
@@ -1478,6 +1553,7 @@ public struct SettingsContentView: View {
         let sizeBytes = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
         let sizeFormatted = ByteCountFormatter.string(fromByteCount: sizeBytes, countStyle: .file)
         storageStatusText = String(format: localization.localized(.storageStatus), count, sizeFormatted)
+        storageRecordCount = count
         storageIsUnavailable = false
         storageIsLoading = false
     }
@@ -1776,12 +1852,12 @@ private struct CategoryRowButton: View {
                 // stay a single neutral color and the column still aligns.
                 Image(systemName: category.systemImage)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(isSelected ? AppTheme.Chrome.glyphActive : AppTheme.Chrome.glyph)
+                    .foregroundColor(isSelected ? DesignTokens.Accent.base : DesignTokens.Ink.muted)
                     .frame(width: 18)
 
                 Text(category.title(localization: localization))
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? AppTheme.Text.primary : AppTheme.Text.secondary)
+                    .foregroundColor(isSelected ? DesignTokens.Ink.strong : DesignTokens.Ink.muted)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
 
@@ -1791,7 +1867,7 @@ private struct CategoryRowButton: View {
             .frame(height: 30)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(isSelected ? AppTheme.Surface.selected : (isHovered ? AppTheme.Surface.hover : Color.clear))
+                    .fill(isSelected ? DesignTokens.Surfaces.selected : (isHovered ? DesignTokens.Surfaces.hover : Color.clear))
             )
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }

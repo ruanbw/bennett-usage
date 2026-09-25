@@ -46,7 +46,7 @@ public struct DashboardView: View {
             idealHeight: 740,
             maxHeight: .infinity
         )
-        .background(AppTheme.Canvas.background)
+        .background(DesignTokens.Surfaces.canvas)
         .sheet(isPresented: $presentation.isShowingSettings) {
             SettingsSheetView(
                 aggregator: aggregator,
