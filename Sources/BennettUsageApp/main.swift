@@ -201,8 +201,18 @@ Task {
     }
 }
 
+// A status-item app is normally quit through `NSApp.terminate`, which exits the
+// process without closing SQLite, so the write-ahead log is reclaimed explicitly.
+let terminationObservation = NotificationCenter.default.addObserver(
+    forName: NSApplication.willTerminateNotification,
+    object: nil,
+    queue: .main
+) { _ in
+    db.checkpointAndTruncate()
+}
+
 // `commandTarget` is intentionally a top-level strong binding. It owns the
 // menu targets for the entire accessory-app lifetime.
-withExtendedLifetime((commandTarget, localizationObservation)) {
+withExtendedLifetime((commandTarget, localizationObservation, terminationObservation)) {
     app.run()
 }

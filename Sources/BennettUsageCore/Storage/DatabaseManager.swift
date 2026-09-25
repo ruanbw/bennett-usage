@@ -127,6 +127,15 @@ public final class DatabaseManager: @unchecked Sendable {
         sqlite3_bind_double(stmt, baseParameter + 15, r.rawCostUSD ?? 0.0)
     }
 
+    /// Reclaims the write-ahead log before the process goes away.
+    ///
+    /// A status-item app is normally quit through `NSApp.terminate`, which exits
+    /// without running `sqlite3_close`, so nothing checkpoints on the way out.
+    public func checkpointAndTruncate() {
+        lock.lock(); defer { lock.unlock() }
+        try? execute(sql: "PRAGMA wal_checkpoint(TRUNCATE);")
+    }
+
     public init(path: String) throws {
         var dbPointer: OpaquePointer?
         let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
@@ -166,6 +175,11 @@ public final class DatabaseManager: @unchecked Sendable {
         try execute(sql: "PRAGMA mmap_size = 268435456;")    // 256 MB memory-mapped I/O
         try execute(sql: "PRAGMA temp_store = MEMORY;")      // keep temp B-trees in RAM
         try execute(sql: "PRAGMA wal_autocheckpoint = 1000;")
+        // Cap what a checkpoint leaves behind. Without this, SQLite reuses the WAL
+        // file at its high-water mark instead of shrinking it, so one large ingest
+        // (or a process killed before it could checkpoint) leaves a many-hundred-MB
+        // WAL for every later launch to re-scan.
+        try execute(sql: "PRAGMA journal_size_limit = 16777216;") // 16 MB
         // Cheap SQLite-recommended housekeeping; records optimal-index stats for
         // statements executed on this connection. Never blocks.
         try execute(sql: "PRAGMA optimize;")

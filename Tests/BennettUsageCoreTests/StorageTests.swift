@@ -427,4 +427,43 @@ final class StorageTests: XCTestCase {
         let statsAfter = try db2.fetchRecordStats(forSourceId: "dsh")
         XCTAssertEqual(statsAfter.count, 0, "Corrupt 'dsh' records should be reset on init")
     }
+
+    /// The write-ahead log used to stay at its high-water mark, because a process
+    /// killed before its last checkpoint never runs `sqlite3_close` (692 MB was
+    /// found on disk for a 62 MB database). `journal_size_limit` plus an explicit
+    /// truncating checkpoint on the way out bounds it.
+    func testCheckpointAndTruncateReclaimsTheWriteAheadLog() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let path = directory.appendingPathComponent("usage.db").path
+        let database = try DatabaseManager(path: path)
+        let record = UnifiedTokenRecord(
+            id: "wal_1",
+            sourceId: "pi",
+            timestamp: Date(),
+            dayKey: "2026-09-26",
+            sessionKey: "session",
+            projectFolder: nil,
+            model: "gpt-4o",
+            provider: nil,
+            inputTokens: 10,
+            outputTokens: 10,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            rawCostUSD: 0.01
+        )
+        _ = try database.insertRecords([record], updateCursorFor: "pi", cursor: .rowId(7))
+
+        let walPath = path + "-wal"
+        XCTAssertGreaterThan(walSize(at: walPath), 0, "The write-ahead log should hold the uncommitted frames")
+
+        database.checkpointAndTruncate()
+        XCTAssertEqual(walSize(at: walPath), 0)
+    }
+
+    private func walSize(at path: String) -> Int {
+        ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int) ?? 0
+    }
 }
