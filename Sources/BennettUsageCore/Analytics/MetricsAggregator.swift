@@ -109,29 +109,42 @@ public struct TodaySummary: Sendable, Equatable {
     public let totalCostUSD: Double
     public let toolTokens: [String: Int]
     public let toolCosts: [String: Double]
+    /// Today's cache-hit rate, or nil when nothing was cacheable.
+    ///
+    /// The popover's ring reads this. `daily_rollups.cache_tokens` is reads plus
+    /// writes, so the denominator here is input + cache — the same ratio
+    /// `PeriodMetrics.cacheHitRate` reports, computed from the rollups the
+    /// summary already fetched. nil, never 0, when there are no cache tokens at
+    /// all: “nothing was cacheable” and “cache never hit” are different claims,
+    /// and a drawn empty ring reads as the second one.
+    public let cacheHitRate: Double?
 
     public init(
         totalTokens: Int,
         totalCostUSD: Double,
         toolTokens: [String: Int],
-        toolCosts: [String: Double]
+        toolCosts: [String: Double],
+        cacheHitRate: Double? = nil
     ) {
         self.totalTokens = totalTokens
         self.totalCostUSD = totalCostUSD
         self.toolTokens = toolTokens
         self.toolCosts = toolCosts
+        self.cacheHitRate = cacheHitRate
     }
 
     public init(
         totalTokens: Int,
         totalCostUSD: Double,
         toolBreakdown: [String: Int],
-        toolCosts: [String: Double] = [:]
+        toolCosts: [String: Double] = [:],
+        cacheHitRate: Double? = nil
     ) {
         self.totalTokens = totalTokens
         self.totalCostUSD = totalCostUSD
         self.toolTokens = toolBreakdown
         self.toolCosts = toolCosts
+        self.cacheHitRate = cacheHitRate
     }
 }
 
@@ -259,6 +272,38 @@ public final class MetricsAggregator: Sendable {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone.current
 
+        // "Today so far" is compared against yesterday *up to the same clock
+        // time*, from raw records.
+        //
+        // The day-bounded base was a whole yesterday, which reports a large
+        // drop every morning purely because today has not finished — the exact
+        // failure this type's own documentation warns about. A same-elapsed
+        // window is the same length as the value it is compared against.
+        if case .today = range {
+            let startOfToday = calendar.startOfDay(for: now)
+            guard let startOfYesterday = calendar.date(byAdding: .day, value: -1, to: startOfToday) else {
+                return ComparisonPeriod(totalTokens: nil, totalCostUSD: nil, cacheHitRate: nil, coveredDays: 0, expectedDays: 1)
+            }
+            let elapsed = now.timeIntervalSince(startOfToday)
+            let since = Int64(startOfYesterday.timeIntervalSince1970 * 1000)
+            let until = since + Int64(max(0, elapsed) * 1000)
+            return try comparisonFromRawRecords(since: since, until: until, toolFilter: toolFilter)
+        }
+
+        // A rolling 24-hour window has a rolling 24-hour predecessor, and the
+        // value it is compared against is aggregated from raw records. The base
+        // is therefore aggregated the same way: the day-bounded rollup table
+        // can only express whole calendar days, and two of them are 48 hours
+        // — long enough to make every 24-hour delta read as a ~2x drop.
+        if case .last24Hours = range {
+            let nowMillis = Int64(now.timeIntervalSince1970 * 1000)
+            return try comparisonFromRawRecords(
+                since: nowMillis - 48 * 3_600_000,
+                until: nowMillis - 24 * 3_600_000,
+                toolFilter: toolFilter
+            )
+        }
+
         // A whole-year or a named-year view has no meaningful "previous
         // period" that shares its own boundary semantics, so the UI states no
         // comparison rather than comparing this year against a partial one.
@@ -314,8 +359,169 @@ public final class MetricsAggregator: Sendable {
         )
     }
 
+    // MARK: - Range Coverage
+
+    /// How much of the selected window is actually backed by records.
+    ///
+    /// The numerator and the denominator are deliberately drawn from the same
+    /// window. Pairing "days with data anywhere in the heatmap" with "days the
+    /// selected range spans" produced readings like `34 / 1` for the 24-hour
+    /// view and `34 / 30` for the 30-day view — a fraction whose two halves
+    /// describe different things, which is exactly the kind of number this
+    /// dashboard exists to remove.
+    public struct RangeCoverage: Sendable, Equatable {
+        /// Days inside the window that carry at least one record.
+        public let recordedDays: Int
+        /// Days the window spans.
+        public let expectedDays: Int
+
+        /// Share of the window that is covered, clamped to 0...1.
+        public var fraction: Double {
+            guard expectedDays > 0 else { return 0 }
+            return min(1, Double(recordedDays) / Double(expectedDays))
+        }
+
+        /// True when the window is only partly backed by records.
+        public var isPartial: Bool { recordedDays > 0 && recordedDays < expectedDays }
+    }
+
+    public func fetchRangeCoverage(
+        range: TimeRangeOption,
+        toolFilter: String? = nil,
+        now: Date = Date()
+    ) async throws -> RangeCoverage {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
+
+        guard let window = Self.currentWindow(for: range, now: now, calendar: calendar) else {
+            return RangeCoverage(recordedDays: 0, expectedDays: 0)
+        }
+
+        // The one-day ranges are read from raw records everywhere else — the
+        // value, the comparison, the trend — so their coverage is decided the
+        // same way. A day-bounded numerator counts records from the whole
+        // calendar day the window merely grazes, which reported “1 / 1 covered”
+        // for a 24-hour window whose records had all rolled out of it.
+        switch range {
+        case .last24Hours:
+            let nowMillis = Int64(now.timeIntervalSince1970 * 1000)
+            return try rawCoverage(since: nowMillis - 24 * 3_600_000, until: nowMillis, toolFilter: toolFilter)
+        case .today:
+            let startOfToday = calendar.startOfDay(for: now)
+            return try rawCoverage(
+                since: Int64(startOfToday.timeIntervalSince1970 * 1000),
+                until: Int64(now.timeIntervalSince1970 * 1000),
+                toolFilter: toolFilter
+            )
+        default:
+            break
+        }
+
+        let rollups = filteredByTool(
+            try database.fetchDailyRollups(startDate: window.startKey, endDate: window.endKey),
+            toolFilter: toolFilter
+        )
+        let recorded = Set(rollups.filter { $0.totalTokens > 0 }.map(\.dayKey)).count
+
+        // Rollups are day-bounded while `.last24Hours` is a rolling window, so
+        // it can legitimately touch two calendar days. Capping keeps the
+        // fraction at or below 100% — the claim is "how much of the window has
+        // records", not "how many calendar days the window grazed".
+        return RangeCoverage(
+            recordedDays: min(recorded, window.expectedDays),
+            expectedDays: window.expectedDays
+        )
+    }
+
+    /// Coverage for a single-day window read from raw records: either the window
+    /// holds records or it does not.
+    private func rawCoverage(since: Int64, until: Int64, toolFilter: String?) throws -> RangeCoverage {
+        let totals = (try? database.fetchPeriodTotals(
+            sinceTimestamp: since,
+            untilTimestamp: until,
+            sourceId: toolFilter
+        )) ?? DatabaseManager.PeriodTotals()
+        return RangeCoverage(recordedDays: totals.totalTokens > 0 ? 1 : 0, expectedDays: 1)
+    }
+
+    /// The day keys the selected range spans, plus how many days that is.
+    private static func currentWindow(
+        for range: TimeRangeOption,
+        now: Date,
+        calendar: Calendar
+    ) -> (startKey: String, endKey: String, expectedDays: Int)? {
+        let startOfToday = calendar.startOfDay(for: now)
+        let todayKey = UnifiedTokenRecord.dayKey(for: now)
+
+        func window(daysBack: Int, expectedDays: Int) -> (startKey: String, endKey: String, expectedDays: Int)? {
+            guard let start = calendar.date(byAdding: .day, value: -daysBack, to: startOfToday) else { return nil }
+            return (UnifiedTokenRecord.dayKey(for: start), todayKey, expectedDays)
+        }
+
+        switch range {
+        case .last24Hours:
+            return window(daysBack: 1, expectedDays: 1)
+        case .today:
+            return (todayKey, todayKey, 1)
+        case .last7Days:
+            return window(daysBack: 6, expectedDays: 7)
+        case .last30Days:
+            return window(daysBack: 29, expectedDays: 30)
+        case .pastYear:
+            guard let start = calendar.date(byAdding: .year, value: -1, to: startOfToday),
+                  let span = calendar.dateComponents([.day], from: start, to: startOfToday).day else { return nil }
+            return (UnifiedTokenRecord.dayKey(for: start), todayKey, span + 1)
+        case .year(let year):
+            let startKey = "\(year)-01-01"
+            let endKey = "\(year)-12-31"
+            let span = calendar.range(of: .day, in: .year, for: calendar.date(from: DateComponents(year: year, month: 6, day: 1)) ?? now)?.count ?? 365
+            return (startKey, endKey, span)
+        }
+    }
+
+    /// The one-day comparison windows (`.today`, `.last24Hours`) are aggregated
+    /// from raw records, so both halves of the fraction come from the same kind
+    /// of source and the same formula the Dashboard uses for the value itself.
+    private func comparisonFromRawRecords(
+        since: Int64,
+        until: Int64,
+        toolFilter: String?
+    ) throws -> ComparisonPeriod {
+        let totals = (try? database.fetchPeriodTotals(
+            sinceTimestamp: since,
+            untilTimestamp: until,
+            sourceId: toolFilter
+        )) ?? DatabaseManager.PeriodTotals()
+
+        let cacheable = totals.inputTokens + totals.cacheWriteTokens + totals.cacheReadTokens
+        let hasData = totals.totalTokens > 0
+
+        return ComparisonPeriod(
+            totalTokens: hasData ? totals.totalTokens : nil,
+            totalCostUSD: hasData ? totals.totalCostUSD : nil,
+            // No cache reads means the ratio was never measured, which is a
+            // different claim from 0%.
+            cacheHitRate: totals.cacheReadTokens > 0
+                ? Double(totals.cacheReadTokens) / Double(cacheable)
+                : nil,
+            // A one-day window is either backed by records or it is not.
+            coveredDays: hasData ? 1 : 0,
+            expectedDays: 1
+        )
+    }
+
     /// The day keys of the window immediately before `range`, or nil when the
-    /// range has no comparable predecessor.
+    /// range has no day-bounded predecessor.
+    ///
+    /// The windows are contiguous with the range they compare against: the
+    /// current 7-day window is `D-6…D0`, so its predecessor is `D-13…D-7`. It
+    /// used to be `D-14…D-8`, which both skipped the day next to the window and
+    /// reached one day further back than the range itself, so every 7- and
+    /// 30-day delta was stated against a window that did not abut it.
+    ///
+    /// Day-bounded ranges only. `.today` and `.last24Hours` are computed from
+    /// raw records in `fetchComparisonPeriod`, and year views have no comparable
+    /// predecessor at all.
     private static func comparisonWindow(
         for range: TimeRangeOption,
         now: Date,
@@ -324,32 +530,39 @@ public final class MetricsAggregator: Sendable {
         let startOfToday = calendar.startOfDay(for: now)
 
         switch range {
-        case .last24Hours:
-            // The previous rolling 24 hours, expressed as calendar days for
-            // the rollup table. Two days back is the widest day-bounded window
-            // that still fully precedes the current one.
-            guard let start = calendar.date(byAdding: .day, value: -2, to: startOfToday),
-                  let end = calendar.date(byAdding: .day, value: -1, to: startOfToday) else { return nil }
-            return (UnifiedTokenRecord.dayKey(for: start), UnifiedTokenRecord.dayKey(for: end), 1)
-        case .today:
-            guard let yesterday = calendar.date(byAdding: .day, value: -1, to: startOfToday) else { return nil }
-            let key = UnifiedTokenRecord.dayKey(for: yesterday)
-            return (key, key, 1)
         case .last7Days:
-            guard let start = calendar.date(byAdding: .day, value: -14, to: startOfToday),
-                  let end = calendar.date(byAdding: .day, value: -8, to: startOfToday) else { return nil }
+            guard let start = calendar.date(byAdding: .day, value: -13, to: startOfToday),
+                  let end = calendar.date(byAdding: .day, value: -7, to: startOfToday) else { return nil }
             return (UnifiedTokenRecord.dayKey(for: start), UnifiedTokenRecord.dayKey(for: end), 7)
         case .last30Days:
-            guard let start = calendar.date(byAdding: .day, value: -60, to: startOfToday),
-                  let end = calendar.date(byAdding: .day, value: -31, to: startOfToday) else { return nil }
+            guard let start = calendar.date(byAdding: .day, value: -59, to: startOfToday),
+                  let end = calendar.date(byAdding: .day, value: -30, to: startOfToday) else { return nil }
             return (UnifiedTokenRecord.dayKey(for: start), UnifiedTokenRecord.dayKey(for: end), 30)
-        case .pastYear, .year:
+        case .today, .last24Hours, .pastYear, .year:
             return nil
         }
     }
 
     public func rebuildDailyRollups() async throws {
         try database.rebuildDailyRollups()
+        // Rebuilding changes every derived figure on every surface. Clearing
+        // announced that; rebuilding did not, so an open Dashboard kept the
+        // pre-rebuild numbers until the user touched something.
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: .bennettUsageDataDidUpdate,
+                object: nil,
+                userInfo: ["ingested": 0]
+            )
+        }
+    }
+
+    /// Reclaims the write-ahead log after a destructive maintenance action, so
+    /// the storage row reflects what the database actually costs on disk.
+    public func compactStorage() async {
+        await Task.detached(priority: .utility) { [database] in
+            database.checkpointAndTruncate()
+        }.value
     }
 
     public func clearAllRecords() async throws {
@@ -430,28 +643,42 @@ public final class MetricsAggregator: Sendable {
         return 4
     }
 
-    public func fetchTodaySummary() async throws -> TodaySummary {
-        let todayKey = UnifiedTokenRecord.dayKey(for: Date())
+    public func fetchTodaySummary(toolFilter: String? = nil) async throws -> TodaySummary {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone.current
+        let startOfToday = calendar.startOfDay(for: Date())
+        let sinceTimestamp = Int64(startOfToday.timeIntervalSince1970 * 1000)
 
-        let rollups = try database.fetchDailyRollups(dayKey: todayKey)
+        // Raw records, not the rollup table.
+        //
+        // The rollups merge cache reads and writes into one `cache_tokens`
+        // column, so a hit rate derived from them counts a *write* as a hit and
+        // cannot reproduce the ratio the Dashboard states for the same day.
+        // `timestamp` is also the only basis that survives a time-zone change,
+        // because `day_key` is fixed when a record is written.
+        let totals = try database.fetchPeriodTotals(sinceTimestamp: sinceTimestamp, sourceId: toolFilter)
+        let toolDist = try database.fetchToolDistribution(sourceId: toolFilter, sinceTimestamp: sinceTimestamp)
 
-        var totalTokens = 0
-        var totalCost = 0.0
         var toolTokens: [String: Int] = [:]
         var toolCosts: [String: Double] = [:]
-
-        for r in rollups {
-            totalTokens += r.totalTokens
-            totalCost += r.costUSD
-            toolTokens[r.sourceId, default: 0] += r.totalTokens
-            toolCosts[r.sourceId, default: 0.0] += r.costUSD
+        for entry in toolDist {
+            toolTokens[entry.tool] = entry.tokens
+            toolCosts[entry.tool] = entry.costUSD
         }
 
+        // Same definition as `PeriodMetrics.cacheHitRate`: reads over input plus
+        // cache traffic. Nothing was cacheable ⇒ nil, never 0.
+        let cacheable = totals.inputTokens + totals.cacheWriteTokens + totals.cacheReadTokens
+        let cacheHitRate = totals.cacheReadTokens > 0
+            ? Double(totals.cacheReadTokens) / Double(cacheable)
+            : nil
+
         return TodaySummary(
-            totalTokens: totalTokens,
-            totalCostUSD: totalCost,
+            totalTokens: totals.totalTokens,
+            totalCostUSD: totals.totalCostUSD,
             toolTokens: toolTokens,
-            toolCosts: toolCosts
+            toolCosts: toolCosts,
+            cacheHitRate: cacheHitRate
         )
     }
 
@@ -748,8 +975,13 @@ public final class MetricsAggregator: Sendable {
             // SQL yields (timestamp - currentHour)/3600000, i.e. negative
             // whole-hours-ago (0 = current hour); newest bucket is index 23.
             for bucket in buckets {
-                let index = 23 + bucket.hourIndex
-                guard index >= 0, index < 24 else { continue }
+                // SQLite integer division truncates toward zero, so a record in
+                // the first partial hour of the window reports -24 rather than
+                // -23: `23 + -24 = -1`, the bucket was discarded, and the
+                // oldest stretch of the window disappeared from the chart while
+                // still counting toward the total above it. Clamp it into the
+                // oldest rendered bar instead.
+                let index = min(23, max(0, 23 + bucket.hourIndex))
                 bucketTokens[index] += bucket.totalTokens
                 bucketCosts[index] += bucket.totalCostUSD
             }

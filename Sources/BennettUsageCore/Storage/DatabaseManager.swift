@@ -1511,6 +1511,7 @@ public final class DatabaseManager: @unchecked Sendable {
         endDate: String? = nil,
         year: Int? = nil,
         sinceTimestamp: Int64? = nil,
+        untilTimestamp: Int64? = nil,
         sourceId: String? = nil
     ) throws -> PeriodTotals {
         lock.lock(); defer { lock.unlock() }
@@ -1521,8 +1522,17 @@ public final class DatabaseManager: @unchecked Sendable {
         var bindValues: [Any] = []
 
         if let sinceTimestamp = sinceTimestamp {
-            whereClauses.append("timestamp >= ?")
-            bindValues.append(sinceTimestamp)
+            // A rolling window needs both bounds. A lower bound alone cannot
+            // express "the 24 hours before the last 24 hours", which is what
+            // the base of a period comparison for a rolling range is.
+            if let untilTimestamp = untilTimestamp {
+                whereClauses.append("timestamp >= ? AND timestamp < ?")
+                bindValues.append(sinceTimestamp)
+                bindValues.append(untilTimestamp)
+            } else {
+                whereClauses.append("timestamp >= ?")
+                bindValues.append(sinceTimestamp)
+            }
         } else if let year = year {
             // Half-open range instead of `LIKE '<year>-%'` so the predicate can use
             // the `day_key` index (U-06); `day_key` is a zero-padded `yyyy-MM-dd`
