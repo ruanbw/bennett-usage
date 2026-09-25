@@ -1,6 +1,32 @@
 # Changelog
 
-## Unreleased
+## v1.5.1 — 2026-09-26
+
+### 性能：消除状态栏进程的周期性 CPU 尖峰
+
+该应用空闲时看似静止，实际每几秒就有一次 30–50 % 的 CPU 尖峰：一次 14 小时的会话累计消耗 23 分 52 秒 CPU（均值约 2.9 %），但在活动监视器里持续呈现为「占用很高」。定位手段是 `sample` 采样（按调用栈归因真实 CPU，而非阻塞等待）、逐秒 CPU 时间增量测量，以及与同机其他菜单栏应用的对照。根因有六处。
+
+- **同步改为事件范围读取**（`PiAdapter.swift`、`AgentSourceAdapter.swift`）：一次 pass 过去无条件递归枚举整个数据根 —— `~/.pi/agent/sessions` 有 4 414 个条目 / 1.0 GB，只追加一行也要走完整棵树（采样中最热的系统调用正是 `open` 与 `getattrlistbulk`）。现在 `changedPaths` 会从 FSEvents 一路传递到适配器，事件驱动的 pass 只读被改动的文件。协议新增的方法带默认实现，其他适配器的行为完全不变。
+- **游标键统一归一化**（`PiAdapter.swift`）：目录枚举会返回 `/private/var/...`，而 FSEvents 对同一个文件返回 `/var/...`。两种写法不一致，会使事件范围的 pass 找不到上一次全量扫描记录的偏移量，进而重读整个文件。现统一经 `resolvingSymlinksInPath()` 归一化；`~/.pi/...` 这类普通路径逐字节不变，已存游标不受影响（实测 1 683/1 683 条键保持不变，升级不会触发重读）。
+- **恢复 FSEvents 合并窗口**（`FSEventsWatcher.swift`）：`kFSEventStreamCreateFlagNoDefer` 此前被显式设置，而它的语义恰恰是「不要等满 latency 窗口」，使 1.5 秒的合并参数完全失效 —— 写入一个文件就触发一次全树扫描。同时新增丢事件检测（`MustScanSubDirs` / `UserDropped` / `KernelDropped` / `EventIdsWrapped` / `RootChanged`），命中时改为全量重扫；这也是让事件范围读取安全的前提。
+- **根目录解析不再每 pass 重复两遍**（`SyncCoordinator.swift`）：`watchDirectories` 的探测此前在每个 pass 内为 watcher 刷新和适配器资格判断各跑一次（即使这一 pass 什么都没写入，也要探测全部 18 个适配器）。现在合并为一次解析并复用 60 秒；显式的 `updateWatchingPathsIfNeeded()` 仍强制重新解析，新建目录依然会立即被发现。
+- **心跳不再强制全量扫描**（`SyncCoordinator.syncHeartbeat`）：30 秒心跳此前每 30 秒对全部适配器做一次无过滤的全量扫描。现在改为 60 秒心跳，且仅在距上次全量扫描超过 5 分钟时才真正扫描；丢事件与系统唤醒仍会立即触发全量重扫，心跳每 tick 仍会刷新 watcher 路径以发现新安装的 Agent。
+- **状态栏渲染去重**（`StatusItemController.applyStatusItemAppearance()`）：`NSStatusItem` 由 Control Center 跨进程渲染，写入相同的值同样会产生一次 scene 更新。此前每次同步状态变更（每个 pass 两次）与每次数据库读取都会无条件改写 title / image / tooltip，实测 3 小时内向 Control Center 推送 6 144 次 scene 更新，而同一台机器上其他菜单栏应用只有 3–9 次。现在先做差异比较；tooltip 中会变化的「synced N minutes ago」改由 60 秒定时器刷新。
+- **弹窗关闭时跳过趋势聚合**（`StatusItemController.refreshData()`）：迷你趋势图只存在于弹窗内，弹窗关闭时不再聚合当日全部记录。
+- **游标仅在真正前移时落库**（`SyncCoordinator`）：未推进水位线的 pass 不再重新编码并写入大型 `fileOffsets` 游标。另外实测「改用二进制 plist 替代 JSON 游标」并无收益（1 600 条时反而略大），故未采纳。
+- **不再为了无人读取的字段失效视图图**（`MenuBarPopoverView.swift`）：`StatusSummaryModel.lastRefreshedAt` 是纯诊断元数据，没有任何视图读取它，但它是 `@Published`，因此每次数据库读取完成都会让弹窗的 SwiftUI 视图图失效并重跑布局。取消 `@Published` 后时间戳照旧记录，但不再触发无意义的渲染（采样中残余的 SwiftUI / CoreAnimation / AutoLayout 开销即来自此处）。
+
+### 修复：每个午夜 00:00:00 崩溃
+
+`StatusItemController` 使用 `addObserver(_:selector:)` 在 `@MainActor` 类上注册了 `@objc` 方法，而 `.NSCalendarDayChanged` 由 Foundation 从后台队列投递，Swift 6 的隔离检查随即 trap（`dispatch_assert_queue` → SIGILL，崩溃报告 `BennettUsageApp-2026-09-26-000004.ips`）。菜单栏图标因此每天午夜消失一次。三处观察者（数据更新、跨日、系统唤醒）已改为在主队列投递的闭包形式。
+
+### 修复：预写日志膨胀
+
+崩溃进程从不执行 `sqlite3_close`，WAL 会一直停留在高水位（实测残留 692 MB，主库仅 62 MB，且没有任何 `journal_size_limit` 让其收缩）。新增 `PRAGMA journal_size_limit = 16 MB`，并在 `NSApp.terminate` 时执行 `PRAGMA wal_checkpoint(TRUNCATE)`。
+
+### 测试
+
+新增 8 个回归测试（共 400 个测试全部通过）：事件范围读取只读改动文件、保留未改动文件的偏移量、目录事件仍读取其子树、越界路径不读取、事件范围路径归一化、心跳跳过全量扫描、丢事件批次强制全量重扫、WAL 回收，以及重复渲染不再改写状态栏。
 
 ## v1.5.0 — 2026-09-24
 
