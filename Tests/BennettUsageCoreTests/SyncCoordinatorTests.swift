@@ -246,7 +246,7 @@ final class SyncCoordinatorTests: XCTestCase {
         let expectation = XCTestExpectation(description: "FSEvents callback or lifecycle")
         expectation.isInverted = true
 
-        var watcher: FSEventsWatcher? = FSEventsWatcher(paths: [tempDir.path], debounce: 0.1) { paths in
+        var watcher: FSEventsWatcher? = FSEventsWatcher(paths: [tempDir.path], debounce: 0.1) { _ in
             expectation.fulfill()
         }
         XCTAssertNotNil(watcher)
@@ -1035,5 +1035,115 @@ final class SyncCoordinatorTests: XCTestCase {
         await coordinator.updateWatchingPathsIfNeeded()
         watched = await coordinator.currentWatchingPaths()
         XCTAssertFalse(watched.contains(auxiliary.path))
+    }
+
+    // MARK: - Event scope forwarding and heartbeat cost
+
+    func testEventScopedSyncForwardsNormalizedChangedPathsToAdapter() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let adapter = ScopeRecordingAdapter(path: dir)
+        registry.register(adapter)
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+
+        let changed = dir.appendingPathComponent("session.jsonl")
+        _ = try await coordinator.syncAll(changedPaths: [changed.path, changed.path])
+        XCTAssertEqual(adapter.receivedScopes.count, 1)
+        // Duplicates collapse and the path is standardized before it reaches the
+        // adapter, so adapters can compare against their own standardized roots.
+        XCTAssertEqual(adapter.receivedScopes[0], [changed.standardizedFileURL.path])
+
+        // A full sweep keeps telling adapters to ignore the event scope.
+        _ = try await coordinator.syncAll()
+        XCTAssertEqual(adapter.receivedScopes.count, 2)
+        XCTAssertNil(adapter.receivedScopes[1])
+    }
+
+    func testHeartbeatSkipsTheFullSweepUntilTheIntervalElapses() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let mock = MockSyncAdapter(sourceId: "heartbeat_mock", path: dir)
+        registry.register(mock)
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+
+        // Nothing has swept yet, so the first tick is a real full sweep.
+        _ = try await coordinator.syncHeartbeat(fullSweepEvery: 300)
+        XCTAssertEqual(mock.fetchCallCount, 1)
+
+        // A recent full sweep satisfies the next tick without re-enumerating.
+        _ = try await coordinator.syncHeartbeat(fullSweepEvery: 300)
+        XCTAssertEqual(mock.fetchCallCount, 1)
+
+        // Once the interval has elapsed the heartbeat sweeps again.
+        _ = try await coordinator.syncHeartbeat(minInterval: 0, fullSweepEvery: 0)
+        XCTAssertEqual(mock.fetchCallCount, 2)
+    }
+
+    func testWatcherBatchWithDroppedEventsForcesAFullSweep() async throws {
+        let db = try DatabaseManager.inMemory()
+        let registry = AdapterRegistry()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let mock = MockSyncAdapter(sourceId: "dropped_mock", path: dir)
+        registry.register(mock)
+        let coordinator = SyncCoordinator(database: db, registry: registry)
+
+        let unrelated = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + "/event.jsonl").path
+
+        // A normal batch naming only unrelated paths reads nothing.
+        await coordinator.handleWatcherBatch(
+            FSEventsChangeBatch(paths: [unrelated], requiresFullRescan: false)
+        )
+        XCTAssertEqual(mock.fetchCallCount, 0)
+
+        // A dropped-event batch cannot be trusted, so every adapter is re-read.
+        await coordinator.handleWatcherBatch(
+            FSEventsChangeBatch(paths: [unrelated], requiresFullRescan: true)
+        )
+        XCTAssertEqual(mock.fetchCallCount, 1)
+    }
+}
+
+/// Records the event scope the coordinator hands over, so a test can prove that
+/// a scoped pass forwards paths and a full sweep forwards `nil`.
+private final class ScopeRecordingAdapter: AgentSourceAdapter, @unchecked Sendable {
+    let sourceId: String = "scope_mock"
+    let displayName: String = "Scope Mock"
+    let brandColorHex: String = "#123456"
+    let sfSymbolIcon: String = "scope"
+    let path: URL
+    private(set) var receivedScopes: [[String]?] = []
+
+    init(path: URL) {
+        self.path = path
+    }
+
+    func detectDefaultPath() -> URL? { path }
+
+    func fetchIncrementalRecords(
+        from directory: URL,
+        since cursor: SyncCursor?
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        ([], .rowId(1))
+    }
+
+    func fetchIncrementalRecords(
+        from directory: URL,
+        since cursor: SyncCursor?,
+        changedPaths: [String]?
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        receivedScopes.append(changedPaths)
+        return ([], .rowId(1))
     }
 }

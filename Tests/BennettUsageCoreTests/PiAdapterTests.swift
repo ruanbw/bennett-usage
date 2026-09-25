@@ -166,4 +166,98 @@ final class PiAdapterTests: XCTestCase {
         XCTAssertEqual(rec.projectFolder, "/Users/ruanbw/custom-cwd")
         XCTAssertTrue(rec.id.hasPrefix("pi_--Users-ruanbw-projects-fallback--_nested_session_"))
     }
+
+    // MARK: - Event-scoped reads
+    //
+    // The adapter used to enumerate every transcript in the tree on every pass.
+    // These pin the event-scoped behavior that replaced it: read the changed
+    // files, keep the untouched offsets, and never lose a directory event.
+
+    func testEventScopedFetchReadsOnlyTheChangedTranscript() async throws {
+        let otherFolder = tempDir.appendingPathComponent("--Users-ruanbw-projects-other--")
+        try FileManager.default.createDirectory(at: otherFolder, withIntermediateDirectories: true)
+
+        let changedFile = sessionFolder.appendingPathComponent("changed.jsonl")
+        let untouchedFile = otherFolder.appendingPathComponent("untouched.jsonl")
+        try Self.usageLine(prompt: 100, completion: 10)
+            .write(to: changedFile, atomically: true, encoding: .utf8)
+        try Self.usageLine(prompt: 200, completion: 20)
+            .write(to: untouchedFile, atomically: true, encoding: .utf8)
+
+        let adapter = PiAdapter()
+        let full = try await adapter.fetchIncrementalRecords(from: tempDir, since: nil)
+        XCTAssertEqual(full.records.count, 2)
+
+        let handle = try FileHandle(forWritingTo: changedFile)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(Self.usageLine(prompt: 300, completion: 30).utf8))
+        try handle.close()
+
+        let scoped = try await adapter.fetchIncrementalRecords(
+            from: tempDir,
+            since: full.newCursor,
+            changedPaths: [changedFile.path]
+        )
+        XCTAssertEqual(scoped.records.count, 1)
+        XCTAssertEqual(scoped.records[0].inputTokens, 300)
+
+        // The untouched transcript keeps its recorded offset, so a later pass
+        // still resumes from where it stopped instead of re-reading it.
+        guard case .fileOffsets(let offsets) = scoped.newCursor,
+              case .fileOffsets(let before) = full.newCursor else {
+            return XCTFail("Pi cursors are file offsets")
+        }
+        XCTAssertEqual(offsets[untouchedFile.path], before[untouchedFile.path])
+        XCTAssertGreaterThan(
+            offsets[changedFile.path] ?? 0,
+            before[changedFile.path] ?? 0
+        )
+    }
+
+    func testEventScopedFetchIgnoresPathsOutsideTheRoot() async throws {
+        let file = sessionFolder.appendingPathComponent("only.jsonl")
+        try Self.usageLine(prompt: 100, completion: 10)
+            .write(to: file, atomically: true, encoding: .utf8)
+
+        let adapter = PiAdapter()
+        let seeded = try await adapter.fetchIncrementalRecords(from: tempDir, since: nil)
+        XCTAssertEqual(seeded.records.count, 1)
+
+        let outside = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".jsonl").path
+        let scoped = try await adapter.fetchIncrementalRecords(
+            from: tempDir,
+            since: seeded.newCursor,
+            changedPaths: [outside]
+        )
+        XCTAssertEqual(scoped.records.count, 0)
+        XCTAssertEqual(scoped.newCursor, seeded.newCursor)
+    }
+
+    func testEventScopedFetchReadsADirectoryEventSubtree() async throws {
+        let adapter = PiAdapter()
+        let seeded = try await adapter.fetchIncrementalRecords(from: tempDir, since: nil)
+        XCTAssertEqual(seeded.records.count, 0)
+
+        // FSEvents can describe a newly populated session directory with a
+        // single directory-level event, which still has to be read.
+        let newFolder = tempDir.appendingPathComponent("--Users-ruanbw-projects-fresh--")
+        try FileManager.default.createDirectory(at: newFolder, withIntermediateDirectories: true)
+        try Self.usageLine(prompt: 42, completion: 4)
+            .write(to: newFolder.appendingPathComponent("fresh.jsonl"), atomically: true, encoding: .utf8)
+
+        let scoped = try await adapter.fetchIncrementalRecords(
+            from: tempDir,
+            since: seeded.newCursor,
+            changedPaths: [newFolder.path]
+        )
+        XCTAssertEqual(scoped.records.count, 1)
+        XCTAssertEqual(scoped.records[0].inputTokens, 42)
+    }
+
+    private static func usageLine(prompt: Int, completion: Int) -> String {
+        """
+        {"type":"message","timestamp":"2026-09-11T02:00:00.000Z","model":"gpt-4o","usage":{"prompt_tokens":\(prompt),"completion_tokens":\(completion)}}\n
+        """
+    }
 }

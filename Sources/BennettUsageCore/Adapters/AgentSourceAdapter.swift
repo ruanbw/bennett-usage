@@ -18,6 +18,21 @@ public protocol AgentSourceAdapter: Sendable {
         since cursor: SyncCursor?
     ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor)
 
+    /// Event-scoped variant of ``fetchIncrementalRecords(from:since:)``.
+    ///
+    /// `changedPaths` carries the paths FSEvents reported for this pass when the
+    /// coordinator is running an event-scoped sync, and `nil` for a full sweep.
+    /// Implementations may use it to read only the affected files instead of
+    /// re-enumerating their whole tree. The default implementation ignores it and
+    /// keeps full-enumeration behavior, so adapters whose watch roots and data
+    /// roots differ (an event under an auxiliary root still has to be resolved by
+    /// a full read) stay correct without changes.
+    func fetchIncrementalRecords(
+        from directory: URL,
+        since cursor: SyncCursor?,
+        changedPaths: [String]?
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor)
+
     /// Fetches a complete, authoritative snapshot for a source cutover.
     /// Adapters may override this to make transiently unreadable or incomplete
     /// source state fail closed. The default preserves historical behavior.
@@ -53,6 +68,14 @@ extension AgentSourceAdapter {
 }
 
 extension AgentSourceAdapter {
+    public func fetchIncrementalRecords(
+        from directory: URL,
+        since cursor: SyncCursor?,
+        changedPaths: [String]?
+    ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
+        try await fetchIncrementalRecords(from: directory, since: cursor)
+    }
+
     public func fetchCompleteSnapshot(
         from directory: URL
     ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {

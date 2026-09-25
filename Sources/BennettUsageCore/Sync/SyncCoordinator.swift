@@ -18,6 +18,26 @@ public actor SyncCoordinator {
     // coalesced to at most one per `minInterval` (U-01).
     private var lastUISyncAt: Date?
     private var syncStatus = SyncStatus()
+    /// Roots resolved for the most recent pass, reused for a short window so a
+    /// no-op sync does not re-probe the filesystem for all adapters twice.
+    private var cachedContexts: [AdapterContext]?
+    private var cachedContextsAt: Date?
+    /// How long a resolved context set is reused before adapter roots are
+    /// re-probed for directories that did not exist yet.
+    private static let contextValidity: TimeInterval = 60
+    /// When the last unfiltered sweep ran. Bounds how often the heartbeat
+    /// re-enumerates every source tree.
+    private var lastFullSweepAt: Date?
+
+    /// One adapter's resolved data root and watch roots for a pass. Resolving a
+    /// root costs filesystem probes (`detectDefaultPath` plus an ancestor walk
+    /// per watch root), so the watcher refresh and the eligibility check share
+    /// one resolution instead of each performing its own.
+    private struct AdapterContext {
+        let adapter: any AgentSourceAdapter
+        let dataRoot: URL
+        let watchRoots: [URL]
+    }
 
     public init(
         database: DatabaseManager,
@@ -120,26 +140,58 @@ public actor SyncCoordinator {
         return result
     }
 
-    private func syncAllOnce(changedPaths: [String]? = nil) async throws -> (ingestedCount: Int, failures: [SyncFailureSummary]) {
+    /// Periodic safety-net sync used by the status item's heartbeat.
+    ///
+    /// FSEvents already reports every change (and a dropped-event batch forces a
+    /// full rescan), so re-enumerating every source tree on each tick bought
+    /// nothing — it is what made an otherwise idle process walk
+    /// `~/.pi/agent/sessions` and every other root twice a minute. The heartbeat
+    /// therefore runs a full sweep only when the last one is older than
+    /// `fullSweepEvery`, and otherwise returns without touching the sources.
+    /// Callers still refresh their presentation surfaces.
+    @discardableResult
+    public func syncHeartbeat(
+        minInterval: TimeInterval = 10,
+        fullSweepEvery: TimeInterval = 300
+    ) async throws -> Int {
+        // Keep the watcher current even on ticks that skip the sweep, so a
+        // newly installed agent's directory starts being watched promptly
+        // instead of waiting for the next full sweep.
         updateWatchingPathsIfNeeded()
-        let eligible = eligibleAdapters(changedPaths: changedPaths)
-        let result = await fetchEligibleAdapters(eligible)
+        if let lastFullSweepAt, Date().timeIntervalSince(lastFullSweepAt) < fullSweepEvery {
+            return 0
+        }
+        return try await syncForUI(minInterval: minInterval)
+    }
+
+    private func syncAllOnce(changedPaths: [String]? = nil) async throws -> (ingestedCount: Int, failures: [SyncFailureSummary]) {
+        let contexts = resolvedContexts(force: false)
+        updateWatcher(for: contexts)
+        if changedPaths == nil {
+            // Recorded here so `syncHeartbeat` can tell how stale the last
+            // unfiltered sweep is without re-deriving it.
+            lastFullSweepAt = Date()
+        }
+        let eligible = eligibleAdapters(from: contexts, changedPaths: changedPaths)
+        let result = await fetchEligibleAdapters(eligible, changedPaths: changedPaths)
         return await persist(fetched: result.fetched, failures: result.failures)
     }
 
-    private func eligibleAdapters(changedPaths: [String]?) -> [(adapter: any AgentSourceAdapter, path: URL)] {
-        // Phase 1 (actor, cheap): eligibility is a few path-prefix checks.
+    private func eligibleAdapters(
+        from contexts: [AdapterContext],
+        changedPaths: [String]?
+    ) -> [(adapter: any AgentSourceAdapter, path: URL)] {
+        // Eligibility is a few path-prefix checks against roots that were
+        // already resolved for the watcher refresh above.
         var eligible: [(adapter: any AgentSourceAdapter, path: URL)] = []
-        for adapter in registry.allAdapters() {
-            guard let path = dataRoot(for: adapter) else { continue }
+        for context in contexts {
             // Event-driven sync: skip adapters whose primary or auxiliary trees
             // contain none of the changed paths — no new consumption there to read.
-            let roots = watchDirectories(for: adapter, dataRoot: path)
             if let changedPaths, !changedPaths.isEmpty,
-               !Self.isPathAffected(roots: roots, changedPaths: changedPaths) {
+               !Self.isPathAffected(roots: context.watchRoots, changedPaths: changedPaths) {
                 continue
             }
-            eligible.append((adapter, path))
+            eligible.append((context.adapter, context.dataRoot))
         }
         return eligible
     }
@@ -158,12 +210,17 @@ public actor SyncCoordinator {
     }
 
     private func fetchEligibleAdapters(
-        _ eligible: [(adapter: any AgentSourceAdapter, path: URL)]
+        _ eligible: [(adapter: any AgentSourceAdapter, path: URL)],
+        changedPaths: [String]?
     ) async -> FetchBatch {
         // `DatabaseManager` is lock-guarded and `fetchOffActor` is nonisolated,
         // so per-adapter enumeration + parse latencies overlap instead of
         // adding up. Only Sendable locals cross into the group, never `self`.
         let database = self.database
+        // Normalized once so every adapter compares like-for-like paths. An
+        // empty batch means "full sweep" and is preserved as `nil` so adapters
+        // keep their unfiltered code path.
+        let scopedPaths = Self.normalizedChangedPaths(changedPaths)
         var fetched: [Fetched?] = Array(repeating: nil, count: eligible.count)
         var fetchFailures: [SyncFailureSummary] = []
         await withTaskGroup(of: (Int, Fetched?).self) { group in
@@ -171,7 +228,12 @@ public actor SyncCoordinator {
                 group.addTask {
                     do {
                         let cursor = try database.fetchCursor(for: item.adapter.sourceId)
-                        let (records, newCursor) = try await Self.fetchOffActor(item.adapter, from: item.path, since: cursor)
+                        let (records, newCursor) = try await Self.fetchOffActor(
+                            item.adapter,
+                            from: item.path,
+                            since: cursor,
+                            changedPaths: scopedPaths
+                        )
                         return (index, Fetched(adapter: item.adapter, path: item.path, cursor: cursor, records: records, newCursor: newCursor))
                     } catch {
                         print("Error syncing adapter \(item.adapter.sourceId): \(error)")
@@ -253,10 +315,13 @@ public actor SyncCoordinator {
                     // consumers must refresh even though the row count is zero.
                     dataDidChange = true
                 } else if !pricedRecords.isEmpty || finalCursor != cursor {
+                    // Store the watermark only when it actually moved. A large
+                    // `fileOffsets` cursor re-encoded on a pass that added no new
+                    // consumption was pure write amplification.
                     changed = try database.insertRecords(
                         pricedRecords,
                         updateCursorFor: adapter.sourceId,
-                        cursor: finalCursor,
+                        cursor: finalCursor != cursor ? finalCursor : nil,
                         updateExisting: adapter.supportsRecordCorrections
                     )
                     dataDidChange = dataDidChange || changed > 0
@@ -336,20 +401,65 @@ public actor SyncCoordinator {
 
     /// Checks if any newly created adapter directories appeared since watching started,
     /// and restarts FSEventsWatcher with the expanded path list if needed.
+    ///
+    /// Always re-resolves: callers use this to observe a root that was just
+    /// created. The per-pass refresh goes through `resolvedContexts(force:)`
+    /// instead, which reuses a recent resolution.
     public func updateWatchingPathsIfNeeded() {
-        let activePaths = registry.allAdapters().flatMap { adapter -> [String] in
-            guard let root = dataRoot(for: adapter) else { return [] }
-            return watchDirectories(for: adapter, dataRoot: root).map(\.path)
-        }
+        updateWatcher(for: resolvedContexts(force: true))
+    }
+
+    private func updateWatcher(for contexts: [AdapterContext]) {
+        let activePaths = contexts.flatMap { $0.watchRoots.map(\.path) }
         let uniquePaths = Array(Set(activePaths.map(Self.normalizedPath))).sorted()
-        if uniquePaths != watchedPaths {
-            watchedPaths = uniquePaths
-            self.watcher = FSEventsWatcher(paths: uniquePaths) { [weak self] eventPaths in
-                Task { [weak self] in
-                    _ = try? await self?.syncAll(changedPaths: eventPaths)
-                }
+        guard uniquePaths != watchedPaths else { return }
+        watchedPaths = uniquePaths
+        self.watcher = FSEventsWatcher(paths: uniquePaths) { [weak self] batch in
+            Task { [weak self] in
+                await self?.handleWatcherBatch(batch)
             }
         }
+    }
+
+    /// Routes one FSEvents batch to the right kind of sweep.
+    ///
+    /// A dropped-event batch carries an incomplete path list, so the only safe
+    /// response is a full sweep. Otherwise the batch names exactly which files
+    /// changed and adapters may read just those.
+    func handleWatcherBatch(_ batch: FSEventsChangeBatch) async {
+        if batch.requiresFullRescan {
+            _ = try? await syncAll()
+        } else {
+            _ = try? await syncAll(changedPaths: batch.paths)
+        }
+    }
+
+    /// Resolves every adapter's data and watch roots.
+    ///
+    /// Resolution is filesystem work (`detectDefaultPath` plus an ancestor walk
+    /// per watch root). It used to happen twice on every pass — once for the
+    /// watcher refresh, once for eligibility — so even a pass that ingested
+    /// nothing probed all 18 adapters. `force` bypasses the reuse window for
+    /// callers that must see a just-created directory immediately.
+    private func resolvedContexts(force: Bool) -> [AdapterContext] {
+        if !force, let cachedContexts, let cachedContextsAt,
+           Date().timeIntervalSince(cachedContextsAt) < Self.contextValidity {
+            return cachedContexts
+        }
+        var contexts: [AdapterContext] = []
+        for adapter in registry.allAdapters() {
+            guard let root = dataRoot(for: adapter) else { continue }
+            contexts.append(
+                AdapterContext(
+                    adapter: adapter,
+                    dataRoot: root,
+                    watchRoots: watchDirectories(for: adapter, dataRoot: root)
+                )
+            )
+        }
+        cachedContexts = contexts
+        cachedContextsAt = Date()
+        return contexts
     }
 
     private nonisolated static func postSyncStatusDidChange() {
@@ -391,13 +501,19 @@ public actor SyncCoordinator {
     /// seconds on first launch and queued UI refreshes; run the heavy section
     /// on a detached task and let the actor await only the result. Cursors and
     /// persistence stay on the actor.
+    private static func normalizedChangedPaths(_ changedPaths: [String]?) -> [String]? {
+        guard let changedPaths, !changedPaths.isEmpty else { return nil }
+        return Array(Set(changedPaths.map(normalizedPath)))
+    }
+
     private nonisolated static func fetchOffActor(
         _ adapter: AgentSourceAdapter,
         from path: URL,
-        since cursor: SyncCursor?
+        since cursor: SyncCursor?,
+        changedPaths: [String]?
     ) async throws -> (records: [UnifiedTokenRecord], newCursor: SyncCursor) {
         try await Task.detached(priority: .userInitiated) {
-            try await adapter.fetchIncrementalRecords(from: path, since: cursor)
+            try await adapter.fetchIncrementalRecords(from: path, since: cursor, changedPaths: changedPaths)
         }.value
     }
 
