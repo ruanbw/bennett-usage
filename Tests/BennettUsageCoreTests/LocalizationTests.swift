@@ -203,6 +203,24 @@ final class LocalizationTests: XCTestCase {
         )
     }
 
+    /// The sidebar's record count passed an `Int` to a `%@` placeholder, so a
+    /// database holding 115 107 rows rendered as `本地已存 -383993491 条记录` — a
+    /// number no count can produce. Counts are `%d` everywhere else in this
+    /// file; this keeps the count that gets read aloud in the settings window
+    /// honest in both languages.
+    func testRecordCountRendersTheRealNumber() {
+        let manager = LocalizationManager(userDefaults: testDefaults)
+
+        XCTAssertEqual(
+            manager.localized(.recordCountLabel, language: .en, arguments: 115_107),
+            "115107 records stored locally"
+        )
+        XCTAssertEqual(
+            manager.localized(.recordCountLabel, language: .zh, arguments: 115_107),
+            "本地已存 115107 条记录"
+        )
+    }
+
     func testSettingsCopyTranslationsAreComplete() {
         let manager = LocalizationManager(userDefaults: testDefaults)
 
