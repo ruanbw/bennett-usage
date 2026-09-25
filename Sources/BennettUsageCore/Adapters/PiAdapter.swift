@@ -128,11 +128,16 @@ public struct PiAdapter: AgentSourceAdapter, @unchecked Sendable {
 
         try Self.forEachTranscript(under: rootDirectory, changedPaths: changedPaths) { candidate in
             let fileUrl = candidate.url
-            let lastOffset = offsets[candidate.key] ?? 0
-
-            // Skip unchanged files via size before paying for an open().
             let fileSize = candidate.prefetchedSize
                 ?? Int64((try? fileUrl.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            // A session transcript can be compacted or rewritten shorter. Without
+            // this fallback the file was never read again (`fileSize <= lastOffset`),
+            // so its usage stayed permanently short — and if it later grew past
+            // the stale offset, parsing resumed mid-line and attributed the rest
+            // to the wrong records. Claude, Codex and Cline all re-read from zero
+            // here for the same reason.
+            let previousOffset = offsets[candidate.key] ?? 0
+            let lastOffset = fileSize < previousOffset ? 0 : previousOffset
             guard fileSize > lastOffset else { return }
 
             guard let handle = try? FileHandle(forReadingFrom: fileUrl) else { return }

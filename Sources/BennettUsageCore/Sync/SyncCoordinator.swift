@@ -355,9 +355,22 @@ public actor SyncCoordinator {
         case (.databaseIdentity(let oldIdentity, _), .databaseIdentity(let newIdentity, _)):
             return oldIdentity != newIdentity
         case (.fileGenerations(let oldGenerations), .fileGenerations(let newGenerations)):
+            // A changed `generation` means the file was replaced. A changed
+            // `prefixHash` means the bytes already consumed were rewritten in
+            // place: the adapter rescans from zero and mints fresh ids, so the
+            // rows ingested from the old prefix have to be replaced rather than
+            // left behind to count the same usage twice.
             return newGenerations.contains { path, newGeneration in
                 guard let oldGeneration = oldGenerations[path] else { return false }
-                return oldGeneration.generation != newGeneration.generation
+                if oldGeneration.generation != newGeneration.generation { return true }
+                switch (oldGeneration.prefixHash, newGeneration.prefixHash) {
+                case let (old?, new?):
+                    return old != new
+                default:
+                    // A cursor written before prefix hashing is treated as
+                    // compatible, exactly as it was before this check existed.
+                    return false
+                }
             }
         case (.rowId, .rowId),
              (.fileOffsets, .fileOffsets),
