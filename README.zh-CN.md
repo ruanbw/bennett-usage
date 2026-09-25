@@ -57,7 +57,7 @@ macOS 菜单栏常驻的 AI coding 助手 Token 用量统计，聚合 **18 个�
 swift build -c release
 swift test                          # 跑测试
 ./scripts/package-dmg.sh            # 默认出 arm64 / x86_64 / universal 三个包
-./scripts/package-dmg.sh 1.5.1      # 指定版本号
+./scripts/package-dmg.sh 1.6.0      # 指定版本号
 ./scripts/package-dmg.sh 1.3.0 --only universal   # 只出其中一个
 # 输出 dist/BennettUsage-<版本>-<架构>.dmg 与 dist/SHA256SUMS.txt
 ```

@@ -1,5 +1,48 @@
 # Changelog
 
+## v1.6.0 — 2026-09-26
+
+本次发布包含 1.5.1 的全部改动（未单独发版：状态栏周期性 CPU 尖峰、午夜 SIGILL 崩溃、WAL 回收），详见下一节。
+
+### 界面系统重构（方向 B 深化）
+
+上一版把颜色按职责分成了三类，但仍停留在「改配色」层面：尺寸、字阶、间距、圆角、动效时长散落在各视图里，同一个视觉决定在不同文件里各写一遍。本次把这些决定收进两个文件，并让三个界面共用同一套骨架。
+
+- **设计令牌集中**（`DesignTokens.swift`）：`Ink`（四级墨色）/ `Surfaces` / `Lines`（恰好两级描边，且从不使用阴影表达层级）/ `Accent` / `State` / `TypeScale` / `Metrics`（8pt 基线，含 `Radius`）/ `Motion`。令牌以 sRGB 十六进制落地（SwiftUI 无 `oklch()` 构造器），每个值在注释中保留其 OKLch 出处，并逐一按 WCAG 2.1 重算对比度。
+- **组件契约集中**（`DesignComponents.swift`）：结论带、缓存环、范围分段、状态胶囊、来源行、主按钮、危险按钮、`DeltaBadge` / `DeltaLabel`、`ToolbarIconButton`、`SecondaryIconAction`、`ScopeTag`，以及唯一的焦点环实现。`DesignPrimitives.swift` 降级为转发兼容层，`AppTheme` 保留为语义别名（`AppTheme.Text.primary` → `DesignTokens.Ink.strong`），只为不打断既有调用点。
+- **三界面重排**（`DashboardContentView` / `MenuBarPopoverView` / `SettingsContentView`）：一屏一个结论，先回答「我今天怎么样」，再允许追问「为什么」。
+- **深色分隔线修正**：`--line-soft` 的 `#292D33` 对 `#22272E` 模块只有 1.09:1，低于可感知下限、实际不可见，改为 `#32373E`（色相与职责不变）。
+
+### 修复：实施期暴露的三个真实缺陷
+
+1. **深色模式主按钮不可读**：范围分段选中态硬编码 `Color.white`，而深色 accent 是浅蓝，白字仅 2.69:1。改为 `Accent.onFill`（深色下近黑前景，7.11:1）。
+2. **焦点环形同虚设**：初版用 `focusEffectDisabled()` + `opacity(0)` 画静态描边，永远不可见——满足「2pt 强调色」的字面要求，却违背其意图。现由各控件自持 `@FocusState` 驱动，仅在键盘遍历时显形，并交回系统绘制（同时天然跟随用户的外观设置）。
+3. **环比可能说谎**：见下节第 2 条。
+
+### 新增：环比（period over period）
+
+首屏此前只有一个总量，回答了「多少」却让人自己猜「这算多还是少」。`MetricsAggregator.fetchComparisonPeriod(range:toolFilter:now:)` 提供紧邻的等长窗口，但更重要的是它在算不出来时**拒绝给数**：
+
+- **用自然周期边界**，不用「N 天前」：今日对昨日，最近 24 小时对前一个滚动 24 小时。否则每天早上都会把「今天到目前为止」与一个整天比较，无条件报出下降。
+- **无数据返回 `nil` 而不是 `0`**：总量为零的窗口派生出的任何百分比都是假结论。
+- **覆盖率显式可见**：`coveredDays` / `expectedDays` 让 3 天历史下的 30 天环比报「仅有 X 天可比历史」，而不是「下降 97%」。
+- **整年视图不陈述环比**：整年、指定年份没有共享边界语义的前序窗口，返回无比较而不是拿它对比一个残缺的年度。
+- **缓存命中率无 `cacheReadTokens` 时返回 `nil`**：`inputTokens` 此前被计入分母，无缓存数据时会返回 `0.0`，把「未测量」读成「缓存失效」；现在界面显示「—／未测得」，也画不出弧线。
+- 结论带读出「vs 上一期」，颜色语义跟随后果而非方向：花费上升是坏、命中率下降是坏（`DeltaBadge.isIncreaseBad`）。
+- 新增 8 个边界测试（`ComparisonPeriodTests.swift`），每一个都测「诚实答案是不可比」的那种情况。
+
+### 新增：⌘1–⌘5 切换时间范围
+
+作为普通菜单键等价物注册（`AppCommandController.selectRange`，投递 `.bennettUsageRangeShortcut`），而不是事件 tap：应用保持 accessory，无法截获其他应用，天然获得系统菜单的优先级。菜单标题随语言切换。
+
+### 本地化
+
+补齐结论带、环比、覆盖天数、来源计数、记录数、未测得等新文案的英文与简体中文。
+
+### 测试
+
+新增 8 个测试，共 409 个测试全部通过。
+
 ## v1.5.1 — 2026-09-26
 
 ### 性能：消除状态栏进程的周期性 CPU 尖峰

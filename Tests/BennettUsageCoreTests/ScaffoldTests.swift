@@ -6,7 +6,7 @@ final class ScaffoldTests: XCTestCase {
     /// it is what the update checker compares against when the executable runs
     /// outside a packaged bundle (tests, `swift run`).
     func testCoreVersionString() {
-        XCTAssertEqual(BennettUsageCore.version, "1.5.1")
+        XCTAssertEqual(BennettUsageCore.version, "1.6.0")
         XCTAssertEqual(AppVersion(BennettUsageCore.version)?.description, BennettUsageCore.version)
     }
 }

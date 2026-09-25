@@ -4,15 +4,15 @@
 # Usage:
 #   ./scripts/package-dmg.sh [version] [--only <variant>]...
 #
-#   version           marketing version stamped into Info.plist (default 1.5.1)
+#   version           marketing version stamped into Info.plist (default 1.6.0)
 #   --only <variant>  build only this variant; repeatable and comma-separated.
 #                     variants: arm64 | x86_64 | universal   (default: all three)
 #
 # Examples:
-#   ./scripts/package-dmg.sh                      # all three DMGs, version 1.5.1
-#   ./scripts/package-dmg.sh 1.5.1                # all three DMGs, version 1.5.1
-#   ./scripts/package-dmg.sh 1.5.1 --only universal
-#   ./scripts/package-dmg.sh 1.5.1 --only arm64,x86_64
+#   ./scripts/package-dmg.sh                      # all three DMGs, version 1.6.0
+#   ./scripts/package-dmg.sh 1.6.0                # all three DMGs, version 1.6.0
+#   ./scripts/package-dmg.sh 1.6.0 --only universal
+#   ./scripts/package-dmg.sh 1.6.0 --only arm64,x86_64
 #
 # Outputs (dist/):
 #   BennettUsage-<version>-arm64.dmg       Apple Silicon only
@@ -58,7 +58,7 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
-VERSION="${VERSION:-1.5.1}"
+VERSION="${VERSION:-1.6.0}"
 
 VARIANTS=()
 if [ "$ONLY_GIVEN" -eq 0 ]; then
