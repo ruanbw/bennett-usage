@@ -609,7 +609,7 @@ public struct SettingsContentView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 200)
+            .frame(width: 290)
             .controlSize(.small)
             .accessibilityIdentifier(Self.themePickerID)
         }
@@ -935,7 +935,7 @@ public struct SettingsContentView: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(width: 150)
+                    .frame(width: 220)
                     .onChange(of: selectedCurrency) { _, newCurrency in
                         PricingEngine.shared.setPreferredCurrency(newCurrency)
                         showPreferenceFeedback()

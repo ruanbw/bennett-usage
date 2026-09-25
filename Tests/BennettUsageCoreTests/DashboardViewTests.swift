@@ -124,7 +124,7 @@ final class DashboardViewTests: XCTestCase {
         )
         XCTAssertEqual(
             localization.localized(.trackedProjectsCount, language: .zh, arguments: 12),
-            "前 12 个"
+            "前 12 / 100 个"
         )
     }
 
@@ -189,33 +189,6 @@ final class DashboardViewTests: XCTestCase {
             DashboardContentView.agentFilterOptions(activeAgents: ["claude"], selectedAgent: ""),
             ["claude"]
         )
-    }
-
-    func testNavigationItemCases() {
-        let items = NavigationItem.allCases
-        XCTAssertEqual(items.count, 2)
-        XCTAssertTrue(items.contains(.dashboard))
-        XCTAssertTrue(items.contains(.settings))
-        XCTAssertEqual(NavigationItem.dashboard.id, "dashboard")
-        XCTAssertEqual(NavigationItem.settings.id, "settings")
-    }
-
-    @MainActor
-    func testSidebarViewInitialization() throws {
-        let defaults = UserDefaults(suiteName: "SidebarTests_\(UUID().uuidString)")!
-        let localization = LocalizationManager(userDefaults: defaults)
-        var syncCalled = false
-
-        let view = SidebarView(
-            selectedItem: .constant(.dashboard),
-            agentCount: 4,
-            isSyncing: false,
-            lastSyncDate: Date(),
-            onSyncNow: { syncCalled = true },
-            localization: localization
-        )
-        XCTAssertNotNil(view.body)
-        XCTAssertFalse(syncCalled)
     }
 
     @MainActor

@@ -133,7 +133,11 @@ public struct DashboardContentView: View {
     /// error that hides the numbers is worse than an error that admits it.
     private var freshnessLevel: StateCapsule.Level {
         if periodMetricsFailed { return .stale }
-        guard let lastDataRefreshAt else { return .stale }
+        // Nothing loaded yet is “loading”, not “stale”: the old default painted
+        // the band amber with
+        // “data may be incomplete — this is the last successful sync” before any
+        // read had happened.
+        guard let lastDataRefreshAt else { return .syncing }
         let minutes = Int(Date().timeIntervalSince(lastDataRefreshAt) / 60)
         return minutes < Self.staleThresholdMinutes ? .ok : .stale
     }
@@ -630,7 +634,10 @@ public struct DashboardContentView: View {
                 )
             )
             .accessibilityLabel(
-                Text(verbatim: "\(localization.localized(.vsPreviousPeriod)) \(String(format: "%+.0f%%", change * 100))")
+                Text(verbatim: String(
+                    format: localization.localized(.vsPreviousPeriod),
+                    String(format: "%+.0f%%", change * 100)
+                ))
             )
         } else {
             ScopeTag(localization.localized(.noComparablePeriod))
@@ -713,7 +720,11 @@ public struct DashboardContentView: View {
             return localization.localized(.conclusionEmpty, arguments: rangeSubtitle)
         }
         if freshnessLevel == .stale {
-            return localization.localized(.conclusionStale, arguments: rangeSubtitle)
+            // The key carries no placeholder: it used to be handed the range
+            // subtitle, which was silently dropped, and it claimed to be the
+            // last *sync* while the flag behind it means the last local *read*
+            // failed.
+            return localization.localized(.conclusionStale)
         }
 
         let topTool = toolDistribution
@@ -1203,7 +1214,10 @@ public struct DashboardContentView: View {
                             Text("\(AgentFilterBarView.displayName(for: tool)): \(TokenFormatter.formatCompact(count))")
                                 .font(.caption)
                                 .foregroundColor(DesignTokens.Ink.strong)
-                                .help("\(AgentFilterBarView.displayName(for: tool)): \(TokenFormatter.formatFull(count)) tokens")
+                                .help(String(
+                                    format: localization.localized(.tokenValue),
+                                    "\(AgentFilterBarView.displayName(for: tool)): \(TokenFormatter.formatFull(count))"
+                                ))
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
@@ -1460,7 +1474,17 @@ public struct DashboardContentView: View {
         if minutes == 0 {
             return localization.localized(.dataUpdatedJustNow)
         }
-        return localization.localized(.dataUpdatedMinutesAgo, arguments: minutes)
+        if minutes < 60 {
+            return localization.localized(.dataUpdatedMinutesAgo, arguments: minutes)
+        }
+        // The popover already scaled its wording; the Dashboard said
+        // “Data updated 1450 mins ago” and “Synced 1 days ago” for the same
+        // moment, in the same product.
+        let hours = minutes / 60
+        if hours < 48 {
+            return localization.localized(.syncedHoursAgo, arguments: hours)
+        }
+        return localization.localized(.syncedDaysAgo, arguments: hours / 24)
     }
 
     /// A section title. The active range is deliberately *not* repeated in the
@@ -1521,7 +1545,7 @@ public struct DashboardContentView: View {
                         let rank = index + 1
                         HStack(spacing: 12) {
                             medalBadge(rank: rank)
-                                .frame(width: 20, alignment: .leading)
+                                .frame(width: 26, alignment: .leading)
 
                             VStack(alignment: .leading, spacing: 4) {
                                 let folderName = (item.project as NSString).lastPathComponent.isEmpty ? item.project : (item.project as NSString).lastPathComponent
@@ -1550,7 +1574,10 @@ public struct DashboardContentView: View {
                                     .bold()
                                     .monospacedDigit()
                                     .foregroundColor(DesignTokens.Ink.strong)
-                                    .help("\(TokenFormatter.formatFull(item.totalTokens)) tokens")
+                                    .help(String(
+                                        format: localization.localized(.tokenValue),
+                                        TokenFormatter.formatFull(item.totalTokens)
+                                    ))
                                 Text(pricingEngine.spendString(item.costUSD))
                                     .font(.caption)
                                     .monospacedDigit()
@@ -2139,6 +2166,12 @@ private struct TrendChartCard: View {
                                                         .fill(modelColors[row.model] ?? .gray)
                                                         .frame(width: 5, height: 5)
                                                     Text(row.model)
+                                                        // The name is the only
+                                                        // identifying information
+                                                        // in the row; it elides in
+                                                        // the middle with nowhere
+                                                        // else to read it in full.
+                                                        .help(row.model)
                                                         .font(.caption2)
                                                         .foregroundColor(DesignTokens.Ink.strong)
                                                         .lineLimit(1)
@@ -2216,6 +2249,7 @@ private struct TrendChartCard: View {
                                 HStack(spacing: 6) {
                                     Circle().fill(modelColors[model] ?? .gray).frame(width: 8, height: 8)
                                     Text(model)
+                                        .help(model)
                                         .font(.caption2)
                                         .foregroundColor(DesignTokens.Ink.muted)
                                         .lineLimit(1)

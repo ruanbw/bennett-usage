@@ -64,12 +64,12 @@ final class LocalizationTests: XCTestCase {
     func testQueryFreshnessAndOverflowCopyIsBilingual() {
         let manager = LocalizationManager(userDefaults: testDefaults)
 
-        XCTAssertEqual(manager.localized(.dataUpdatedJustNow, language: .en), "Data updated just now")
-        XCTAssertEqual(manager.localized(.dataUpdatedMinutesAgo, language: .en, arguments: 5), "Data updated 5 mins ago")
+        XCTAssertEqual(manager.localized(.dataUpdatedJustNow, language: .en), "Just updated")
+        XCTAssertEqual(manager.localized(.dataUpdatedMinutesAgo, language: .en, arguments: 5), "Updated 5 min ago")
         XCTAssertEqual(manager.localized(.moreToolsCount, language: .en, arguments: 2), "+2 More")
 
-        XCTAssertEqual(manager.localized(.dataUpdatedJustNow, language: .zh), "数据刚刚更新")
-        XCTAssertEqual(manager.localized(.dataUpdatedMinutesAgo, language: .zh, arguments: 5), "数据更新于 5 分钟前")
+        XCTAssertEqual(manager.localized(.dataUpdatedJustNow, language: .zh), "刚刚更新")
+        XCTAssertEqual(manager.localized(.dataUpdatedMinutesAgo, language: .zh, arguments: 5), "5 分钟前更新")
         XCTAssertEqual(manager.localized(.moreToolsCount, language: .zh, arguments: 2), "+2 更多")
     }
 
@@ -179,11 +179,11 @@ final class LocalizationTests: XCTestCase {
         )
         XCTAssertEqual(
             manager.localized(.syncedHoursAgo, language: .en, arguments: 2),
-            "Synced 2 hours ago"
+            "Updated 2 h ago"
         )
         XCTAssertEqual(
             manager.localized(.syncedHoursAgo, language: .zh, arguments: 2),
-            "2 小时前同步"
+            "2 小时前更新"
         )
         XCTAssertEqual(
             manager.localized(.chartDataPoint, language: .en, arguments: "10:00", "2.4K", "$0.42"),
@@ -228,19 +228,19 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(manager.localized(.agentActive), "Active")
         XCTAssertEqual(manager.localized(.agentNotFound), "Not Found")
         XCTAssertEqual(manager.localized(.agentRecords, arguments: 3), "3 records")
-        XCTAssertEqual(manager.localized(.currencySummary), "USD ($) / CNY (¥)")
-        XCTAssertEqual(manager.localized(.exchangeRateSummary, arguments: "7.30"), "1 USD = 7.30 CNY")
+        XCTAssertEqual(manager.localized(.currencySummary), "Every cost in the app is shown in this currency.")
+        XCTAssertEqual(manager.localized(.exchangeRateSummary), "Only used to convert agent spend from USD into CNY.")
         XCTAssertEqual(manager.localized(.sqliteDatabase), "SQLite Database")
         XCTAssertEqual(manager.localized(.localFirstPrivate), "100% Local-First & Private")
         XCTAssertTrue(manager.localized(.privacyDescription).contains("never collects"))
         XCTAssertEqual(manager.localized(.openSource), "Open Source")
 
         manager.setLanguage(.zh)
-        XCTAssertEqual(manager.localized(.agentActive), "正常")
+        XCTAssertEqual(manager.localized(.agentActive), "已接入")
         XCTAssertEqual(manager.localized(.agentNotFound), "未找到")
         XCTAssertEqual(manager.localized(.agentRecords, arguments: 3), "3 条记录")
-        XCTAssertEqual(manager.localized(.currencySummary), "美元 USD ($) / 人民币 CNY (¥)")
-        XCTAssertEqual(manager.localized(.exchangeRateSummary, arguments: "7.30"), "1 USD = 7.30 CNY")
+        XCTAssertEqual(manager.localized(.currencySummary), "应用内所有费用都按此币种显示。")
+        XCTAssertEqual(manager.localized(.exchangeRateSummary), "仅用于把各 Agent 的美元费用换算为人民币。")
         XCTAssertEqual(manager.localized(.sqliteDatabase), "SQLite 数据库")
         XCTAssertEqual(manager.localized(.localFirstPrivate), "100% 本地优先与隐私保护")
         XCTAssertTrue(manager.localized(.privacyDescription).contains("不会收集"))

@@ -5,7 +5,7 @@ public struct BennettUsageCore {
     /// bundle (tests, `swift run`). A packaged build reports the version the
     /// packaging script stamped into `CFBundleShortVersionString` instead —
     /// see `UpdateChecker.bundledVersion(bundle:)`.
-    public static let version = "1.6.0"
+    public static let version = "1.6.1"
 }
 
 /// A privacy-safe description of an adapter failure. Error details remain in

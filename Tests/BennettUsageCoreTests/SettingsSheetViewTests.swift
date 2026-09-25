@@ -245,9 +245,9 @@ final class SettingsSheetViewTests: XCTestCase {
         XCTAssertNotNil(englishView.body)
 
         manager.setLanguage(.zh)
-        XCTAssertEqual(manager.localized(.agentActive), "正常")
+        XCTAssertEqual(manager.localized(.agentActive), "已接入")
         XCTAssertEqual(manager.localized(.agentRecords, arguments: 12), "12 条记录")
-        XCTAssertEqual(manager.localized(.currencySummary), "美元 USD ($) / 人民币 CNY (¥)")
+        XCTAssertEqual(manager.localized(.currencySummary), "应用内所有费用都按此币种显示。")
         XCTAssertEqual(manager.localized(.privacyDescription).contains("Token"), true)
     }
 

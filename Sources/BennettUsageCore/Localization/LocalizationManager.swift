@@ -69,6 +69,8 @@ public enum LocalizedKey: String, CaseIterable, Sendable {
     // work as a sentence. Every string here is a complete claim about the
     // numbers on screen, never a label for a widget.
     case coverageDays
+    /// A format, not a phrase: Chinese puts the comparison before the number
+    /// and English after it, so the order has to live in the string.
     case vsPreviousPeriod
     case noComparablePeriod
     case partialComparisonCoverage
@@ -477,11 +479,11 @@ private let englishDictionary: [LocalizedKey: String] = [
 
     // Conclusion Band
     .coverageDays: "Days Covered",
-    .vsPreviousPeriod: "vs. previous period",
+    .vsPreviousPeriod: "%@ vs. previous period",
     .noComparablePeriod: "No comparable period",
     .partialComparisonCoverage: "Only %@ days of comparison history",
     .conclusionEmpty: "No usage recorded in %@.",
-    .conclusionStale: "Data may be incomplete — this is the last successful sync.",
+    .conclusionStale: "Couldn't read the local database — showing the values from the last successful read.",
     .conclusionSummary: "%@ tokens recorded in this period.",
     .conclusionLeadingTool: "Most usage came from %@.",
     .popoverSourceCount: "Sources",
@@ -552,8 +554,8 @@ private let englishDictionary: [LocalizedKey: String] = [
     .rescanNow: "Re-detect",
     .syncedJustNow: "Synced just now",
     .syncedMinutesAgo: "Synced %d mins ago",
-    .dataUpdatedJustNow: "Data updated just now",
-    .dataUpdatedMinutesAgo: "Data updated %d mins ago",
+    .dataUpdatedJustNow: "Just updated",
+    .dataUpdatedMinutesAgo: "Updated %d min ago",
     .filterAllAgents: "All Agents",
     .allAgentsUsage: "All Agents Usage",
     .clearFocus: "Clear Focus",
@@ -667,11 +669,11 @@ private let englishDictionary: [LocalizedKey: String] = [
     .notSyncedYet: "Not synced yet",
     .syncInProgress: "Syncing…",
     .syncFailed: "Sync failed",
-    .syncedHoursAgo: "Synced %d hours ago",
+    .syncedHoursAgo: "Updated %d h ago",
     .syncedOn: "Synced on %@",
-    .syncedDaysAgo: "Synced %d days ago",
+    .syncedDaysAgo: "Updated %d d ago",
     .showingCachedData: "Showing cached data",
-    .staleData: "Data may be out of date",
+    .staleData: "Data may be stale",
     .dataUnavailable: "Usage data is unavailable",
     .loadingUsage: "Loading usage…",
     .loadedUsage: "Usage loaded",
@@ -760,11 +762,11 @@ private let chineseDictionary: [LocalizedKey: String] = [
 
     // 结论带
     .coverageDays: "覆盖天数",
-    .vsPreviousPeriod: "较上一周期",
+    .vsPreviousPeriod: "较上一周期 %@",
     .noComparablePeriod: "无可比周期",
     .partialComparisonCoverage: "对比周期仅有 %@ 天记录",
     .conclusionEmpty: "%@ 内没有使用记录。",
-    .conclusionStale: "数据可能不完整，以下为最近一次成功同步的结果。",
+    .conclusionStale: "读取本地数据库失败，以下为上次成功读取的数据。",
     .conclusionSummary: "本周期共记录 %@ Token。",
     .conclusionLeadingTool: "其中 %@ 占用最多。",
     .popoverSourceCount: "来源数",
@@ -812,7 +814,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
 
     // Top Projects
     .topProjectsDrillDown: "前 100 个项目",
-    .trackedProjectsCount: "前 %d 个",
+    .trackedProjectsCount: "前 %d / 100 个",
     .noProjectFoldersRecorded: "暂无已记录的项目目录",
     .tokensCount: "%@ tokens",
     .showMoreProjects: "展开更多 (剩余 %d 个目录)",
@@ -830,13 +832,13 @@ private let chineseDictionary: [LocalizedKey: String] = [
     // Navigation & Redesign
     .navDashboard: "用量看板",
     .navSettings: "系统设置",
-    .agentsConnected: "%d 个 Agent 正常",
-    .agentsActiveOfTotal: "%d/%d 个 Agent 正常",
+    .agentsConnected: "%d 个 Agent 已接入",
+    .agentsActiveOfTotal: "%d/%d 个 Agent 已接入",
     .rescanNow: "重新检测",
     .syncedJustNow: "刚刚同步",
     .syncedMinutesAgo: "%d 分钟前同步",
-    .dataUpdatedJustNow: "数据刚刚更新",
-    .dataUpdatedMinutesAgo: "数据更新于 %d 分钟前",
+    .dataUpdatedJustNow: "刚刚更新",
+    .dataUpdatedMinutesAgo: "%d 分钟前更新",
     .filterAllAgents: "全部 Agent",
     .allAgentsUsage: "所有 Agent 用量",
     .clearFocus: "清除聚焦",
@@ -861,7 +863,7 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .generalSettings: "通用设置",
     .usdOption: "美元 USD ($)",
     .cnyOption: "人民币 CNY (¥)",
-    .agentActive: "正常",
+    .agentActive: "已接入",
     .agentNotFound: "未找到",
     .agentNoRecords: "暂无记录",
     .agentPathMissing: "路径缺失",
@@ -950,9 +952,9 @@ private let chineseDictionary: [LocalizedKey: String] = [
     .notSyncedYet: "尚未同步",
     .syncInProgress: "正在同步…",
     .syncFailed: "同步失败",
-    .syncedHoursAgo: "%d 小时前同步",
+    .syncedHoursAgo: "%d 小时前更新",
     .syncedOn: "同步于 %@",
-    .syncedDaysAgo: "%d 天前同步",
+    .syncedDaysAgo: "%d 天前更新",
     .showingCachedData: "正在显示缓存数据",
     .staleData: "数据可能已过期",
     .dataUnavailable: "用量数据不可用",

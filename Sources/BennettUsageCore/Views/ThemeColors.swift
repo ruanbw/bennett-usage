@@ -29,15 +29,24 @@ public enum AppThemeMode: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// The key the built-in dictionaries actually carry.
+    public var localizedKey: LocalizedKey {
+        switch self {
+        case .system: return .themeSystem
+        case .dark: return .themeDark
+        case .light: return .themeLight
+        }
+    }
+
     /// Localized title for the built-in English and Chinese managers. The
     /// stable `titleKey` remains available for dynamically registered packs.
+    ///
+    /// Routed through `LocalizationManager` rather than a hand-built
+    /// `isChinese ? … : …`: the literals here were the one place a third
+    /// registered language could never reach, and they left `.themeSystem`,
+    /// `.themeDark` and `.themeLight` defined but unused.
     public func localizedTitle(localization: LocalizationManager) -> String {
-        let isChinese = localization.effectiveLanguage == .zh
-        switch self {
-        case .system: return isChinese ? "跟随系统" : "Follow System"
-        case .dark: return isChinese ? "深色" : "Dark"
-        case .light: return isChinese ? "浅色" : "Light"
-        }
+        localization.localized(localizedKey)
     }
 
     /// SwiftUI's nil value intentionally follows the host appearance.

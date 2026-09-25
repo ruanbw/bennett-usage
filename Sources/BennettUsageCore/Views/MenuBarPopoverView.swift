@@ -76,10 +76,8 @@ public final class StatusSummaryModel: ObservableObject {
         let change = (Double(today) - Double(yesterday)) / Double(yesterday)
         let sign = change >= 0 ? "+" : ""
         return String(
-            format: "%@%.0f%% %@",
-            sign,
-            change * 100,
-            localization.localized(.vsPreviousPeriod)
+            format: localization.localized(.vsPreviousPeriod),
+            String(format: "%+.0f%%", change * 100)
         )
     }
 }
